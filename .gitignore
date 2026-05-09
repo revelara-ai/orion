@@ -6,3 +6,11 @@
 
 # bv (beads viewer) local config and caches
 .bv/
+
+# Build artifacts
+bin/
+
+# Local IDE / OS noise
+.vscode/
+.idea/
+.DS_Store
