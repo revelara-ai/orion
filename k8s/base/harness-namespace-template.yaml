@@ -1,0 +1,35 @@
+# Per-run harness namespace template per SPEC §10.3.
+#
+# Materialized by internal/harness/materialize.go (Materialize()) and
+# applied by the K8s materializer (deferred to follow-up issue). The
+# Go template substitutes:
+#
+#   {{ .Namespace }}  - canonical name "orion-run-<runIDShort>"
+#   {{ .RunID }}      - parent run identifier
+#
+# Egress is denied by default. The deferred materializer adds allow
+# rules for harness-internal targets (toxiproxy, the harness-target
+# pod) when those land. The deny-egress baseline ensures partial
+# materialization (namespace + policy without target) is fail-closed:
+# no pod can reach anything until the allow rules ship.
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Namespace }}
+  labels:
+    orion.revelara.ai/run-id: {{ .RunID }}
+    orion.revelara.ai/managed-by: orion-harness
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-egress
+  namespace: {{ .Namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress: []
