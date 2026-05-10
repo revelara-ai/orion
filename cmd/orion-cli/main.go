@@ -27,6 +27,7 @@ type subcommand interface {
 func registeredCommands() []subcommand {
 	return []subcommand{
 		newDetectCmd(os.Stdout, os.Stderr),
+		newRoundtripCmd(os.Stdout, os.Stderr),
 	}
 }
 
