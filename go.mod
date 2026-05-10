@@ -2,7 +2,10 @@ module github.com/revelara-ai/orion
 
 go 1.24
 
-require google.golang.org/genai v1.56.0
+require (
+	github.com/google/uuid v1.6.0
+	google.golang.org/genai v1.56.0
+)
 
 require (
 	cloud.google.com/go v0.116.0 // indirect
