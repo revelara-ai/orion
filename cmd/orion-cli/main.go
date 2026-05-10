@@ -28,6 +28,7 @@ func registeredCommands() []subcommand {
 	return []subcommand{
 		newDetectCmd(os.Stdout, os.Stderr),
 		newRoundtripCmd(os.Stdout, os.Stderr),
+		newSynthCmd(os.Stdout, os.Stderr),
 	}
 }
 
