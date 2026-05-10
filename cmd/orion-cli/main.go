@@ -30,6 +30,7 @@ func registeredCommands() []subcommand {
 		newRoundtripCmd(os.Stdout, os.Stderr),
 		newSynthCmd(os.Stdout, os.Stderr),
 		newHarnessCmd(os.Stdout, os.Stderr),
+		newRunCmd(os.Stdout, os.Stderr),
 	}
 }
 
