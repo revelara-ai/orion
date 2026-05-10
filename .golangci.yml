@@ -30,6 +30,14 @@ linters:
         linters:
           - revive
         text: "var-naming: avoid package names"
+      # gosec's G204 (subprocess via variable) and G304 (file inclusion via
+      # variable) fire on intentional patterns in test scaffolding (deterministic
+      # paths derived from runtime.Caller, controlled subprocess invocations
+      # against scripts in this repo). Exclude gosec from test files; production
+      # code remains scanned.
+      - path: _test\.go$
+        linters:
+          - gosec
 
 formatters:
   enable:
