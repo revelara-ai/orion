@@ -57,6 +57,11 @@ type Driver struct {
 	// rows ingest without signatures until a downstream slice has
 	// the AST/file context to fill them in.
 	SignatureFunc func(issue trackers.NormalizedIssue) string
+
+	// Evaluator, when non-nil, is called per upserted issue to
+	// compute and stamp the eligibility code (SPEC §8.4). Nil-by-
+	// default so callers can run ingest without LLM credentials.
+	Evaluator *Evaluator
 }
 
 // Result is the per-binding ingest summary returned by IngestBinding.
@@ -155,6 +160,16 @@ func (d *Driver) IngestBinding(ctx context.Context, bindingID uuid.UUID) (Result
 				if err := d.Issues.UpdateDedupSignature(ctx, upserted.ID, sig); err != nil {
 					out.Errors = append(out.Errors, fmt.Sprintf("%s: dedup: %v", issue.ExternalID, err))
 				}
+			}
+		}
+		if d.Evaluator != nil {
+			elig, err := d.Evaluator.Evaluate(ctx, upserted.ID, issue, *stored)
+			if err != nil {
+				out.Errors = append(out.Errors, fmt.Sprintf("%s: eligibility: %v", issue.ExternalID, err))
+				continue
+			}
+			if err := d.Issues.UpdateEligibility(ctx, upserted.ID, elig); err != nil {
+				out.Errors = append(out.Errors, fmt.Sprintf("%s: stamp eligibility: %v", issue.ExternalID, err))
 			}
 		}
 	}
