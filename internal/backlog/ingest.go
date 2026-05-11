@@ -48,6 +48,15 @@ type Driver struct {
 	// reference to the in-memory Credentials shape the adapter
 	// consumes. Required.
 	ResolveCredentials CredentialsResolver
+
+	// SignatureFunc, when non-nil, is called per ingested issue to
+	// compute the dedup_signature. Returning an empty string means
+	// "callsite not determinable from the issue body" and the
+	// signature is left null on the row. Production wiring lives in
+	// E2-7 (semantic dedup); v1 ingestion paths leave this nil so
+	// rows ingest without signatures until a downstream slice has
+	// the AST/file context to fill them in.
+	SignatureFunc func(issue trackers.NormalizedIssue) string
 }
 
 // Result is the per-binding ingest summary returned by IngestBinding.
@@ -135,11 +144,19 @@ func (d *Driver) IngestBinding(ctx context.Context, bindingID uuid.UUID) (Result
 			Labels:           issue.Labels,
 			LastSyncedAt:     now,
 		}
-		if _, err := d.Issues.Upsert(ctx, row); err != nil {
+		upserted, err := d.Issues.Upsert(ctx, row)
+		if err != nil {
 			out.Errors = append(out.Errors, fmt.Sprintf("%s: %v", issue.ExternalID, err))
 			continue
 		}
 		out.IssuesUpserted++
+		if d.SignatureFunc != nil {
+			if sig := d.SignatureFunc(issue); sig != "" {
+				if err := d.Issues.UpdateDedupSignature(ctx, upserted.ID, sig); err != nil {
+					out.Errors = append(out.Errors, fmt.Sprintf("%s: dedup: %v", issue.ExternalID, err))
+				}
+			}
+		}
 	}
 	return out, nil
 }
