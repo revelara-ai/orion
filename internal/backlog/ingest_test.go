@@ -264,6 +264,48 @@ func TestIngestBinding_HonorsSince(t *testing.T) {
 	}
 }
 
+func TestIngestBinding_StampsDedupSignatureWhenSignatureFuncReturnsValue(t *testing.T) {
+	rls := newRLSPool(t)
+	orgID := uuid.New()
+	ctx := database.WithRLSContext(context.Background(), "u", orgID, nil)
+	_, bindingID := seedRepoBinding(t, rls, ctx, "test/sigrepo")
+
+	adapter := &stubAdapter{
+		kind: trackers.TrackerKindGitHubIssues,
+		issues: []trackers.NormalizedIssue{
+			{ExternalID: "gh:test/sigrepo#1", Title: "with sig", State: trackers.StateOpen, LastUpdated: time.Now().UTC()},
+			{ExternalID: "gh:test/sigrepo#2", Title: "no sig", State: trackers.StateOpen, LastUpdated: time.Now().UTC()},
+		},
+	}
+	d := driverFor(t, rls, adapter)
+	d.SignatureFunc = func(iss trackers.NormalizedIssue) string {
+		if iss.ExternalID == "gh:test/sigrepo#1" {
+			return "deadbeef"
+		}
+		return "" // simulate "callsite not determinable" for issue #2
+	}
+
+	if _, err := d.IngestBinding(ctx, bindingID); err != nil {
+		t.Fatalf("IngestBinding: %v", err)
+	}
+
+	withSig, err := repos.NewNormalizedIssueRepo(rls).GetByExternalID(ctx, "gh:test/sigrepo#1")
+	if err != nil {
+		t.Fatalf("GetByExternalID #1: %v", err)
+	}
+	if withSig.DedupSignature == nil || *withSig.DedupSignature != "deadbeef" {
+		t.Errorf("issue #1 dedup_signature=%v, want deadbeef", withSig.DedupSignature)
+	}
+
+	noSig, err := repos.NewNormalizedIssueRepo(rls).GetByExternalID(ctx, "gh:test/sigrepo#2")
+	if err != nil {
+		t.Fatalf("GetByExternalID #2: %v", err)
+	}
+	if noSig.DedupSignature != nil {
+		t.Errorf("issue #2 dedup_signature=%q, want nil", *noSig.DedupSignature)
+	}
+}
+
 func TestIngestBinding_MultipleBindings_OneHealthyOneFailing(t *testing.T) {
 	rls := newRLSPool(t)
 	orgID := uuid.New()
