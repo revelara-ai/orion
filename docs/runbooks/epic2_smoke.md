@@ -65,7 +65,7 @@ export ORION_GITHUB_PRIVATE_KEY="$(cat orion-app-private-key.pem)"
 **Safety guard**: the wrapper refuses to operate against
 `GoogleCloudPlatform/microservices-demo` (the upstream).
 
-### 2. Linear OAuth (once E2-3 ships)
+### 2. Linear OAuth
 
 Provision a Linear OAuth app at https://linear.app/settings/api
 with scopes: `read`, `write`, `issues:create`, `comments:create`.
@@ -77,12 +77,14 @@ export ORION_LINEAR_CLIENT_SECRET=<secret>
 # After running the OAuth flow once:
 export ORION_LINEAR_ACCESS_TOKEN=<token>
 export ORION_LINEAR_REFRESH_TOKEN=<refresh>
-export ORION_LINEAR_EXPIRES_AT=<RFC3339>
+export ORION_LINEAR_WORKSPACE_SLUG=<slug>
+export ORION_LINEAR_TEAM_ID=<team uuid>
 ```
 
-The Linear adapter's token rotation (E2-3 / polaris fork) means
-ORION_LINEAR_ACCESS_TOKEN may rotate during the smoke test. The
-wrapper logs the rotation event to evidence.
+The Linear adapter's token rotation (forked from polaris per
+orion-13j) means `ORION_LINEAR_ACCESS_TOKEN` may rotate during the
+smoke test. The wrapper logs the rotation event to evidence; see
+`internal/oauth/registry.go` for the persist-callback wiring.
 
 ### 3. Postgres
 
@@ -108,28 +110,35 @@ before running this smoke test.
 ## Running the Live Smoke Test
 
 ```bash
-# 1. Provision prereqs as above
+# 1. Provision prereqs as above. ORION_BINDING_ID and ORION_ORG_ID
+#    must point at a TrackerBinding row already in the database.
+#    v1 seeds these via SQL; the API endpoint lands in E8.
 
-# 2. Configure a binding (no API yet; seed via config in v1):
-cat > /tmp/orion-test-config.yaml <<EOF
-postgres:
-  dsn: $POSTGRES_DSN
-trackers:
-  - kind: github_issues
-    repo: revelara-ai/microservices-demo
-    auto_file: false
-  - kind: linear
-    workspace: orion-test
-    auto_file: false
-EOF
+# 2. Run the wrapper. The script ingests, lists, and asks for the
+#    top-eligible issue end-to-end against the operator-provided
+#    binding.
+ORION_BINDING_ID=<uuid> ORION_ORG_ID=<uuid> \
+  ./test/acceptance/epic2_smoke.sh --live
 
-# 3. Run the wrapper.
-./test/acceptance/epic2_smoke.sh --live
-
-# 4. On success, inspect the backlog.
-./bin/orion-cli backlog list --binding=<id>
-./bin/orion-cli backlog next --binding=<id>
+# 3. Inspect the captured evidence.
+ls $EVIDENCE_DIR/
+#   ingest.json   step 3a result (counts + errors)
+#   list.json     step 3b: the full backlog
+#   next.json     step 3c: the top-eligible issue (or sentinel)
 ```
+
+## Running with PG (testcontainer)
+
+```bash
+./test/acceptance/epic2_smoke.sh --dry-run --with-pg
+```
+
+When docker is available, `--with-pg` additionally runs the
+backlog + repos + dedup testcontainer-pg integration tests. This
+exercises the SPEC §8.3 / §8.4 / §8.7 wiring (eligibility + dedup
++ autofile) against a real Postgres without requiring a live
+GitHub App or Linear OAuth grant. CI gates can run this where
+docker is available; pure dry-run remains Go + git only.
 
 ## Exit-Code Map
 
