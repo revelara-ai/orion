@@ -1,0 +1,83 @@
+{
+  "_comment": "Canonical NormalizedIssue shape per SPEC §4.1.7. Epic 2 E2-F smoke test asserts every ingested issue conforms to this contract. Field types are illustrative; adapters MAY add fields but MUST populate every required field on every issue they return from FetchCandidates.",
+
+  "required_fields": [
+    "external_id",
+    "external_url",
+    "title",
+    "state",
+    "last_updated"
+  ],
+
+  "field_specs": {
+    "external_id": {
+      "type": "string",
+      "format": "<provider>:<scope>#<id> per SPEC §4.2",
+      "examples": ["gh:revelara-ai/orion#42", "lin:ENG-7"]
+    },
+    "external_url": {
+      "type": "string",
+      "format": "absolute URL to the issue in the source tracker",
+      "examples": ["https://github.com/revelara-ai/orion/issues/42"]
+    },
+    "title": {
+      "type": "string",
+      "min_length": 1
+    },
+    "description": {
+      "type": "string",
+      "notes": "may be empty for tickets that carry only metadata"
+    },
+    "priority": {
+      "type": "integer",
+      "range": [0, 4],
+      "nullable": true,
+      "notes": "0 = critical; nil when source tracker has no priority field"
+    },
+    "state": {
+      "type": "string",
+      "enum": ["open", "in_progress", "blocked", "closed", "cancelled"]
+    },
+    "labels": {
+      "type": "array<string>",
+      "notes": "lower-cased, deduplicated; may be empty"
+    },
+    "polaris_risk_id": {
+      "type": "uuid",
+      "nullable": true,
+      "notes": "set for Orion-filed risk issues (§8.7) and tracker issues whose body links to a Polaris risk"
+    },
+    "orion_filed": {
+      "type": "boolean",
+      "notes": "true when Orion created this issue via §8.7 auto-file"
+    },
+    "last_updated": {
+      "type": "string",
+      "format": "RFC3339 timestamp",
+      "notes": "upstream tracker's last-modified timestamp; used by ingestion driver for `since` cursor"
+    }
+  },
+
+  "ingestion_invariants": {
+    "_comment": "Asserted by E2-F live smoke. Each item is a shell-verifiable check the smoke script runs against the actual NormalizedIssue rows after ingest.",
+    "external_id_uniqueness": "SELECT count(*) FROM normalized_issue GROUP BY external_id HAVING count(*) > 1 → 0 rows",
+    "no_empty_titles": "SELECT count(*) FROM normalized_issue WHERE title = '' → 0",
+    "state_in_enum": "SELECT count(*) FROM normalized_issue WHERE state NOT IN ('open','in_progress','blocked','closed','cancelled') → 0",
+    "external_url_absolute": "SELECT count(*) FROM normalized_issue WHERE external_url NOT LIKE 'http%' → 0"
+  },
+
+  "eligibility_classes_observed": {
+    "_comment": "E2-F asserts the live smoke against microservices-demo produces at least one issue in each of these classes (proves the eligibility evaluator works end-to-end).",
+    "expected_classes": [
+      "eligible",
+      "ineligible_pattern",
+      "ineligible_path",
+      "ineligible_label",
+      "ineligible_branch",
+      "ineligible_blocked",
+      "ineligible_suppressed",
+      "ineligible_trust_mode"
+    ],
+    "minimum_classes_required": 3
+  }
+}
