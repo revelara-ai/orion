@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS normalized_issue CASCADE;
