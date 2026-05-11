@@ -1,0 +1,26 @@
+# Local dev stack for Orion. v1 ships Postgres only; orchestration
+# services (Conductor, Lookout) land in Epic 4 and join this stack.
+#
+# Usage:
+#   make db-up      # start postgres
+#   make migrate    # apply migrations
+#   make db-down    # stop + drop volume
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: orion
+      POSTGRES_PASSWORD: orion
+      POSTGRES_DB: orion
+    ports:
+      - "5432:5432"
+    volumes:
+      - orion-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orion -d orion"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  orion-pgdata:
