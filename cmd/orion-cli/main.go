@@ -31,6 +31,7 @@ func registeredCommands() []subcommand {
 		newSynthCmd(os.Stdout, os.Stderr),
 		newHarnessCmd(os.Stdout, os.Stderr),
 		newRunCmd(os.Stdout, os.Stderr),
+		newBacklogCmd(os.Stdout, os.Stderr),
 	}
 }
 
