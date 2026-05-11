@@ -43,6 +43,21 @@ docker-build: ## Build the orion server container image
 run: bin/orion ## Run orion locally
 	./bin/orion
 
+.PHONY: db-up
+db-up: ## Start local Postgres for dev/test via docker compose
+	docker compose up -d postgres
+	@echo "Postgres on localhost:5432 user=orion db=orion (POSTGRES_DSN=postgres://orion:orion@localhost:5432/orion?sslmode=disable)"
+
+.PHONY: db-down
+db-down: ## Stop and remove local Postgres
+	docker compose down -v
+
+.PHONY: migrate
+migrate: bin/orion ## Apply Postgres migrations (cmd/orion runs them at startup; use this to apply without serving)
+	POSTGRES_DSN=$${POSTGRES_DSN:-postgres://orion:orion@localhost:5432/orion?sslmode=disable} \
+		./bin/orion -addr=:0 & \
+	OPID=$$!; sleep 2; kill $$OPID || true
+
 .PHONY: clean
 clean: ## Remove build artifacts
 	rm -rf bin/
