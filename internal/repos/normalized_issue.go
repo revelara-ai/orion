@@ -206,6 +206,30 @@ func (r *NormalizedIssueRepo) UpdateDedupSignature(ctx context.Context, id uuid.
 	return nil
 }
 
+// MaxLastSyncedAt returns the most recent last_synced_at for issues
+// from the given binding within the caller's RLS scope. Returns the
+// zero time (and nil error) when no rows exist — the backlog
+// ingestion driver (E2-6) treats that as "no prior syncs" and asks
+// the adapter to FetchCandidates without a since cursor.
+func (r *NormalizedIssueRepo) MaxLastSyncedAt(ctx context.Context, bindingID uuid.UUID) (time.Time, error) {
+	const q = `
+		SELECT COALESCE(MAX(last_synced_at), 'epoch'::timestamptz)
+		FROM normalized_issue
+		WHERE tracker_binding_id = $1
+	`
+	var t time.Time
+	if err := r.pool.QueryRow(ctx, q, bindingID).Scan(&t); err != nil {
+		return time.Time{}, fmt.Errorf("repos: max last_synced_at: %w", err)
+	}
+	// COALESCE-to-epoch yields a sentinel; convert it back to zero
+	// so callers can compare with t.IsZero().
+	epoch := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+	if t.Equal(epoch) {
+		return time.Time{}, nil
+	}
+	return t, nil
+}
+
 // ExistsOrionFiledByDedup is the autofile gate (E2-10): true if an
 // orion-filed issue with this dedup_signature already exists for
 // the caller's org.
