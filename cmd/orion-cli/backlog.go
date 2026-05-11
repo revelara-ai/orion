@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -44,7 +45,7 @@ func newBacklogCmd(stdout, stderr io.Writer) *backlogCmd {
 func (c *backlogCmd) Name() string { return "backlog" }
 
 func (c *backlogCmd) Synopsis() string {
-	return "Manage backlog ingestion (ingest, list)"
+	return "Manage backlog ingestion (ingest, list, next)"
 }
 
 func (c *backlogCmd) Run(ctx context.Context, args []string) int {
@@ -57,6 +58,8 @@ func (c *backlogCmd) Run(ctx context.Context, args []string) int {
 		return c.runIngest(ctx, args[1:])
 	case "list":
 		return c.runList(ctx, args[1:])
+	case "next":
+		return c.runNext(ctx, args[1:])
 	case "-h", "--help", "help":
 		c.printSubcommandUsage()
 		return 0
@@ -68,9 +71,56 @@ func (c *backlogCmd) Run(ctx context.Context, args []string) int {
 }
 
 func (c *backlogCmd) printSubcommandUsage() {
-	_, _ = fmt.Fprintln(c.stderr, "Usage: orion-cli backlog <ingest|list> [flags]")
+	_, _ = fmt.Fprintln(c.stderr, "Usage: orion-cli backlog <ingest|list|next> [flags]")
 	_, _ = fmt.Fprintln(c.stderr, "")
 	_, _ = fmt.Fprintln(c.stderr, "Required environment: POSTGRES_DSN (e.g. postgres://user:pw@host:5432/orion?sslmode=disable)")
+}
+
+// runNext returns the top-eligible NormalizedIssue for the binding's
+// repo per SPEC §8.6 priority. Exit 0 + JSON when found; exit 5 with
+// {"status":"no_eligible_issues"} when the queue is empty.
+func (c *backlogCmd) runNext(ctx context.Context, args []string) int {
+	fs := flag.NewFlagSet("backlog next", flag.ContinueOnError)
+	fs.SetOutput(c.stderr)
+	bindingStr := fs.String("binding", "", "tracker_binding UUID (required)")
+	orgStr := fs.String("org", "", "organization UUID for RLS context (required)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	bindingID, orgID, code := parseBindingAndOrg(*bindingStr, *orgStr, c.stderr)
+	if code != 0 {
+		return code
+	}
+
+	_, rls, cleanup, code := c.buildPool(ctx)
+	if code != 0 {
+		return code
+	}
+	defer cleanup()
+
+	rlsCtx := database.WithRLSContext(ctx, "orion-cli", orgID, nil)
+	binding, err := repos.NewTrackerBindingRepo(rls).Get(rlsCtx, bindingID)
+	if err != nil {
+		_, _ = fmt.Fprintf(c.stderr, "get binding: %v\n", err)
+		return 1
+	}
+	next, err := repos.NewNormalizedIssueRepo(rls).NextEligible(rlsCtx, binding.RepoID)
+	if err != nil {
+		if errors.Is(err, repos.ErrNotFound) {
+			enc := json.NewEncoder(c.stdout)
+			_ = enc.Encode(map[string]string{"status": "no_eligible_issues"})
+			return 5
+		}
+		_, _ = fmt.Fprintf(c.stderr, "next eligible: %v\n", err)
+		return 1
+	}
+	enc := json.NewEncoder(c.stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(next); err != nil {
+		_, _ = fmt.Fprintf(c.stderr, "encode: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func (c *backlogCmd) runIngest(ctx context.Context, args []string) int {

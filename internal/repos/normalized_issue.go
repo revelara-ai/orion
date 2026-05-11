@@ -206,6 +206,38 @@ func (r *NormalizedIssueRepo) UpdateDedupSignature(ctx context.Context, id uuid.
 	return nil
 }
 
+// NextEligible returns the top eligible issue for the given repo
+// per SPEC §8.6 priority order. Returns ErrNotFound when no
+// eligible issue exists. The ordering matches
+// internal/backlog.Compare so the in-memory sort and the SQL
+// top-1 stay consistent.
+func (r *NormalizedIssueRepo) NextEligible(ctx context.Context, repoID uuid.UUID) (*NormalizedIssue, error) {
+	const q = `
+		SELECT id, org_id, repo_id, tracker_binding_id, external_id, external_url,
+		       title, description, priority, state, labels, polaris_risk_id, orion_filed,
+		       claim_status, eligibility, dedup_signature, last_synced_at, created_at, updated_at
+		FROM normalized_issue
+		WHERE repo_id = $1
+		  AND eligibility = 'eligible'
+		  AND claim_status = 'unclaimed'
+		  AND state = 'open'
+		ORDER BY
+		    COALESCE(priority, 32767),
+		    created_at ASC,
+		    external_id ASC
+		LIMIT 1
+	`
+	row := r.pool.QueryRow(ctx, q, repoID)
+	got, err := scanNormalizedIssue(row)
+	if err != nil {
+		if isNoRows(err) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("repos: next eligible: %w", err)
+	}
+	return got, nil
+}
+
 // MaxLastSyncedAt returns the most recent last_synced_at for issues
 // from the given binding within the caller's RLS scope. Returns the
 // zero time (and nil error) when no rows exist — the backlog
