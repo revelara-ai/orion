@@ -77,6 +77,13 @@ type LoopDriver struct {
 	// (or the local fallback queue per SPEC §15.3). Optional; nil
 	// keeps the sink path inert for callers that don't yet want it.
 	RiskSink RiskSink
+
+	// Cap enforces the SPEC §15.2 phase 5 progressive-disclosure cap.
+	// Zero-value Cap is permissive: MaxPerRun defaults to
+	// DefaultMaxPerRun, TargetDepth=0 means no headroom restriction
+	// (only max_per_run binds). The cap operates on the new-gap
+	// subset, not on deduped/suppressed findings.
+	Cap ProgressiveDisclosureCap
 }
 
 // RiskSink is the surface LoopDriver calls after a successful autofile
@@ -246,10 +253,57 @@ func (d *LoopDriver) Tick(ctx context.Context, in LoopInput) (TickResult, error)
 		return TickResult{}, fmt.Errorf("detection: persist run: %w", err)
 	}
 
+	// Phase 5: progressive-disclosure cap (SPEC §15.2 phase 5).
+	// Build the new-gap set from the classified findings, apply the
+	// cap (which uses TargetDepth + EligibleCount + MaxPerRun), and
+	// record which findings survived. Cap-excluded findings are NOT
+	// persisted in detection_findings this tick — the next tick's
+	// rescan will re-emit them and they'll be re-considered once the
+	// customer has worked down some backlog.
+	cap := d.Cap
+	if in.RepoID != "" && (cap.TargetDepth > 0 || cap.MaxPerRun > 0) {
+		// Refresh EligibleCount from the lookup so the cap math sees
+		// the latest backlog depth. Operators may also set it
+		// statically on Cap; the dynamic read wins.
+		if repoUUID, perr := uuid.Parse(in.RepoID); perr == nil {
+			if cnt, err := d.NormalizedIssues.CountEligibleByRepo(ctx, repoUUID); err == nil {
+				cap.EligibleCount = cnt
+			}
+		}
+	}
+	newGapFindings := make([]Finding, 0, len(classified))
+	for _, c := range classified {
+		if !c.deduped {
+			newGapFindings = append(newGapFindings, c.finding)
+		}
+	}
+	allowed := cap.Filter(newGapFindings)
+	allowedFingerprints := make(map[string]struct{}, len(allowed))
+	for _, f := range allowed {
+		allowedFingerprints[capKey(f)] = struct{}{}
+	}
+	capExcluded := 0
+	for i := range classified {
+		if classified[i].deduped {
+			continue
+		}
+		if _, ok := allowedFingerprints[capKey(classified[i].finding)]; !ok {
+			classified[i].capExcluded = true
+			capExcluded++
+		}
+	}
+
 	// Phase 7b: persist the per-finding ledger BEFORE phase 6 so each
 	// finding has an ID the autofile/risksink hooks can reference.
+	// Cap-excluded findings are intentionally NOT persisted so the
+	// next tick can re-emit them (without dedup_signature lookup
+	// short-circuiting them).
 	dbFindings := make([]repos.DetectionFinding, 0, len(classified))
-	for _, c := range classified {
+	persistedIdx := make([]int, 0, len(classified)) // classified-index per dbFindings row
+	for i, c := range classified {
+		if c.capExcluded {
+			continue
+		}
 		var sigPtr *string
 		if c.sig != "" {
 			s := c.sig
@@ -269,6 +323,7 @@ func (d *LoopDriver) Tick(ctx context.Context, in LoopInput) (TickResult, error)
 			DedupSignature: sigPtr,
 			Deduped:        c.deduped,
 		})
+		persistedIdx = append(persistedIdx, i)
 	}
 	insertedFindings := dbFindings
 	if len(dbFindings) > 0 {
@@ -278,13 +333,23 @@ func (d *LoopDriver) Tick(ctx context.Context, in LoopInput) (TickResult, error)
 		}
 		insertedFindings = got
 	}
+	// Reverse map: classified-index → insertedFindings-index. -1 when
+	// the classified entry was cap-excluded and thus not persisted.
+	classifiedToPersisted := make([]int, len(classified))
+	for j := range classifiedToPersisted {
+		classifiedToPersisted[j] = -1
+	}
+	for k, ci := range persistedIdx {
+		classifiedToPersisted[ci] = k
+	}
 
-	// Phase 6: autofile gate + risksink for non-deduped findings.
+	// Phase 6: autofile gate + risksink for non-deduped findings that
+	// survived the progressive-disclosure cap.
 	autoFiled := 0
 	riskPosted := 0
 	riskQueued := 0
 	for i := range classified {
-		if classified[i].deduped {
+		if classified[i].deduped || classified[i].capExcluded {
 			continue
 		}
 		var filed bool
@@ -311,7 +376,8 @@ func (d *LoopDriver) Tick(ctx context.Context, in LoopInput) (TickResult, error)
 		// LocalFallbackSink and converted to queue rows, so a sink
 		// error here is genuine infrastructure failure that should
 		// surface in logs but not abort the tick.
-		if filed && d.RiskSink != nil && i < len(insertedFindings) {
+		pIdx := classifiedToPersisted[i]
+		if filed && d.RiskSink != nil && pIdx >= 0 && pIdx < len(insertedFindings) {
 			f := classified[i].finding
 			payload := RiskPayload{
 				Origin:       "orion-detection",
@@ -325,7 +391,7 @@ func (d *LoopDriver) Tick(ctx context.Context, in LoopInput) (TickResult, error)
 				LineNo:       f.Line,
 				Fingerprint:  f.Fingerprint,
 				BindingID:    in.BindingID,
-				FindingID:    insertedFindings[i].ID.String(),
+				FindingID:    insertedFindings[pIdx].ID.String(),
 			}
 			rres, rerr := d.RiskSink.Submit(ctx, insertedFindings[i].ID, payload)
 			if rerr == nil {
@@ -402,6 +468,15 @@ type classifiedFinding struct {
 	sig           string
 	deduped       bool
 	orionFiledHit bool
+	capExcluded   bool
+}
+
+// capKey is the fingerprint used to associate a Finding with its
+// post-cap allowed-set entry. Two findings with the same key are
+// treated as identical for cap purposes (the cap selects by
+// reference equality through this key).
+func capKey(f Finding) string {
+	return f.Fingerprint + "|" + f.File + "|" + f.Slug
 }
 
 // computeSignature derives a stable dedup signature from a finding.
