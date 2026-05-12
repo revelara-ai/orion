@@ -3,6 +3,7 @@ package detection
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -238,15 +239,34 @@ func (d *LoopDriver) Tick(ctx context.Context, in LoopInput) (TickResult, error)
 		})
 	}
 
-	// Phase 7a: persist the run row with the cross-reference counters.
+	// §15.4 self-referential-loop guard: read the 3 most recent prior
+	// runs and check whether orion-filed > 3x customer-filed for all
+	// three over a >= 30d window. Suppressed for the first 3 runs of
+	// a binding. The decision is recorded on the new run row.
+	guard := LoopGuardDecision{Reason: "loopguard not evaluated"}
+	if recent, err := d.Runs.ListByBinding(ctx, bindingUUID, LoopGuardSuppressionRuns); err == nil {
+		summaries := make([]RunSummary, 0, len(recent))
+		for _, r := range recent {
+			summaries = append(summaries, RunSummary{
+				StartedAt:              r.StartedAt,
+				OrionFiledProcessed:    r.OrionFiledProcessed,
+				CustomerFiledProcessed: r.CustomerFiledProcessed,
+			})
+		}
+		guard = LoopGuardCheck(summaries, time.Now())
+	}
+
+	// Phase 7a: persist the run row with the cross-reference counters
+	// and the loopguard decision.
 	run := repos.DetectionRun{
-		BindingID:           bindingUUID,
-		Mode:                modeToRepos(mode),
-		Phase:               repos.DetectionPhaseCompleted,
-		FindingsTotal:       len(scanned),
-		FindingsNew:         newCount,
-		FindingsDeduped:     dedupedCount,
-		OrionFiledProcessed: orionFiledHits,
+		BindingID:              bindingUUID,
+		Mode:                   modeToRepos(mode),
+		Phase:                  repos.DetectionPhaseCompleted,
+		FindingsTotal:          len(scanned),
+		FindingsNew:            newCount,
+		FindingsDeduped:        dedupedCount,
+		OrionFiledProcessed:    orionFiledHits,
+		SelfReferentialWarning: guard.Warning,
 	}
 	persisted, err := d.Runs.Create(ctx, run)
 	if err != nil {
