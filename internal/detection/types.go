@@ -65,4 +65,50 @@ var (
 	// ErrParseFailure: rvl produced output that could not be parsed as the
 	// expected JSON envelope.
 	ErrParseFailure = errors.New("detection: rvl output is not valid JSON")
+
+	// ErrLoopMisconfigured: LoopDriver dependencies are missing or the
+	// Tick input is malformed.
+	ErrLoopMisconfigured = errors.New("detection: loop driver misconfigured")
 )
+
+// LoopMode mirrors SPEC §15.2 detection modes. v1 ships `full`;
+// `incremental` and `post_merge` are reserved for E9 (post-merge
+// refinement) and E3-3's adaptive cadence.
+type LoopMode string
+
+// LoopMode values.
+const (
+	LoopModeFull        LoopMode = "full"
+	LoopModeIncremental LoopMode = "incremental"
+	LoopModePostMerge   LoopMode = "post_merge"
+)
+
+// LoopInput is the per-tick payload. The driver does not own the
+// clone step (yet); callers pass an already-checked-out RepoPath.
+// Service is the rvl-cli --service argument used to scope matchers
+// per the project's .revelara.yaml or pattern-set defaults.
+type LoopInput struct {
+	BindingID string
+	RepoPath  string
+	Service   string
+	Mode      LoopMode
+
+	// AutoFile mirrors TrackerBinding.AutoFile but is passed in so
+	// the LoopDriver doesn't need to refetch the binding row.
+	AutoFile bool
+
+	// TrustMode is the binding's trust ladder rung (shadow/draft/
+	// staging/full); passed through to the autofile gate.
+	TrustMode string
+}
+
+// TickResult summarizes one LoopDriver.Tick invocation.
+type TickResult struct {
+	RunID              string
+	FindingsTotal      int
+	FindingsNew        int
+	FindingsDeduped    int
+	FindingsSuppressed int
+	AutoFiled          int
+	Phase              string
+}
