@@ -206,6 +206,27 @@ func (r *NormalizedIssueRepo) UpdateDedupSignature(ctx context.Context, id uuid.
 	return nil
 }
 
+// CountEligibleByRepo returns the count of eligible+unclaimed open
+// issues for the given repo within the caller's RLS scope. Used by
+// the §15.1 adaptive cadence gate to decide whether to suppress
+// detection (backlog already deep enough) or fire it (backlog has
+// burned down below target).
+func (r *NormalizedIssueRepo) CountEligibleByRepo(ctx context.Context, repoID uuid.UUID) (int, error) {
+	const q = `
+		SELECT count(*)
+		FROM normalized_issue
+		WHERE repo_id = $1
+		  AND eligibility = 'eligible'
+		  AND claim_status = 'unclaimed'
+		  AND state = 'open'
+	`
+	var n int
+	if err := r.pool.QueryRow(ctx, q, repoID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("repos: count eligible: %w", err)
+	}
+	return n, nil
+}
+
 // NextEligible returns the top eligible issue for the given repo
 // per SPEC §8.6 priority order. Returns ErrNotFound when no
 // eligible issue exists. The ordering matches
