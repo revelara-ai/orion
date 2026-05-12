@@ -147,6 +147,14 @@ func (c *detectionCmd) runTick(ctx context.Context, args []string) int {
 	fallback := risksink.NewLocalFallbackSink(upstream, pendingRepo, polarisURL+"/risks")
 	driver.RiskSink = &risksinkAdapter{inner: fallback}
 
+	// SPEC §15.2 phase 5: progressive-disclosure cap. v1 uses SPEC
+	// defaults (MaxPerRun=25, TargetDepth=20); production wires
+	// per-binding config in a future slice.
+	driver.Cap = detection.ProgressiveDisclosureCap{
+		MaxPerRun:   detection.DefaultMaxPerRun,
+		TargetDepth: 20,
+	}
+
 	res, err := driver.Tick(rlsCtx, detection.LoopInput{
 		BindingID: binding.ID.String(),
 		RepoID:    binding.RepoID.String(),
