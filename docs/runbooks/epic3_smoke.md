@@ -140,13 +140,22 @@ rvl --version            # confirms binary is reachable
 
 ## The 3-Tick Drill
 
-Once all Epic 3 slices are merged, orion-e3f extends `--live` to drive
-the full drill. Until then this section is operator-manual via the
-`orion-cli detection trigger` subcommand (lands in orion-e33).
+`./test/acceptance/epic3_smoke.sh --live` now drives the full drill
+automatically once `ORION_BINDING_ID` + `ORION_ORG_ID` + `POSTGRES_DSN`
+are provisioned. The script invokes `orion-cli detection trigger` three
+times (mutating the fixture between tick 2 and tick 3 to inject a fresh
+gap), then queries the `detection_runs` table to assert invariants.
+
+Manual operator path (equivalent to what `--live` runs):
 
 ```bash
 # Tick 1: initial scan against the fixture.
-orion-cli detection trigger --binding=$ORION_BINDING_ID --org=$ORION_ORG_ID
+orion-cli detection trigger \
+  --binding=$ORION_BINDING_ID \
+  --org=$ORION_ORG_ID \
+  --repo-path=test/acceptance/fixtures/epic3-detection \
+  --service=epic3-detection \
+  --mode=full
 
 # Expected outcome:
 #   - DetectionRun row inserted; phase=completed
@@ -154,24 +163,42 @@ orion-cli detection trigger --binding=$ORION_BINDING_ID --org=$ORION_ORG_ID
 #   - 3 tracker issues filed (or 3 risksink_pending rows if Polaris unreachable)
 
 # Tick 2: re-run against unchanged fixture.
-orion-cli detection trigger --binding=$ORION_BINDING_ID --org=$ORION_ORG_ID
+orion-cli detection trigger \
+  --binding=$ORION_BINDING_ID \
+  --org=$ORION_ORG_ID \
+  --repo-path=test/acceptance/fixtures/epic3-detection \
+  --service=epic3-detection \
+  --mode=full
 
 # Expected outcome:
 #   - DetectionRun row inserted; phase=completed (or quiescent if backlog drained)
 #   - 0 new findings (dedup short-circuit)
 #   - 0 new autofile calls
 
-# Operator action: introduce one new gap in the fixture (e.g., add a
-# fourth file with another http.Client{ … } pattern) and commit it.
-git -C test/acceptance/fixtures/epic3-detection commit -am "drill: new gap"
+# Operator action: introduce one new gap in the fixture (the live
+# smoke writes test/acceptance/fixtures/epic3-detection/drill_gap.go
+# and removes it after tick 3; you can do the same manually).
+cat > test/acceptance/fixtures/epic3-detection/drill_gap.go <<'GO'
+package epic3detection
+import "net/http"
+func DrillNewClient() *http.Client { return &http.Client{Transport: http.DefaultTransport} }
+GO
 
-# Tick 3: scan after fresh commit.
-orion-cli detection trigger --binding=$ORION_BINDING_ID --org=$ORION_ORG_ID
+# Tick 3: scan with the new gap present.
+orion-cli detection trigger \
+  --binding=$ORION_BINDING_ID \
+  --org=$ORION_ORG_ID \
+  --repo-path=test/acceptance/fixtures/epic3-detection \
+  --service=epic3-detection \
+  --mode=full
 
 # Expected outcome:
 #   - DetectionRun row inserted; phase=completed
 #   - 1 new finding
 #   - 1 new autofile call
+
+# Cleanup.
+rm test/acceptance/fixtures/epic3-detection/drill_gap.go
 ```
 
 ### Assertions
