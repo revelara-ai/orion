@@ -14,3 +14,9 @@ bin/
 .vscode/
 .idea/
 .DS_Store
+
+# Per-issue dispatch marker (managed by /dispatch + /build skills)
+.gt-current-issue
+
+# Smoke test evidence directories
+test/acceptance/run-logs/
