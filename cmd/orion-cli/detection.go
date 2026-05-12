@@ -13,6 +13,7 @@ import (
 	"github.com/revelara-ai/orion/internal/database"
 	"github.com/revelara-ai/orion/internal/detection"
 	"github.com/revelara-ai/orion/internal/repos"
+	"github.com/revelara-ai/orion/internal/risksink"
 )
 
 // detectionCmd implements `orion-cli detection <tick>`.
@@ -129,8 +130,22 @@ func (c *detectionCmd) runTick(ctx context.Context, args []string) int {
 		repos.NewDetectionRunRepo(rls),
 		repos.NewDetectionFindingRepo(rls),
 		repos.NewNormalizedIssueRepo(rls),
-		nil, // AutoFileGate wiring deferred to E3-5/E3-6 (risksink + cap)
+		nil, // AutoFileGate wiring deferred to E3-6 (progressive-disclosure cap)
 	)
+
+	// SPEC §15.3 risksink: emit each successfully-filed finding as a
+	// Polaris risk. POLARIS_BASE_URL controls upstream wiring; absent,
+	// the LocalFallbackSink queues every emission to risksink_pending
+	// for a future drain job (E7 or successor) to reconcile.
+	polarisURL := os.Getenv("POLARIS_BASE_URL")
+	polarisKey := os.Getenv("POLARIS_API_KEY")
+	pendingRepo := repos.NewRiskSinkPendingRepo(rls)
+	var upstream risksink.Sink
+	if polarisURL != "" {
+		upstream = risksink.NewPolarisSink(polarisURL, polarisKey)
+	}
+	fallback := risksink.NewLocalFallbackSink(upstream, pendingRepo, polarisURL+"/risks")
+	driver.RiskSink = &risksinkAdapter{inner: fallback}
 
 	res, err := driver.Tick(rlsCtx, detection.LoopInput{
 		BindingID: binding.ID.String(),

@@ -72,6 +72,43 @@ type LoopDriver struct {
 	Findings         *repos.DetectionFindingRepo
 	NormalizedIssues NormalizedIssueLookup
 	AutoFileGate     AutoFileGate
+
+	// RiskSink emits each successfully-autofiled finding to Polaris
+	// (or the local fallback queue per SPEC §15.3). Optional; nil
+	// keeps the sink path inert for callers that don't yet want it.
+	RiskSink RiskSink
+}
+
+// RiskSink is the surface LoopDriver calls after a successful autofile
+// per SPEC §15.3. Implementations live in internal/risksink so this
+// package has no upward dep on net/http or repos.RiskSinkPendingRepo.
+type RiskSink interface {
+	Submit(ctx context.Context, findingID uuid.UUID, risk RiskPayload) (RiskSubmitResult, error)
+}
+
+// RiskPayload is the per-finding risk record sent to Polaris. Mirrors
+// risksink.Risk but is declared here to keep risksink free of
+// detection imports.
+type RiskPayload struct {
+	Origin       string
+	Slug         string
+	Title        string
+	Category     string
+	Severity     string
+	Confidence   string
+	ControlCodes []string
+	FilePath     string
+	LineNo       int
+	Fingerprint  string
+	BindingID    string
+	FindingID    string
+}
+
+// RiskSubmitResult mirrors risksink.SinkResult; tracked here so the
+// LoopDriver can record per-tick posted vs queued counts.
+type RiskSubmitResult struct {
+	Posted bool
+	Queued bool
 }
 
 // NewLoopDriver constructs a LoopDriver. All fields must be non-nil
@@ -209,37 +246,8 @@ func (d *LoopDriver) Tick(ctx context.Context, in LoopInput) (TickResult, error)
 		return TickResult{}, fmt.Errorf("detection: persist run: %w", err)
 	}
 
-	// Phase 6: autofile gate for non-deduped findings (only when gate
-	// is wired; tests can leave it nil to focus on persistence).
-	autoFiled := 0
-	if d.AutoFileGate != nil {
-		for i := range classified {
-			if classified[i].deduped {
-				continue
-			}
-			res, err := d.AutoFileGate.MaybeFile(ctx, persisted.ID.String(), AutoFileInput{
-				BindingID:      in.BindingID,
-				TrustMode:      in.TrustMode,
-				AutoFile:       in.AutoFile,
-				Pattern:        classified[i].finding.Slug,
-				DedupSignature: classified[i].sig,
-				FileLine:       fmt.Sprintf("%s:%d", classified[i].finding.File, classified[i].finding.Line),
-				Title:          classified[i].finding.Title,
-				Body:           classified[i].finding.Narrative,
-			})
-			if err != nil {
-				// Gate infrastructure failure: surface but don't abort
-				// the persist; record the run as completed and let the
-				// caller see autoFiled < newCount.
-				continue
-			}
-			if res.Filed {
-				autoFiled++
-			}
-		}
-	}
-
-	// Phase 7b: persist the per-finding ledger.
+	// Phase 7b: persist the per-finding ledger BEFORE phase 6 so each
+	// finding has an ID the autofile/risksink hooks can reference.
 	dbFindings := make([]repos.DetectionFinding, 0, len(classified))
 	for _, c := range classified {
 		var sigPtr *string
@@ -262,11 +270,77 @@ func (d *LoopDriver) Tick(ctx context.Context, in LoopInput) (TickResult, error)
 			Deduped:        c.deduped,
 		})
 	}
+	insertedFindings := dbFindings
 	if len(dbFindings) > 0 {
-		if _, err := d.Findings.CreateBatch(ctx, dbFindings); err != nil {
+		got, err := d.Findings.CreateBatch(ctx, dbFindings)
+		if err != nil {
 			return TickResult{}, fmt.Errorf("detection: persist findings: %w", err)
 		}
+		insertedFindings = got
 	}
+
+	// Phase 6: autofile gate + risksink for non-deduped findings.
+	autoFiled := 0
+	riskPosted := 0
+	riskQueued := 0
+	for i := range classified {
+		if classified[i].deduped {
+			continue
+		}
+		var filed bool
+		if d.AutoFileGate != nil {
+			res, err := d.AutoFileGate.MaybeFile(ctx, persisted.ID.String(), AutoFileInput{
+				BindingID:      in.BindingID,
+				TrustMode:      in.TrustMode,
+				AutoFile:       in.AutoFile,
+				Pattern:        classified[i].finding.Slug,
+				DedupSignature: classified[i].sig,
+				FileLine:       fmt.Sprintf("%s:%d", classified[i].finding.File, classified[i].finding.Line),
+				Title:          classified[i].finding.Title,
+				Body:           classified[i].finding.Narrative,
+			})
+			if err == nil && res.Filed {
+				filed = true
+				autoFiled++
+			}
+		}
+
+		// SPEC §15.3: emit each successfully-filed finding as a
+		// Polaris risk. RiskSink is optional; when wired, failures
+		// inside the sink (network errors) are caught by the
+		// LocalFallbackSink and converted to queue rows, so a sink
+		// error here is genuine infrastructure failure that should
+		// surface in logs but not abort the tick.
+		if filed && d.RiskSink != nil && i < len(insertedFindings) {
+			f := classified[i].finding
+			payload := RiskPayload{
+				Origin:       "orion-detection",
+				Slug:         f.Slug,
+				Title:        f.Title,
+				Category:     f.Category,
+				Severity:     severityFor(f),
+				Confidence:   f.Confidence,
+				ControlCodes: append([]string(nil), f.ControlCodes...),
+				FilePath:     f.File,
+				LineNo:       f.Line,
+				Fingerprint:  f.Fingerprint,
+				BindingID:    in.BindingID,
+				FindingID:    insertedFindings[i].ID.String(),
+			}
+			rres, rerr := d.RiskSink.Submit(ctx, insertedFindings[i].ID, payload)
+			if rerr == nil {
+				if rres.Posted {
+					riskPosted++
+				}
+				if rres.Queued {
+					riskQueued++
+				}
+			}
+		}
+	}
+
+	_ = riskPosted
+	_ = riskQueued
 
 	return TickResult{
 		RunID:           persisted.ID.String(),
