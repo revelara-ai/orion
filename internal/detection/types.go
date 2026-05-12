@@ -89,6 +89,7 @@ const (
 // per the project's .revelara.yaml or pattern-set defaults.
 type LoopInput struct {
 	BindingID string
+	RepoID    string // connected_repo UUID; quiescence gate (§15.3.1) reads eligible backlog by repo
 	RepoPath  string
 	Service   string
 	Mode      LoopMode

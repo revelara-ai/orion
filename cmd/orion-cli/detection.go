@@ -134,6 +134,7 @@ func (c *detectionCmd) runTick(ctx context.Context, args []string) int {
 
 	res, err := driver.Tick(rlsCtx, detection.LoopInput{
 		BindingID: binding.ID.String(),
+		RepoID:    binding.RepoID.String(),
 		RepoPath:  *repoPath,
 		Service:   *service,
 		Mode:      detection.LoopMode(*modeStr),

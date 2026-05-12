@@ -47,9 +47,12 @@ type AutoFileResult struct {
 
 // NormalizedIssueLookup is the read-side surface LoopDriver needs to
 // answer "has Orion already filed a tracker issue for this signature?"
-// Mirrors NormalizedIssueRepo.ExistsOrionFiledByDedup.
+// (cross-tick dedup, §8.3) and "how deep is the eligible backlog?"
+// (§15.3.1 quiescence gate). Mirrors
+// NormalizedIssueRepo.ExistsOrionFiledByDedup + CountEligibleByRepo.
 type NormalizedIssueLookup interface {
 	ExistsOrionFiledByDedup(ctx context.Context, signature string) (bool, error)
+	CountEligibleByRepo(ctx context.Context, repoID uuid.UUID) (int, error)
 }
 
 // LoopDriver orchestrates one SPEC §15.2 detection tick. v1 ships
@@ -122,6 +125,24 @@ func (d *LoopDriver) Tick(ctx context.Context, in LoopInput) (TickResult, error)
 	})
 	if scanErr != nil {
 		return d.persistFailedRun(ctx, bindingUUID, mode, scanErr)
+	}
+
+	// §15.3.1 quiescence gate: if RepoID is known, check the eligible
+	// backlog depth. When eligible == 0 AND scanner returned zero
+	// findings, persist a phase=quiescent run row and short-circuit —
+	// no cross-reference, no autofile, no per-finding ledger.
+	if in.RepoID != "" {
+		repoUUID, err := uuid.Parse(in.RepoID)
+		if err != nil {
+			return TickResult{}, fmt.Errorf("%w: repo_id is not a uuid: %v", ErrLoopMisconfigured, err)
+		}
+		eligible, err := d.NormalizedIssues.CountEligibleByRepo(ctx, repoUUID)
+		if err != nil {
+			return TickResult{}, fmt.Errorf("detection: count eligible backlog: %w", err)
+		}
+		if QuiescenceCheck(eligible, len(scanned)) {
+			return d.persistQuiescentRun(ctx, bindingUUID, mode)
+		}
 	}
 
 	// Phase 4: cross-reference each finding against prior detection
@@ -254,6 +275,28 @@ func (d *LoopDriver) Tick(ctx context.Context, in LoopInput) (TickResult, error)
 		FindingsDeduped: dedupedCount,
 		AutoFiled:       autoFiled,
 		Phase:           string(persisted.Phase),
+	}, nil
+}
+
+// persistQuiescentRun records a phase=quiescent run with zero
+// findings counters. Per SPEC §15.3.1, quiescent is a SUCCESS state
+// (the customer's eligible backlog is drained AND the scan found
+// nothing new). The customer-facing surface frames this positively
+// rather than as a no-op.
+func (d *LoopDriver) persistQuiescentRun(ctx context.Context, bindingID uuid.UUID, mode LoopMode) (TickResult, error) {
+	run := repos.DetectionRun{
+		BindingID: bindingID,
+		Mode:      modeToRepos(mode),
+		Phase:     repos.DetectionPhaseQuiescent,
+		Quiescent: true,
+	}
+	persisted, err := d.Runs.Create(ctx, run)
+	if err != nil {
+		return TickResult{}, fmt.Errorf("detection: persist quiescent run: %w", err)
+	}
+	return TickResult{
+		RunID: persisted.ID.String(),
+		Phase: string(persisted.Phase),
 	}, nil
 }
 

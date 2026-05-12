@@ -28,6 +28,10 @@ func (s *stubNI) ExistsOrionFiledByDedup(_ context.Context, sig string) (bool, e
 	return s.known[sig], nil
 }
 
+func (s *stubNI) CountEligibleByRepo(_ context.Context, _ uuid.UUID) (int, error) {
+	return 0, nil
+}
+
 // stubGate records the autofile calls and approves them all.
 type stubGate struct {
 	calls []AutoFileInput
