@@ -44,10 +44,11 @@ func (r *DetectionRunRepo) Create(ctx context.Context, run DetectionRun) (Detect
 			customer_filed_processed,
 			polaris_prior_processed,
 			finished_at,
-			error_message
+			error_message,
+			self_referential_warning
 		) VALUES (
 			current_setting('app.current_organization_id')::uuid,
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 		)
 		RETURNING id, org_id, started_at
 	`
@@ -65,6 +66,7 @@ func (r *DetectionRunRepo) Create(ctx context.Context, run DetectionRun) (Detect
 		run.PolarisPriorProcessed,
 		run.FinishedAt,
 		run.ErrorMessage,
+		run.SelfReferentialWarning,
 	)
 	if err := row.Scan(&run.ID, &run.OrgID, &run.StartedAt); err != nil {
 		return DetectionRun{}, fmt.Errorf("repos: insert detection_run: %w", err)
@@ -80,7 +82,7 @@ func (r *DetectionRunRepo) GetByID(ctx context.Context, id uuid.UUID) (Detection
 		SELECT id, org_id, binding_id, mode, phase, quiescent,
 		       findings_total, findings_new, findings_deduped, findings_suppressed,
 		       orion_filed_processed, customer_filed_processed, polaris_prior_processed,
-		       started_at, finished_at, error_message
+		       started_at, finished_at, error_message, self_referential_warning
 		FROM detection_runs
 		WHERE id = $1
 	`
@@ -91,7 +93,7 @@ func (r *DetectionRunRepo) GetByID(ctx context.Context, id uuid.UUID) (Detection
 		&run.ID, &run.OrgID, &run.BindingID, &mode, &phase, &run.Quiescent,
 		&run.FindingsTotal, &run.FindingsNew, &run.FindingsDeduped, &run.FindingsSuppressed,
 		&run.OrionFiledProcessed, &run.CustomerFiledProcessed, &run.PolarisPriorProcessed,
-		&run.StartedAt, &run.FinishedAt, &run.ErrorMessage,
+		&run.StartedAt, &run.FinishedAt, &run.ErrorMessage, &run.SelfReferentialWarning,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DetectionRun{}, ErrDetectionRunNotFound
@@ -114,7 +116,7 @@ func (r *DetectionRunRepo) ListByBinding(ctx context.Context, bindingID uuid.UUI
 		SELECT id, org_id, binding_id, mode, phase, quiescent,
 		       findings_total, findings_new, findings_deduped, findings_suppressed,
 		       orion_filed_processed, customer_filed_processed, polaris_prior_processed,
-		       started_at, finished_at, error_message
+		       started_at, finished_at, error_message, self_referential_warning
 		FROM detection_runs
 		WHERE binding_id = $1
 		ORDER BY started_at DESC
@@ -134,7 +136,7 @@ func (r *DetectionRunRepo) ListByBinding(ctx context.Context, bindingID uuid.UUI
 			&run.ID, &run.OrgID, &run.BindingID, &mode, &phase, &run.Quiescent,
 			&run.FindingsTotal, &run.FindingsNew, &run.FindingsDeduped, &run.FindingsSuppressed,
 			&run.OrionFiledProcessed, &run.CustomerFiledProcessed, &run.PolarisPriorProcessed,
-			&run.StartedAt, &run.FinishedAt, &run.ErrorMessage,
+			&run.StartedAt, &run.FinishedAt, &run.ErrorMessage, &run.SelfReferentialWarning,
 		); err != nil {
 			return nil, fmt.Errorf("repos: scan detection_run: %w", err)
 		}

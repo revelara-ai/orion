@@ -176,6 +176,7 @@ type DetectionRun struct {
 	StartedAt              time.Time
 	FinishedAt             *time.Time
 	ErrorMessage           *string
+	SelfReferentialWarning bool
 }
 
 // DetectionFinding is one row of the detection_findings ledger. Per
