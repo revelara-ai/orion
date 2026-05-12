@@ -47,7 +47,12 @@ func (c *detectionCmd) Run(ctx context.Context, args []string) int {
 		return 2
 	}
 	switch args[0] {
-	case "tick":
+	case "tick", "trigger":
+		// `trigger` is the on-demand framing of `tick`. Same flags,
+		// same behavior; documented separately so operators reach for
+		// the correct verb for the operator-driven path. The audit
+		// trail distinction (operator-driven vs scheduler-driven) is
+		// recorded by mode + run notes once on_push (incremental) lands.
 		return c.runTick(ctx, args[1:])
 	case "-h", "--help", "help":
 		c.printUsage()
@@ -60,7 +65,10 @@ func (c *detectionCmd) Run(ctx context.Context, args []string) int {
 }
 
 func (c *detectionCmd) printUsage() {
-	_, _ = fmt.Fprintln(c.stderr, "Usage: orion-cli detection tick --binding=<uuid> --org=<uuid> --repo-path=<path> --service=<name> [--mode=full]")
+	_, _ = fmt.Fprintln(c.stderr, "Usage: orion-cli detection <tick|trigger> --binding=<uuid> --org=<uuid> --repo-path=<path> --service=<name> [--mode=full]")
+	_, _ = fmt.Fprintln(c.stderr, "")
+	_, _ = fmt.Fprintln(c.stderr, "  tick     run one detection cycle (scheduler-equivalent path)")
+	_, _ = fmt.Fprintln(c.stderr, "  trigger  alias for tick framed as operator-driven on-demand")
 	_, _ = fmt.Fprintln(c.stderr, "")
 	_, _ = fmt.Fprintln(c.stderr, "Required env: POSTGRES_DSN")
 }

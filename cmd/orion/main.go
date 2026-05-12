@@ -18,12 +18,14 @@ import (
 	"time"
 
 	"github.com/revelara-ai/orion/internal/database"
+	"github.com/revelara-ai/orion/internal/scheduler"
 	"github.com/revelara-ai/orion/internal/version"
 )
 
 func main() {
 	addr := flag.String("addr", ":8080", "address to listen on")
 	skipDB := flag.Bool("skip-db", false, "skip Postgres init (useful for /health-only test deploys)")
+	enableScheduler := flag.Bool("enable-scheduler", false, "enable the detection scheduler loop (Epic 3; off by default until risksink+quiescence wire up)")
 	flag.Parse()
 
 	log.Printf("starting %s on %s", version.String(), *addr)
@@ -50,6 +52,34 @@ func main() {
 		log.Printf("database: connected + migrations applied")
 		// Future epics: instantiate RLSPool and inject into handlers.
 		_ = database.NewRLSPool(pool)
+
+		// Optional: detection scheduler. Off by default; turning it on
+		// without the rest of the Epic 3 chain (quiescence E3-4,
+		// risksink E3-5, loopguard E3-7) would dump findings into
+		// Polaris without provenance. The flag exists so the scheduler
+		// is observable in dev before the chain is complete.
+		if *enableScheduler {
+			runCtx, runCancel := context.WithCancel(context.Background())
+			defer runCancel()
+			sched := scheduler.NewScheduler(scheduler.Scheduler{
+				Bindings: func(ctx context.Context) ([]scheduler.BindingDescriptor, error) {
+					// Wiring to TrackerBindingRepo.ListAll lands once the
+					// full Tick chain is buildable. v1 stub: no bindings.
+					return nil, nil
+				},
+				Tick: func(ctx context.Context, b scheduler.BindingDescriptor) error {
+					log.Printf("scheduler: tick stub binding=%s", b.BindingID)
+					return nil
+				},
+				Logger: log.Default(),
+			})
+			go func() {
+				if err := sched.Run(runCtx); err != nil {
+					log.Printf("scheduler: %v", err)
+				}
+			}()
+			log.Printf("scheduler: started (stub mode; bindings source not yet wired)")
+		}
 	}
 
 	mux := http.NewServeMux()
