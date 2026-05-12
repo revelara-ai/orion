@@ -133,3 +133,70 @@ const (
 	EligIneligibleSuppress Eligibility = "ineligible_suppressed"
 	EligIneligibleTrust    Eligibility = "ineligible_trust_mode"
 )
+
+// DetectionRunMode enumerates SPEC §15.2 phase modes.
+type DetectionRunMode string
+
+// Run modes.
+const (
+	DetectionModeFull        DetectionRunMode = "full"
+	DetectionModeIncremental DetectionRunMode = "incremental"
+	DetectionModePostMerge   DetectionRunMode = "post_merge"
+)
+
+// DetectionPhase is the lifecycle state of a run row. Quiescent is a
+// SUCCESS state per SPEC §15.3.1 (empty-backlog cheap path), distinct
+// from completed so the customer-facing surface can frame it positively.
+type DetectionPhase string
+
+// Phases.
+const (
+	DetectionPhaseRunning   DetectionPhase = "running"
+	DetectionPhaseCompleted DetectionPhase = "completed"
+	DetectionPhaseQuiescent DetectionPhase = "quiescent"
+	DetectionPhaseFailed    DetectionPhase = "failed"
+)
+
+// DetectionRun mirrors the detection_runs row per SPEC §15.2 phase 7
+// and §15.4 (self-referential-loop provenance counters).
+type DetectionRun struct {
+	ID                     uuid.UUID
+	OrgID                  uuid.UUID
+	BindingID              uuid.UUID
+	Mode                   DetectionRunMode
+	Phase                  DetectionPhase
+	Quiescent              bool
+	FindingsTotal          int
+	FindingsNew            int
+	FindingsDeduped        int
+	FindingsSuppressed     int
+	OrionFiledProcessed    int
+	CustomerFiledProcessed int
+	PolarisPriorProcessed  int
+	StartedAt              time.Time
+	FinishedAt             *time.Time
+	ErrorMessage           *string
+}
+
+// DetectionFinding is one row of the detection_findings ledger. Per
+// SPEC §15.2 phase 7 the ledger retains suppressed and deduped findings
+// alongside new ones so customers can audit Orion's decisions; the
+// suppressed/deduped flags differentiate them at the row level.
+type DetectionFinding struct {
+	ID             uuid.UUID
+	OrgID          uuid.UUID
+	RunID          uuid.UUID
+	Slug           string
+	Title          string
+	Category       string
+	Confidence     string
+	Severity       string
+	ControlCodes   []string
+	FilePath       string
+	LineNo         int
+	Fingerprint    string
+	DedupSignature *string
+	Suppressed     bool
+	Deduped        bool
+	CreatedAt      time.Time
+}
