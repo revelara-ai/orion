@@ -1,0 +1,70 @@
+# NetworkPolicy for per-run Orion worker namespaces (SPEC §10.3).
+#
+# DEFAULT-DENY ingress + egress. Then narrow allow rules for the only
+# three destinations a worker legitimately needs:
+#   1. kube-apiserver (control plane signaling)
+#   2. the orion-postgres Service (state mutations + scope-request audit)
+#   3. the LLM provider endpoint (egress 443 to the allowlisted CIDR)
+#
+# Workers MUST NOT egress to the public internet at large; the §10.3
+# isolation invariant depends on this. The Conductor (orion-e48) calls
+# NetworkPolicyApplier.Apply(spec) with the customer-specific allowlist
+# parameters so the materializer (orion-e46) can stamp them in.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orion-worker-default-deny
+  namespace: orion-run-RUN_ID
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orion-worker-egress-allow
+  namespace: orion-run-RUN_ID
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # Allow DNS so the worker can resolve the LLM endpoint and the
+    # Postgres service.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow egress to kube-apiserver (the cluster-internal endpoint).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: default
+      ports:
+        - port: 443
+          protocol: TCP
+    # Allow egress to Postgres (orion-postgres namespace).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: orion-postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+    # Allow egress to the LLM provider via an explicit CIDR allowlist.
+    # The Conductor patches this list per-tenant when applying the
+    # policy; LLM_EGRESS_CIDR is a placeholder the materializer
+    # substitutes.
+    - to:
+        - ipBlock:
+            cidr: LLM_EGRESS_CIDR
+      ports:
+        - port: 443
+          protocol: TCP

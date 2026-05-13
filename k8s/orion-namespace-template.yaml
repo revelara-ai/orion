@@ -1,0 +1,39 @@
+# Per-run namespace template for Orion worker pods (SPEC §10.3).
+#
+# The Conductor (orion-e48) materializes one of these per Run by
+# substituting RUN_ID and TENANT_ID. The namespace is named
+# "orion-run-<run_id>" by convention so the reaper (cleanup.go) can
+# enumerate it deterministically. PodSecurityStandard "restricted"
+# is the load-bearing safety: no privileged containers, no hostPath,
+# no privilege escalation.
+#
+# This template is consumed verbatim by the live materializer in
+# orion-e46; the e45 slice ships it so the contract is reviewable
+# alongside the Go interface that applies it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: orion-run-RUN_ID
+  labels:
+    app.kubernetes.io/name: orion-worker
+    orion.revelara.ai/run-id: "RUN_ID"
+    orion.revelara.ai/tenant-id: "TENANT_ID"
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+# ResourceQuota caps worker resource consumption per SPEC §10.3.
+# Numbers are placeholders; orion-e46 will templatize them from
+# per-tenant policy.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: orion-worker-quota
+  namespace: orion-run-RUN_ID
+spec:
+  hard:
+    pods: "10"
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "16"
+    limits.memory: 32Gi
