@@ -1,0 +1,21 @@
+{
+  "_comment": "Backlog fixture for the Epic 4 restart-recovery drill (orion-e4a). The Conductor consumes this 2-issue backlog, spawns a worker for issue-1, the operator kills the leader Conductor mid-run, and the standby leader resumes without double-spawning. See test/acceptance/expected_restart_drill_shape.json for the pinned invariants.",
+  "issues": [
+    {
+      "id": "fixture-issue-1",
+      "title": "Add timeout to NewClient",
+      "service": "epic4-conductor",
+      "patterns": ["missing-timeout"],
+      "control_codes": ["RC-018"],
+      "expected_file": "client.go"
+    },
+    {
+      "id": "fixture-issue-2",
+      "title": "Wrap http.Get with retry/backoff in FetchUpstream",
+      "service": "epic4-conductor",
+      "patterns": ["missing-retry"],
+      "control_codes": ["RC-019"],
+      "expected_file": "external.go"
+    }
+  ]
+}
