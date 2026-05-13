@@ -1,0 +1,58 @@
+# SUT Deployment template emitted by the K8s harness materializer
+# (SPEC §10 + §12.4). The Go materializer (internal/harness/k8s.go)
+# constructs the same shape via client-go; this YAML is the
+# operator-facing source-of-truth for what gets stamped per service.
+#
+# Placeholders the materializer substitutes:
+#   SERVICE          - the service name (one Deployment per Service in Harness.Workload.Endpoints)
+#   NAMESPACE        - the per-run namespace (orion-run-<RUN_ID>)
+#   RUN_ID           - the parent run UUID
+#   SUT_IMAGE        - the system-under-test container image (built from working tree)
+#   CPU_REQUEST      - default "100m"
+#   MEMORY_REQUEST   - default "128Mi"
+#   CPU_LIMIT        - default "1"
+#   MEMORY_LIMIT     - default "1Gi"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: SERVICE
+  namespace: NAMESPACE
+  labels:
+    app.kubernetes.io/name: SERVICE
+    app.kubernetes.io/managed-by: orion-harness
+    orion.revelara.ai/component: SERVICE
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: SERVICE
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: SERVICE
+        app.kubernetes.io/managed-by: orion-harness
+        orion.revelara.ai/component: SERVICE
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: SERVICE
+          image: SUT_IMAGE
+          env:
+            - name: ORION_RUN_ID
+              value: "RUN_ID"
+            - name: ORION_SERVICE
+              value: "SERVICE"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: CPU_REQUEST
+              memory: MEMORY_REQUEST
+            limits:
+              cpu: CPU_LIMIT
+              memory: MEMORY_LIMIT
