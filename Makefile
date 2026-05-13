@@ -24,7 +24,11 @@ bin/orion-cli:
 	go build -ldflags "$(LDFLAGS)" -o bin/orion-cli ./cmd/orion-cli
 
 .PHONY: test
-test: ## Run unit tests
+test: ## Run unit tests (skips testcontainer-backed integration tests)
+	go test -short ./...
+
+.PHONY: test-integration
+test-integration: ## Run full test suite including testcontainer integration tests (requires docker)
 	go test ./...
 
 .PHONY: lint

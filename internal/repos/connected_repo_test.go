@@ -15,6 +15,9 @@ import (
 // stand a container up (e.g. CI without Docker).
 func newRLSPool(t *testing.T) *database.RLSPool {
 	t.Helper()
+	if testing.Short() {
+		t.Skip("skipping testcontainer-backed test in -short mode")
+	}
 	ctx := context.Background()
 	c, err := tcpostgres.Run(ctx, "postgres:17-alpine",
 		tcpostgres.WithDatabase("orion_test"),
