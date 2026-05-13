@@ -47,6 +47,17 @@ const (
 	ThoroughnessThorough Thoroughness = "thorough"
 )
 
+// MaterializerMode selects between the in-process (E1) runner and the
+// live K8s materializer (E4-6). The worker switches at startup based
+// on the K8S_HARNESS_ENABLED env var.
+type MaterializerMode string
+
+// Modes.
+const (
+	MaterializerLocal MaterializerMode = "local"
+	MaterializerK8s   MaterializerMode = "k8s"
+)
+
 // EndpointDist is the synthesized request-distribution shape for one
 // endpoint. v1 uses request weights (relative); the runner translates
 // those into RPS at execution time.

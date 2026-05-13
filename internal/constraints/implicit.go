@@ -40,7 +40,7 @@ func extractImplicitConstraints(repoPath string, svc architect.Service) []Implic
 		if filepath.Ext(p) != ".go" {
 			return nil
 		}
-		body, readErr := os.ReadFile(p) //#nosec G304 -- p is under a constrained walk root
+		body, readErr := os.ReadFile(p) //nolint:gosec // G304/G122: p is under a constrained walk root
 		if readErr != nil {
 			return nil
 		}

@@ -45,7 +45,7 @@ func discoverServicesFromManifests(repoPath string) []string {
 			if ext != ".yaml" && ext != ".yml" {
 				return nil
 			}
-			body, readErr := os.ReadFile(p) //#nosec G304 -- p is from a constrained walk under repoPath
+			body, readErr := os.ReadFile(p) //nolint:gosec // G304/G122: p is from a constrained walk under repoPath
 			if readErr != nil {
 				return nil
 			}

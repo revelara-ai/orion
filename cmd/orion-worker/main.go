@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/revelara-ai/orion/internal/agent"
+	"github.com/revelara-ai/orion/internal/harness"
 	"github.com/revelara-ai/orion/internal/version"
 )
 
@@ -58,12 +59,14 @@ func main() {
 		os.Exit(exitConfig)
 	}
 
-	// E4-44 ships the contracts and wiring; the live LLM + tracker
-	// adapter integrations land in E4-46 / E4-49. Until then the
-	// worker exits 0 after announcing what it would have done.
+	mode := harness.MaterializerLocal
+	if envOr("K8S_HARNESS_ENABLED", "") == "true" {
+		mode = harness.MaterializerK8s
+	}
+	log.Printf("orion-worker: harness materializer mode=%s", mode)
 	log.Printf("orion-worker: tools registered: %d", len(registry.Definitions()))
 	log.Printf("orion-worker: model=%s max_turns=%d token_budget=%d", *model, *maxTurns, *tokenBudget)
-	log.Printf("orion-worker: agent runner wiring deferred to orion-e46 / orion-e48")
+	log.Printf("orion-worker: full agent + harness wiring deferred to orion-e48 (Conductor scheduler)")
 
 	// Demonstrate the runner wiring contract by constructing an
 	// LLMRunner with a fake generator; the agent surface is
