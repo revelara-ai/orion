@@ -38,19 +38,19 @@ type Decision struct {
 
 // DecideInput is the per-binding payload the cadence layer reads.
 type DecideInput struct {
-	Mode            CadenceMode
-	Now             time.Time
-	LastRunAt       time.Time // zero if never run
-	EligibleDepth   int
-	BacklogTarget   int // typically detection.backlog_target_depth from config
-	DailyInterval   time.Duration
-	WeeklyInterval  time.Duration
+	Mode           CadenceMode
+	Now            time.Time
+	LastRunAt      time.Time // zero if never run
+	EligibleDepth  int
+	BacklogTarget  int // typically detection.backlog_target_depth from config
+	DailyInterval  time.Duration
+	WeeklyInterval time.Duration
 }
 
 // Defaults per SPEC §15.1.
 const (
-	DefaultBacklogTarget = 20
-	DefaultDailyInterval = 24 * time.Hour
+	DefaultBacklogTarget  = 20
+	DefaultDailyInterval  = 24 * time.Hour
 	DefaultWeeklyInterval = 7 * 24 * time.Hour
 )
 

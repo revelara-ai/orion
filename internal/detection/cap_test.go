@@ -4,11 +4,11 @@ import "testing"
 
 func TestProgressiveCap_CapLimit(t *testing.T) {
 	cases := []struct {
-		name             string
-		maxPerRun        int
-		targetDepth      int
-		eligibleCount    int
-		want             int
+		name          string
+		maxPerRun     int
+		targetDepth   int
+		eligibleCount int
+		want          int
 	}{
 		{"target-current binds (10 headroom < 25 max)", 25, 20, 10, 10},
 		{"target-current binds (20 headroom < 25 max)", 25, 20, 0, 20},

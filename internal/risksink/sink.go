@@ -76,7 +76,7 @@ func (NoopSink) Submit(_ context.Context, _ uuid.UUID, _ Risk) (SinkResult, erro
 // "https://polaris.relynce-dev.example/api/v1").
 type PolarisSink struct {
 	BaseURL    string
-	APIKey     string
+	APIKey     string //nolint:gosec // G117: bearer token, intentionally serialized through this struct
 	HTTPClient *http.Client
 	// Timeout is applied per request. Defaults to 5s when zero.
 	Timeout time.Duration
@@ -122,11 +122,11 @@ func (s *PolarisSink) Submit(ctx context.Context, _ uuid.UUID, risk Risk) (SinkR
 	if client == nil {
 		client = &http.Client{Timeout: timeout}
 	}
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // G704: URL is operator-provided BaseURL from config, not user input
 	if err != nil {
 		return SinkResult{}, fmt.Errorf("risksink: do request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return SinkResult{Posted: true, Status: resp.StatusCode}, nil
 	}
@@ -150,10 +150,10 @@ type PendingQueue interface {
 // The default RetryAfter delay is 1 minute; production drains
 // schedule themselves.
 type LocalFallbackSink struct {
-	Upstream         Sink
-	Queue            PendingQueue
-	RetryAfterDelay  time.Duration
-	Endpoint         string // recorded on the pending row for the drain job
+	Upstream        Sink
+	Queue           PendingQueue
+	RetryAfterDelay time.Duration
+	Endpoint        string // recorded on the pending row for the drain job
 }
 
 // NewLocalFallbackSink composes an Upstream Sink with a Queue.

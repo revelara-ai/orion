@@ -113,8 +113,8 @@ func TestLoopGuard_OnlyFirstThreeConsidered(t *testing.T) {
 		mkRun(1, 10, 2),
 		mkRun(15, 10, 2),
 		mkRun(31, 10, 2),
-		mkRun(60, 0, 0),   // noise
-		mkRun(120, 0, 0),  // noise
+		mkRun(60, 0, 0),  // noise
+		mkRun(120, 0, 0), // noise
 	}
 	got := LoopGuardCheck(runs, time.Now())
 	if !got.Warning {

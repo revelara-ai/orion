@@ -32,17 +32,6 @@ func (s *stubNI) CountEligibleByRepo(_ context.Context, _ uuid.UUID) (int, error
 	return 0, nil
 }
 
-// stubGate records the autofile calls and approves them all.
-type stubGate struct {
-	calls []AutoFileInput
-}
-
-func (g *stubGate) MaybeFile(_ context.Context, runID string, in AutoFileInput) (AutoFileResult, error) {
-	g.calls = append(g.calls, in)
-	id := uuid.New()
-	return AutoFileResult{Filed: true, IssueID: &id, ExternalID: "stub#1"}, nil
-}
-
 // fakeRunsRepo is a minimal in-memory DetectionRunRepo replacement,
 // honoring the same Create/CountByBinding contract LoopDriver uses.
 // Real testcontainer-backed coverage lives in detection_run_test.go
