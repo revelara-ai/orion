@@ -36,7 +36,7 @@ func testHarness() *Harness {
 }
 
 func TestK8sMaterializer_Apply_CreatesAllObjects(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	m := NewK8sMaterializer(client, "orion-worker:test")
 	h := testHarness()
 
@@ -73,7 +73,7 @@ func TestK8sMaterializer_Apply_CreatesAllObjects(t *testing.T) {
 }
 
 func TestK8sMaterializer_Apply_IsIdempotent(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	m := NewK8sMaterializer(client, "img")
 	h := testHarness()
 
@@ -87,7 +87,7 @@ func TestK8sMaterializer_Apply_IsIdempotent(t *testing.T) {
 }
 
 func TestK8sMaterializer_Apply_RejectsBadNamespace(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	m := NewK8sMaterializer(client, "img")
 	h := testHarness()
 	h.Namespace = "BAD NAME"
@@ -98,7 +98,7 @@ func TestK8sMaterializer_Apply_RejectsBadNamespace(t *testing.T) {
 }
 
 func TestK8sMaterializer_Teardown_DeletesNamespace(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	// Pre-create namespace so Delete finds it.
 	_, _ = client.CoreV1().Namespaces().Create(context.Background(),
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "orion-run-x"}},
@@ -114,7 +114,7 @@ func TestK8sMaterializer_Teardown_DeletesNamespace(t *testing.T) {
 }
 
 func TestK8sMaterializer_Teardown_AbsentNamespaceIsNoError(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	m := NewK8sMaterializer(client, "img")
 	err := m.Teardown(context.Background(), &MaterializedHarness{Namespace: "absent"})
 	if err != nil {

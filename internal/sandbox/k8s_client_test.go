@@ -11,7 +11,7 @@ import (
 )
 
 func TestKubernetesPodCreator_Create_CreatesPod(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	c := NewKubernetesPodCreator(client, "orion-worker:test")
 	res, err := c.Create(context.Background(), PodCreateIntent{
 		Namespace: "orion-run-x", PodName: "worker-1", WorkspaceKey: "wsk",
@@ -32,7 +32,7 @@ func TestKubernetesPodCreator_Create_CreatesPod(t *testing.T) {
 }
 
 func TestKubernetesPodCreator_DuplicateIsIdempotent(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	c := NewKubernetesPodCreator(client, "img")
 	intent := PodCreateIntent{Namespace: "ns", PodName: "p", WorkspaceKey: "k"}
 	if _, err := c.Create(context.Background(), intent); err != nil {
@@ -48,7 +48,7 @@ func TestKubernetesPodCreator_DuplicateIsIdempotent(t *testing.T) {
 }
 
 func TestKubernetesNamespaceProvisioner_Provision(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	p := NewKubernetesNamespaceProvisioner(client)
 	runID := uuid.New()
 	res, err := p.Provision(context.Background(), NamespaceSpec{
@@ -71,7 +71,7 @@ func TestKubernetesNamespaceProvisioner_Provision(t *testing.T) {
 }
 
 func TestKubernetesNamespaceProvisioner_DuplicateIsIdempotent(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	p := NewKubernetesNamespaceProvisioner(client)
 	runID := uuid.New()
 	spec := NamespaceSpec{RunID: runID, Name: RunNamespaceName(runID)}
@@ -88,7 +88,7 @@ func TestKubernetesNamespaceProvisioner_DuplicateIsIdempotent(t *testing.T) {
 }
 
 func TestKubernetesNamespaceProvisioner_DeleteAbsentIsNoError(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	p := NewKubernetesNamespaceProvisioner(client)
 	if err := p.Delete(context.Background(), "absent"); err != nil {
 		t.Errorf("Delete absent: %v", err)
@@ -96,7 +96,7 @@ func TestKubernetesNamespaceProvisioner_DeleteAbsentIsNoError(t *testing.T) {
 }
 
 func TestKubernetesNetworkPolicyApplier_Apply(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	a := NewKubernetesNetworkPolicyApplier(client)
 	if err := a.Apply(context.Background(), NetworkPolicySpec{
 		Namespace:          "orion-run-x",
@@ -114,7 +114,7 @@ func TestKubernetesNetworkPolicyApplier_Apply(t *testing.T) {
 }
 
 func TestKubernetesNetworkPolicyApplier_Apply_Idempotent(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	a := NewKubernetesNetworkPolicyApplier(client)
 	spec := NetworkPolicySpec{Namespace: "ns"}
 	if err := a.Apply(context.Background(), spec); err != nil {
@@ -126,7 +126,7 @@ func TestKubernetesNetworkPolicyApplier_Apply_Idempotent(t *testing.T) {
 }
 
 func TestKubernetesNetworkPolicyApplier_Remove(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	a := NewKubernetesNetworkPolicyApplier(client)
 	_ = a.Apply(context.Background(), NetworkPolicySpec{Namespace: "ns"})
 	if err := a.Remove(context.Background(), "ns"); err != nil {
@@ -139,7 +139,7 @@ func TestKubernetesNetworkPolicyApplier_Remove(t *testing.T) {
 }
 
 func TestKubernetesPodCreator_RejectsEmptyFields(t *testing.T) {
-	c := NewKubernetesPodCreator(fake.NewSimpleClientset(), "img")
+	c := NewKubernetesPodCreator(fake.NewClientset(), "img")
 	cases := []PodCreateIntent{
 		{Namespace: "ns", PodName: "p"},
 		{WorkspaceKey: "k", PodName: "p"},
