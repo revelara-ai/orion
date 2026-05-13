@@ -215,7 +215,7 @@ func (r *DetectionFindingRepo) CreateBatch(ctx context.Context, findings []Detec
 		}
 		controlCodes[i] = codes
 		filePaths[i] = f.FilePath
-		lineNos[i] = int32(f.LineNo)
+		lineNos[i] = int32(f.LineNo) //nolint:gosec // G115: file line numbers from rvl-cli are bounded well below int32 max
 		fingerprints[i] = f.Fingerprint
 		dedupSigs[i] = f.DedupSignature
 		suppressed[i] = f.Suppressed

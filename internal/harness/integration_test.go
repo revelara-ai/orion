@@ -17,10 +17,10 @@
 // follow-up issue against orion-sfp). It documents the contract the
 // real materializer MUST satisfy:
 //
-//   1. `kubectl apply -f -` of plan.ManifestYAML succeeds
-//   2. The namespace exists after apply
-//   3. The NetworkPolicy denies egress (verified by a curl probe pod)
-//   4. Teardown removes the namespace within plan.GraceSeconds
+//  1. `kubectl apply -f -` of plan.ManifestYAML succeeds
+//  2. The namespace exists after apply
+//  3. The NetworkPolicy denies egress (verified by a curl probe pod)
+//  4. Teardown removes the namespace within plan.GraceSeconds
 //
 // Until the materializer ships, this test only verifies (1) and (2).
 package harness

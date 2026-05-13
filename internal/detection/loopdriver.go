@@ -232,10 +232,10 @@ func (d *LoopDriver) Tick(ctx context.Context, in LoopInput) (TickResult, error)
 		}
 
 		classified = append(classified, classifiedFinding{
-			finding:        f,
-			sig:            sig,
-			deduped:        deduped,
-			orionFiledHit:  orionFiledHit,
+			finding:       f,
+			sig:           sig,
+			deduped:       deduped,
+			orionFiledHit: orionFiledHit,
 		})
 	}
 
@@ -542,4 +542,3 @@ func modeToRepos(m LoopMode) repos.DetectionRunMode {
 		return repos.DetectionModeFull
 	}
 }
-
