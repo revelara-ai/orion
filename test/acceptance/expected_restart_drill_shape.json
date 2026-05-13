@@ -1,0 +1,49 @@
+{
+  "_comment": "Canonical Epic 4 restart-recovery contract per SPEC §7, §14, §18.2, §25.3. orion-e4a (this bookend) pins the contract; orion-e4f extends the smoke test to assert it end-to-end against minikube. Each invariant is a shell-verifiable check the future automated drill runs against the actual runs + issue_claims + worker_sessions rows after killing the leader Conductor mid-run.",
+
+  "fixture": {
+    "path": "test/acceptance/fixtures/epic4-conductor",
+    "module": "github.com/revelara-ai/orion/test/acceptance/fixtures/epic4-conductor",
+    "files": ["client.go", "external.go", "errors.go"]
+  },
+
+  "backlog": {
+    "path": "test/acceptance/fixtures/epic4-conductor/backlog.json",
+    "issues": 2
+  },
+
+  "invariants": {
+    "conductor_replicas": 2,
+    "must_not_double_spawn": true,
+    "must_respect_fencing_token": true,
+    "lookout_resumes_after_kill": true,
+    "namespace_torn_down_on_exit": true,
+    "run_states_observed": ["created", "claimed", "in_progress", "completed"],
+    "issue_claim_states_observed": ["pending", "claimed", "released", "completed"],
+    "worker_session_phases_observed": ["spawn_requested", "spawning", "running", "verifying", "pr_opened", "completed"]
+  },
+
+  "exit_codes": {
+    "0":  "smoke passed",
+    "10": "drill unit tests failed",
+    "11": "fixture directory missing or malformed",
+    "12": "expected_restart_drill_shape.json missing or malformed",
+    "13": "restart-recovery invariant violated (live mode only)",
+    "14": "pre-condition failed (missing env, missing binary, slice not yet built)",
+    "20": "safety violation: target resolved to upstream",
+    "30": "orion-cli or orion-worker build failed",
+    "99": "unexpected error"
+  },
+
+  "minikube_runbook": {
+    "path": "docs/runbooks/epic4_smoke.md",
+    "required_binaries": ["kubectl", "minikube", "psql", "jq"],
+    "required_env": [
+      "POSTGRES_DSN",
+      "ORION_TENANT_ID",
+      "ORION_NAMESPACE",
+      "ORION_LEADER_LEASE_SECONDS",
+      "ORION_FIXTURE_REPO_PATH"
+    ]
+  }
+}
