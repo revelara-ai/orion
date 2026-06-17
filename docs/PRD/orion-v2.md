@@ -67,6 +67,8 @@ The shape of the loop:
 
 **The completion criterion is proof, not assertion.** A task is "done" only when independent, non-agentic verification converges across three modes — behavioral (tests, mutation-scored), empirical (Lookout-style shell probes of the running artifact), and hazard (STPA-derived: the unsafe control actions are controlled). Proof is the right to ship: when the bar is met at the project's reliability tier, Orion delivers autonomously; when it cannot be met, Orion falls back to a proven, human-mergeable change.
 
+**Why this is the durable bet (commodity models).** Orion's reliability comes from the loop, not the model — the same way microservice architecture delivered reliable systems on cheap, unreliable commodity hardware (because hardening the hardware itself was prohibitively expensive). Orion treats the generation model as a fallible, swappable component and puts the guarantees in independent proof, bounded steps, and embedded reliability knowledge. V2 is therefore **model-agnostic by construction** — frontier models today because they are the best components available, commodity models as they mature — and Orion's value *increases* as generation commoditizes. No requirement in this PRD may depend on a specific model's behavior; anything that does is a design defect.
+
 **This PRD defines the full V2 product and phases delivery.** The first buildable slice — **V2.0** — proves the entire loop on one path: *a developer states an idea in the TUI and receives a proven, instrumented, runnable Go service.* Polyglot (Go/TS/Python) and brownfield intake are full-V2 scope, phased after the tracer bullet.
 
 ### Phasing
@@ -136,6 +138,16 @@ The shape of the loop:
 34. As a developer, I want Orion to treat injected or stale instructions as a threat, so that memory poisoning can't quietly corrupt intent across the run.
 35. As a developer, I want per-step confidence tracked and a circuit breaker that escalates to me when confidence degrades, so that the loop stops compounding errors instead of grinding on.
 
+### Developer — reliability touchpoint (Orion subsumes rvl-cli)
+
+36. As a developer, I want Orion to be my single reliability touchpoint, so that I don't run a separate CLI — Orion does everything rvl-cli does and drives the build loop too.
+37. As a developer, I want to authenticate to Revelara/Polaris from Orion (`login`/`logout`/`status`), so that one tool holds my platform connection.
+38. As a developer, I want to run a reliability scan from Orion that detects risks and saves them to my register, so that scanning is part of the same loop that fixes them (the rvl multi-agent scan, run by Orion's specialist fleet).
+39. As a developer, I want Orion to read and write risks natively to Polaris (list/show/resolve, and open new risks it finds), so that the risk register stays current without a second tool.
+40. As a developer, I want Orion to submit evidence to Polaris when a control is implemented and verified by proof, so that "proven" in Orion becomes "evidenced" in Polaris automatically.
+41. As a developer, I want Orion to query the 61-control catalog and search the org knowledge base (facts, patterns, procedures) during the loop, so that reliability context is applied as work happens.
+42. As a developer, I want Orion to contribute knowledge and failure modes back to Polaris (with my confirmation), so that what one run learns, the org keeps.
+
 ## Data Flow Traces
 
 > Runtime is local; the **Project Context Store** is the durable source of truth (V2.0 default backing: an embedded store — see Implementation Decisions). "Module" references are target package boundaries, not committed file paths.
@@ -155,7 +167,7 @@ The shape of the loop:
 
 1. Accepted spec → **Task Decomposer** (reuses [Task-Decomposer-Spec](Task-Decomposer-Spec.md)) → `decomposer`.
 2. Decomposer queries the Context Store for relevant prior context (existing code map, decision log, Polaris context) → `context-store` recall API.
-3. Decomposer emits a DAG of `Task` nodes, each carrying its own `VerificationContract` (what proof this task owes) → persisted as `context-store` (`tasks`, `task_edges`).
+3. Decomposer emits an **Epic** whose `Task` nodes form a dependency DAG, each carrying its own `ProofObligation` (what proof this task owes) → persisted as `context-store` (`epics`, `tasks`, `task_deps`).
 4. TUI renders the DAG so the developer can review the plan before execution → `tui` (plan view).
 5. Conductor selects ready tasks (no unmet dependencies) and dispatches each to a specialist agent over the A2A protocol → `orchestrator/dispatch`, `a2a`.
 
@@ -198,15 +210,155 @@ The shape of the loop:
 3. The **Context Engine** budgets the bundle to the agent's window, prioritizing intent-anchoring content, and stamps it with a re-anchor checkpoint → `context-engine`.
 4. Agent proceeds with reconstructed, bounded, intent-anchored context — no dependence on in-memory session state.
 
+## The Opinionated Reliability Loop (canonical execution map)
+
+> This is the spine of the product: Orion's opinionated develop-and-deploy loop, mapped step by step. Each step is classified by **execution kind** so that implementation is unambiguous and `/prd-to-issues` can cut the right work item: a deterministic step becomes library/tool code; an LLM step becomes a prompt/agent; a hybrid step becomes both (an LLM proposal behind a deterministic gate). This map is normative — the data-flow traces above show *what data moves*; this shows *what runs, and whether a machine or a model does it.*
+
+**Execution-kind legend** · **DET** = deterministic (library/shell/git/file-IO/MCP tool/API — no model judgment) · **LLM** = model interpretation/generation/judgment · **HYB** = LLM proposes, deterministic code verifies/gates.
+**Trust legend** · **C** Conductor (control) · **G** Generation (untrusted) · **P** Proof (trusted) · **S** Context Store · **X** external (Polaris / git / package registry).
+**A note on tooling:** every DET step is a candidate for an MCP tool or a plain Go library call; the right column names the concrete mechanism. LLM steps always run against the model as a swappable component (commodity-model principle).
+
+### Phase A — Intent → Executable Spec
+
+| # | Step | Kind | Mechanism | Trust | Writes |
+|---|---|---|---|---|---|
+| A1 | Capture intent from TUI | DET | TUI input event | C | raw intent |
+| A2 | **Branch:** classify intake (idea · design doc · existing spec · backlog item) | HYB | rules + LLM fallback | C | intake_mode |
+| A3 | Read existing spec / design doc / repo signals (if present) | DET | file IO, git read, MCP fs | C | source material |
+| A4 | Completeness analysis vs required-decisions checklist | HYB | rules checklist (DET) + LLM enrichment (cassette-replayable) | C | OpenDecisions |
+| A5 | Grill loop: ask clarifying questions, capture answers | LLM (ask) + DET (capture) | LLM question-gen; TUI capture | C↔human | decisions |
+| A6 | Compile executable spec + `ResponseContract` from approved decisions; human ratifies/amends | HYB | LLM compile → human approval (DET) | C→P | spec (accepted), ResponseContract |
+| A7 | Hash + anchor spec | DET | hash, store write | S | spec hash/anchor |
+
+### The Executable Spec: required dimensions (the first line of defense)
+
+The spec compiled in A6 is not just functional behavior. A **reliable, executable spec** must reach explicit alignment on the dimensions below *before* implementation — because each one is the seed of a control loop downstream. Leaving a dimension unspecified is how an uncontrolled control action reaches production: no stated scale → no concurrency/capacity controls; no stated observability → a system that can't be operated; no stated escalation → an alert with nobody on the other end. The completeness gate (A4) treats missing dimensions as `OpenDecisions` and grills for them (A5); the **reliability tier** calibrates which are mandatory and how precise they must be. These decisions flow directly into Phase C (which Polaris controls/knowledge are relevant), Phase D (what tasks and `ProofObligation`s exist), and Phase E (the STPA control structure the hazard mode models).
+
+| Dimension | Captures | Precise form (with fallback) | Flows to |
+|---|---|---|---|
+| **Functional intent** | what it does | behavioral requirements → `ResponseContract` | proof (behavioral/empirical) |
+| **Scale / load profile** | expected traffic + shape | X requests over Y window **+ request weight** (payload size, fan-out, CPU cost); fallback presets **low / medium / high** | capacity & concurrency controls; perf proof; tier |
+| **Observability** | what's monitored & how | required signals (traces / metrics / logs), collection method (e.g. OTel), and export targets/integrations (e.g. Grafana, Datadog); fallback = tier-default signal set | instrumentation deliverables; control-loop observability (E10) |
+| **On-call & escalation** | who to contact when it breaks | support method, escalation path/tiers, alert+notification tooling (e.g. PagerDuty/Slack); fallback = "single owner, log-only alert" | runbook; alert wiring; the 3 a.m. test |
+| **Data & storage** | what persists, where | stores used, durability/consistency/retention, PII/sensitivity; fallback = "no persistence" | storage controls; reversibility gates; secret handling; tier |
+| **Availability / SLO** | reliability targets | uptime/latency objectives + error budget; fallback = tier-default SLO | resilience controls; deployment-bar strictness |
+| **Security & compliance** | trust + regulation | authn/z model, data classification, regulated domain; fallback = "untrusted input, no regulated data" | tier; security gates; hazard UCAs |
+| **Dependencies & integrations** | external services it calls | downstream services/APIs and their failure modes; fallback = "none" | provenance; timeouts/retries/circuit breakers; hazard control structure |
+
+> This list is intended to be complete enough to gate V2.0 but **extensible** — new dimensions register as new checklist entries and new control-structure seeds. The principle is fixed: *a dimension that affects a control loop must be decided in the spec, not discovered in production.*
+
+### Phase B — Repository & Worktree (git operations)
+
+| # | Step | Kind | Mechanism | Trust | Writes |
+|---|---|---|---|---|---|
+| B1 | **Branch:** greenfield → scaffold new repo · brownfield → locate + clone/open existing | DET | git, scaffolder, MCP git | C | repo handle |
+| B2 | Checkout main / base branch | DET | git | C | base ref |
+| B3 | Create isolated worktree | DET | `git worktree`, MCP git | C | worktree path |
+| B4 | Initialize sandbox over the worktree | DET | sandbox backend (gVisor/container/microVM) | C/S | sandbox handle |
+| B5 | Brownfield only: build architectural/code map of existing repo | HYB | static analysis (DET) + LLM summarization | C (read-only) | code map |
+
+### Phase C — Context & Reliability Loading
+
+| # | Step | Kind | Mechanism | Trust | Writes |
+|---|---|---|---|---|---|
+| C1 | Connect/auth to Polaris (if not cached) | DET | polaris-connector API | X | session |
+| C2 | Pull/refresh controls catalog · risk register · KB (relevance-filtered, cached, TTL) | DET | polaris-connector API + local cache | X→S | polaris_context |
+| C3 | Reliability scan of target — dispatch `rvl:*` detector fleet, correlate, save risks | LLM (fleet) + DET (correlate/persist) | reliability-scan + agent-runtime; risk write | G→X/S | risks/findings |
+| C4 | Search KB / facts / patterns / procedures relevant to spec | HYB | embedding/keyword search (DET) + LLM relevance | X→S | retrieved context |
+| C5 | Determine reliability tier from risk dimensions | HYB | LLM classify → human confirm | C | tier |
+
+### Phase D — Decomposition → Epics & Tasks → Tracker
+
+> **Terminology (use agile/PM language).** An accepted spec becomes an **Epic** — the unit of delivery. The Epic decomposes into **Tasks**, with dependency edges between them; that dependency graph *is* the DAG (we keep "DAG" only as a parenthetical annotation where the graph structure matters). This is deliberate: the tracker projection (beads / GitHub Issues / Jira) already speaks Epic/Task, so Orion's source-of-truth uses the same nouns it projects.
+
+| # | Step | Kind | Mechanism | Trust | Writes |
+|---|---|---|---|---|---|
+| D1 | Decompose spec → an **Epic** of **Tasks** with dependency edges (the DAG); each Task gets a `ProofObligation` | LLM | decomposer | C | epic, tasks, task_deps, proof_obligations |
+| D2 | Coverage gate: every spec requirement maps to ≥1 `ProofObligation` across the Epic's Tasks | DET | set check | C | gate result |
+| D3 | Render the Epic/Task plan for human approval | DET (render) + human | TUI / web design pane | C↔human | plan_approved_at |
+| D4 | Write Epic + Tasks to the issue tracker (projection) | DET | beads/GitHub/Jira adapter | S→X | tracker projection |
+| D5 | Persist Epic + Task graph to Context Store | DET | store write (txn) | S | epic + task graph |
+
+### Phase E — Per-Issue Coding / Verification Loop  *(for each ready task)*
+
+| # | Step | Kind | Mechanism | Trust | Writes |
+|---|---|---|---|---|---|
+| E1 | Mark issue `in_progress` (store + tracker) | DET | store txn + tracker write | S/X | task.status |
+| E2 | Recall: assemble bounded, budgeted context bundle | DET (windowed query) + HYB (relevance/budget) | context-store + context-engine | S | ContextBundle |
+| E3 | Dispatch specialist generator (A2A, bounded, sandboxed) | LLM | agent-runtime + a2a + sandbox | G | artifacts, EvidenceClaim |
+| E4 | Dependency provenance check on new deps (existence + provenance) | DET | registry API + heuristics | P/X | provenance verdict (gate) |
+| E5 | Secret scan of generated artifact | DET | scanner | P | secret findings (gate) |
+| E6 | Persist artifacts (+ untrusted EvidenceClaim) | DET | store txn | S | artifacts, task_attempts |
+| E7 | Mark issue `being_validated` | DET | store + tracker | S/X | task.status |
+| E8 | **Behavioral proof:** harness-side test synthesis from spec → run → mutation score | HYB (synth in **P**) + DET (run/mutation) | proof/test-synthesis + proof/behavioral | P | proof(behavioral) |
+| E9 | **Empirical proof:** run real entry point + probe (per-type adapter) vs ResponseContract + control-loop tests | DET | proof/empirical (Lookout) | P | proof(empirical) |
+| E10 | **Hazard proof:** model STPA control structure → derive UCAs → check controls → test control actions/loops | HYB (LLM model) + DET (checks) | proof/hazard | P | proof(hazard) |
+| E11 | `Converge(behavioral, empirical, hazard)` → Verdict (+ dissenting modes) | DET | truth-align | P | verdict |
+| E12 | Degradation check vs previous attempt (per-dimension) | DET | metric compare | P | degradation result |
+| E13 | **Branch on verdict:** Accept → proven · Reject/Inconclusive → re-loop (iteration budget) · degraded → terminate | DET | conductor state machine | C | task.status |
+| E14 | Drift check / re-anchor (cheap-first; escalate on threshold) | HYB | context-engine (embedding DET + LLM re-anchor) | C | drift score |
+| E15 | Per-step confidence + circuit breaker (harness-derived signals) | DET | conductor | C | breaker state |
+| E16 | Mark issue `done` — store-enforced: requires `proof_id` with verdict=Accept | DET | store constraint + tracker | S/X | task.status=done |
+
+### Phase E2 — Change Coordination & Integration
+
+> The hard part of a multi-agent loop: many independent agents producing changes that must merge into one coherent codebase without clobbering each other or main. This layer is deliberately conservative — **no change is silently overwritten, and every integration is re-proven on the merged tree.** It mirrors and generalizes the existing `/queue` (serialized merge worker) and `/resolve` (rebase-conflict resolver) patterns.
+
+**Coordination policies (normative):**
+
+- **Avoid conflicts before they happen (partition + leases).** The decomposer partitions Tasks to minimize file/path overlap; each Task declares its expected **file scope**. The Conductor grants **path leases** over that scope — a Task whose scope overlaps an active lease *waits* rather than editing concurrently. This makes "two agents editing the same code at once" the rare exception, not the norm.
+- **Isolation:** each Task works in its own worktree (Phase B3); agents never share a working tree.
+- **Serialized integration (singleton lock):** proven Tasks enter one integration queue, processed one at a time onto the Epic's integration head — no parallel merges.
+- **Re-prove after integration is mandatory.** A Task proven *in isolation* is necessary but not sufficient: the integration head may have moved, so proof is re-run on the **merged** tree before the change counts. This is the defense against "main changed while the agent was working."
+- **Conflict resolution, never silent resolution.** A rebase conflict dispatches a resolver agent that merges preserving *both* intents, then re-proves; if it can't, it escalates to the human. Conflicts are never auto-discarded.
+- **Winner policy:** leases prevent same-path collisions; if one still occurs, the queue serializes — the first Task integrates, the second rebases onto the result and re-proves. Neither side is silently dropped.
+- **Rollback on red:** if post-merge proof fails, the integration is hard-reset and the Task returns to the coding loop; the integration head is never left broken.
+
+| # | Step | Kind | Mechanism | Trust | Writes |
+|---|---|---|---|---|---|
+| E2.1 | Acquire path lease for the Task's declared file scope (queue if it overlaps an active lease) | DET | lease manager | C | lease |
+| E2.2 | Enqueue the proven Task into the serialized integration queue (singleton lock) | DET | integration queue | C/S | queue entry |
+| E2.3 | Rebase the Task worktree onto current integration head | DET | git rebase | C | rebased tree |
+| E2.4 | **Branch:** rebase conflict? → dispatch resolver agent (merge preserving both intents); unresolved → escalate | HYB (resolver) + DET (git) | resolver agent + git | G→C | resolution / escalation |
+| E2.5 | Pre-merge gates on the rebased tree (build, lint, fast checks) | DET | shell / CI | P | gate result |
+| E2.6 | Merge into the integration head | DET | git merge | C | merged tree |
+| E2.7 | **Re-prove on the integrated tree** (behavioral + empirical + hazard) — isolated proof is not enough | HYB/DET | proof harness | P | post-merge verdict |
+| E2.8 | **Branch:** green → advance head, release lease, mark `integrated` · red → hard-reset rollback, return Task to loop | DET | git + store txn | C | head / rollback |
+
+> **Open design choice flagged:** lease granularity (file vs. package vs. symbol range) trades parallelism against collision rate. V2.0 default is **file-scope leases**; finer granularity is a later optimization. The integration queue is per-Epic in V2.0 (one Epic in flight); cross-Epic integration ordering is a V2.1+ concern.
+
+### Phase F — Delivery & Deployment Bar
+
+| # | Step | Kind | Mechanism | Trust | Writes |
+|---|---|---|---|---|---|
+| F1 | On DAG complete: evaluate deployment bar vs tier | DET | delivery | C | bar decision |
+| F2 | Generate instrumentation + runbook + operating envelope | HYB (LLM author) + DET (validate completeness) | generation + proof | G→P | runbook, envelope |
+| F3 | **Branch:** bar met + autonomy permitted (V2.3) → deliver autonomously (commit/merge/deploy) · else → human-mergeable PR/artifact | DET | git/CI, delivery | C/X | delivery |
+| F4 | Reversibility gate on any destructive delivery op (interception, not declaration) | DET | sandbox syscall/egress interception → human approve | C/S | approval record |
+| F5 | Record delivery + operating envelope | DET | store txn | S | deliveries |
+| F6 | Submit evidence to Polaris for proven controls | DET | polaris-connector (evidence) | X | evidence |
+
+### Phase G — Learning Write-back
+
+| # | Step | Kind | Mechanism | Trust | Writes |
+|---|---|---|---|---|---|
+| G1 | Record observed failure modes locally (canonical_key dedup) | DET | store write | S | failure_modes |
+| G2 | Resolve/update risks in Polaris (proven-fixed) | DET | polaris-connector (risk) | X | risk status |
+| G3 | Contribute knowledge / failure modes back (V2.3; minimized + redacted + human-confirm) | HYB (LLM redact) + DET (submit) + human gate | polaris-connector (knowledge) | X | contributions |
+
+**Cross-cutting (run throughout, not a phase):** budget accounting (DET), TUI liveness/progress events (DET), structured self-instrumentation logs/traces (DET), signal-handler cleanup on abort (DET), context-store transactional writes (DET). These are specified in the Harness Reliability and Resource & Cost Governance sections.
+
+> **Implication for issue-cutting:** the DET steps are the "MCP tool / library code" paths the request calls out (git, worktree, shell verification, registry checks, tracker writes, store txns, scanners); the LLM/HYB steps are the model-interpretation paths (completeness, grilling, decomposition, generation, test/hazard synthesis, drift, redaction). V2.0 builds Phases A–F on the Go-greenfield-service path; brownfield (B5), tracker projection (D4 GitHub), polyglot proof adapters (E8–E10), and write-back (G2–G3) phase in per the roadmap.
+
 ## UI Navigation
 
-> Orion V2's primary surface is a **TUI**. "Navigation" = panes/views and the commands that switch between them. There is no web UI in V2; Polaris (separate product) retains its own web UI.
+> Orion V2's **primary** surface is a **TUI** — the developer↔Conductor conversation and control live there. An **optional companion web surface** complements it for the two things a terminal does poorly: (1) presenting visual design options/mockups for approval, and (2) richer fleet/proof observability dashboards. The web surface is read-mostly-plus-approve; it never replaces the TUI as the control plane, and the loop is fully operable from the TUI alone. (Polaris, a separate product, retains its own web UI.)
 
 | View / Pane | How reached | Empty State | Gating |
 |---|---|---|---|
 | **Conversation** (default) | Launch `orion` | "Describe what you want to build, or point me at a repo or backlog." | always |
 | **Spec review** | Auto-shown when the completeness gate produces an accepted-pending spec; `:spec` | "No spec yet — still clarifying intent." | always |
-| **Plan / Task DAG** | `:plan` or auto on decomposition | "No plan yet — approve a spec to generate tasks." | always |
+| **Plan (Epic / Tasks)** | `:plan` or auto on decomposition | "No plan yet — approve a spec to generate the Epic." | always |
 | **Fleet status** | `:fleet` | "No agents active." | always |
 | **Proof / Evidence** | `:proof <task>` or selecting a task | "No proofs yet — tasks are still in progress." | always |
 | **Transcript / decision log** | `:log` | "No decisions recorded yet." | always |
@@ -216,24 +368,74 @@ The shape of the loop:
 
 Interaction model: the developer mostly lives in **Conversation**; the Conductor proactively raises **Escalations** (the "pull the human in" moment) and surfaces **Spec review** / **Plan** for approval gates. **Fleet status** and **Proof** are observability panes — visible on demand, never required for the happy path.
 
+### Companion web surface (optional, phased)
+
+A local web app Orion can serve when richer-than-terminal interaction helps. Scope is deliberately narrow:
+
+| Web view | Purpose | Approve here? |
+|---|---|---|
+| **Design review** | Render visual design options/mockups for a spec or UI decision and collect feedback (can leverage design tooling, e.g. Stitch/Figma, to generate candidates) | yes — design-decision approval can happen in the web view or the TUI |
+| **Fleet & proof dashboard** | Live view of the agent fleet, the Epic/Task graph, integration queue, and proof results | no — observability only |
+
+Principles: the TUI remains the authoritative control plane and conversational surface; any approval made in the web surface is recorded as a `decision`/approval in the Context Store exactly as a TUI approval would be (one source of truth); the web surface is **optional** (the loop runs headless/TUI-only without it). Phasing: fleet/proof dashboard is the simpler first cut; visual design-review is the higher-value piece for design-heavy work — both land post-V2.0 unless a tracer-bullet need pulls them earlier.
+
+## Scope: Orion as the Reliability Touchpoint (subsumes rvl-cli)
+
+Orion is intended to **supplant rvl-cli as the developer's primary touchpoint** and absorb its capabilities, so reliability scanning, the risk register, knowledge, and evidence live inside the same loop that builds and proves software — not in a separate tool the developer has to remember to run.
+
+**rvl-cli capabilities Orion absorbs** (current rvl surface, for parity):
+
+| rvl-cli capability | Orion home | Notes |
+|---|---|---|
+| `rvl login/logout/status`, `config` | `polaris-connector` + `:status`/CLI | One platform connection lives in Orion. |
+| `rvl init` (project + agent plugin) | `cmd/orion init` | Orion *is* the agent harness, so "install the plugin" collapses into Orion itself. |
+| `/rvl:scan` (multi-agent risk scan) | `reliability-scan` (uses the `rvl:*` fleet) | Scanning becomes a phase of the loop, feeding the same register the loop remediates. |
+| `rvl risk` (list/show/resolve) + open new | `polaris-connector` (risks) | Read **and** write; the loop opens risks it finds and resolves risks it proves fixed. |
+| `rvl control` (61-control catalog) | `polaris-connector` (controls) | Consumed as reliability context on every task. |
+| `rvl knowledge` (search KB) | `polaris-connector` (knowledge) + `context-engine` | Facts/patterns/procedures injected during the loop; contributable back. |
+| `rvl evidence` (submit/manage) | `polaris-connector` (evidence) | A proof-passed control auto-produces evidence (see data flow below). |
+| `/rvl:fix`, `/rvl:ask`, `/rvl:review` | the loop + Conductor conversation | Remediation/Q&A/review become native Conductor interactions, not separate commands. |
+
+**Native Polaris read/write — data flows:**
+
+- **Evidence (write):** when a task's proof verdict is `Accept` for a control-bearing change, `delivery`/`polaris-connector` submits structured evidence to Polaris (control id + the proof envelope) → Polaris evidence store. *"Proven in Orion" becomes "evidenced in Polaris" automatically.*
+- **Risk (read+write):** the `reliability-scan` and proof harness open risks for findings they cannot fix in-loop; the loop resolves risks whose controls it proves implemented; `:risks` reads the register. Risks carry the Orion run id for traceability.
+- **Knowledge (read+write):** the loop reads facts/patterns/procedures relevant to the spec/tier; with developer confirmation it contributes newly-validated patterns and observed failure modes back (the learning loop; minimized + redacted per Security Requirements).
+- **Controls (read):** the 61-control catalog is reliability context for decomposition and proof rigor.
+
+**Deployment split (interactive vs. headless):** Orion is exposed as **(a) the interactive TUI** (primary) and **(b) non-interactive `orion` CLI subcommands** for CI/agent/headless use — the same surface the acceptance criteria exercise. rvl-cli's headless niche is served by Orion's CLI mode, so rvl-cli can be deprecated once parity is reached.
+
+**Phasing of the touchpoint:**
+
+| Capability | Phase |
+|---|---|
+| Auth, `status`, controls/KB/risk **read**, reliability scan | V2.0 |
+| Risk **write** (open/resolve), evidence **submit** | V2.1 |
+| Knowledge **contribute**, failure-mode write-back | V2.3 |
+| rvl-cli deprecation (after full parity verified) | V2.3+ |
+
+> **Parity prerequisite:** the exact rvl-cli command/flag/output inventory and the Polaris API contracts (risk/evidence/knowledge/control endpoints) must be captured from the rvl-cli repo and the Polaris API as a first design task, alongside the Triad reconciliation table. Orion's CLI surface must be a strict superset so no rvl-cli workflow regresses.
+
 ## Implementation Decisions
 
 ### Modules (target boundaries; deep modules favored)
 
 1. **`tui`** — terminal UI. Conversation, approval gates, observability panes, escalation modals. Shallow/presentation; talks to the Conductor over an internal event channel. *(Comparator UX: Gastown/Hermes/Pi.)*
 2. **`orchestrator` (the Conductor)** — deep module. Owns intent intake, the **completeness gate**, dispatch, truth alignment, drift re-anchoring, the circuit breaker, and the deployment-bar decision. Interface: `Conductor.Submit(intent)`, `Conductor.Answer(decision)`, `Conductor.Interrupt()`, `Conductor.Status()`. Reuses [Orchestrator-Logic-Spec](Orchestrator-Logic-Spec.md).
-3. **`decomposer`** — deep module. `Decompose(spec, context) → TaskDAG`, each node carrying a `VerificationContract`. Reuses [Task-Decomposer-Spec](Task-Decomposer-Spec.md).
+3. **`decomposer`** — deep module. `Decompose(spec, context) → Epic{Tasks, deps}` — produces an **Epic** whose **Tasks** form a dependency DAG; each Task carries a `ProofObligation` and a **declared file scope** (used for path leasing in integration). Partitions Tasks to minimize file-scope overlap. Re-derives the [Task-Decomposer-Spec](Task-Decomposer-Spec.md) concept.
 4. **`context-store`** — deep module; **the durable source of truth**. `Put/Get/Recall` over spec, decisions, tasks/DAG, attempts, proofs, deliveries, failure modes, Polaris context. Exposes a `Recall(task_id) → ContextBundle` API. Backed by an embedded store in V2.0 (see below). A **tracker projection adapter** syncs the task subset out to beads or GitHub Issues (V2.1); the tracker is a *view*, never the source of truth.
 5. **`context-engine`** — deep module. Context-window budgeting, intent-anchoring, drift detection + re-anchoring, memory-poisoning defense. Interface: `BudgetBundle(bundle, window) → PromptContext`, `DetectDrift(active, spec) → DriftScore`.
 6. **`a2a`** — agent-to-agent message protocol + bus. Structured `Intent`/`Payload`/`VerificationContract`/`Response Envelope`. Reuses [A2A-Protocol-Spec](A2A-Protocol-Spec.md).
-7. **`agent-runtime`** — specialist agent registry + lifecycle. Single-task agents (generator, test-author, instrumentor, dependency-checker, etc.), each bounded and sandboxed. Interface: `Registry.Spawn(role, task) → AgentHandle`.
+7. **`agent-runtime`** — specialist agent registry + lifecycle for the **generation domain**. Single-task agents (generator, instrumentor, conflict **resolver**, `rvl:*` scan detectors, etc.), each bounded, sandboxed, and signed/pinned. Interface: `Registry.Spawn(role, task) → AgentHandle` (with `Cancel(ctx)`/deadline). **Note:** the behavioral test author lives in the *proof* domain (`proof/test-synthesis`), **not** here — per Trust-Domain invariant 1, a generating agent never authors the proof corpus.
 8. **`sandbox`** — isolated execution for generation and proof; reversibility gates on destructive ops; first-class mid-execution abort.
 9. **`proof`** — deep module; the **Proof Harness**. Sub-engines: `behavioral` (test run + mutation score), `empirical` (Lookout probes), `hazard` (STPA). `Prove(artifact, contract) → Verdict` requiring convergence. Reuses [Verification-Engine-Spec](Verification-Engine-Spec.md) + [Lookout-Agent-Spec](Lookout-Agent-Spec.md).
 10. **`dependency-provenance`** — deep module. `Verify(pkgRef) → {exists, resolves, provenance}` before any dependency enters the build.
 11. **`reliability-tier`** — config + policy. Maps a project's risk dimensions (data sensitivity, concurrency exposure, blast radius, reversibility, regulated domain) to the controls and proof rigor required, and to whether autonomous delivery is permitted.
 12. **`delivery`** — deployment-bar evaluation; autonomous delivery (V2.3) vs. human-mergeable fallback; operating-envelope reporting.
-13. **`polaris-connector`** — consume (controls/KB/risks) in V2.0; contribute (failure modes) in V2.3. Signed server-to-server.
-14. **`cmd/orion`** — TUI binary entrypoint.
+13. **`integration`** — the change-coordination layer (Phase E2). Owns: path-lease manager, the serialized integration queue (singleton lock), rebase-onto-head, pre-merge gates, post-merge re-proof, rollback-on-red, and dispatch of the resolver agent on conflicts. Interface: `AcquireLease(scope)`, `Enqueue(task)`, `Integrate(task) → {integrated | conflict | rolled_back}`. Generalizes the `/queue` + `/resolve` patterns.
+14. **`polaris-connector`** — the full bidirectional Polaris client that subsumes rvl-cli (see "Scope: Orion as the Reliability Touchpoint"). Capabilities: auth (`login/logout/status`), consume (controls catalog, KB/facts/patterns/procedures, risk register), and write (open/resolve risks, submit evidence, contribute knowledge, contribute failure modes). All reads land in the local `context-store` cache (offline-tolerant); all writes are signed server-to-server and, for outbound content, pass the redaction + confirm gate. Phased per the scope section.
+15. **`reliability-scan`** — runs the rvl multi-agent reliability scan using Orion's specialist fleet (the `rvl:*` detector roles), correlates findings, and writes risks to the register. Reuses `agent-runtime`; outputs are findings/risks, not deliverable artifacts.
+16. **`cmd/orion`** — the single binary: interactive TUI **and** non-interactive CLI subcommands (the rvl-cli-parity surface + the loop-control surface used by the acceptance criteria).
 
 ### The Project Context Store — design
 
@@ -246,7 +448,7 @@ The Context Store is the answer to "externalize task/project context into a pers
 
 ### Schema (Context Store entities — logical)
 
-`projects`, `specs` (status: drafting/accepted), `decisions`, `tasks` (status: ready/in_progress/blocked/proven/done), `task_edges` (DAG), `task_attempts`, `verification_contracts`, `proofs` (mode: behavioral/empirical/hazard; verdict), `deliveries` (with operating envelope), `escalations`, `failure_modes`, `polaris_context`. All carry `project_id`; the task subset projects to the configured tracker.
+`projects`, `specs` (status: drafting/accepted/revised; carries the required spec **dimensions** — scale, observability, on-call, data/storage, SLO, security, dependencies), `decisions`, `epics` (an accepted spec's unit of delivery), `tasks` (belong to an epic; status: ready/in_progress/being_validated/proven/integrated/done; carry a declared **file scope**), `task_deps` (the dependency DAG), `task_attempts`, `proof_obligations`, `proofs` (mode: behavioral/empirical/hazard; verdict + quantitative metrics), `deliveries` (with operating envelope), `escalations`, `failure_modes` (with `canonical_key`), `polaris_context`, `artifacts`, plus integration entities: `leases` (path scope + holder), `integration_queue`, `merge_attempts` (with conflict/rollback records). All carry `project_id`; the Epic+Task subset projects to the configured tracker.
 
 ### Contracts (selective)
 
@@ -321,7 +523,7 @@ Orion has exactly two trust domains. Data crosses the boundary in one direction 
 - **Bounded concurrency.** `agent-runtime` owns a worker pool / dispatch semaphore: `concurrency.max_agents`, `concurrency.max_sandboxes`, `concurrency.max_inflight_llm`. The Conductor dispatches into a ready-queue drained at the configured parallelism; saturated → ready tasks wait (backpressure). Fleet status shows queued vs. active. Shared rate limiter ties into LLM-retry backoff.
 - **Mutation testing is scoped and cached.** Mutate the changed diff only (not the whole tree), with `proof.mutation.timeout_per_mutant`, `proof.mutation.max_mutants` (sampling above a threshold), and tier-calibrated thresholds (`throwaway` samples/skips; `critical` runs full diff). Results cached by artifact hash so retries don't re-mutate unchanged code. Time budget surfaced in the operating envelope.
 - **Warm sandbox pool.** Pre-pulled base images, `sandbox.warm_pool_size`, sandbox reuse across a task's retries, artifact-layer caching by hash. `sandbox.startup_timeout`; startup latency shown in Fleet status.
-- **Bounded, windowed context recall.** Push the budget into the query: recall fetches the K most-relevant decisions, immediate-ancestor outputs (summarize deeper ancestry), and the latest proof verdict per ancestor — via a batched ancestor fetch (no N+1). "Relevant decision-log slice" has a defined cap. Indices: `tasks(project_id,status)`, `task_edges`, `proofs(task_id)`. Acceptance benchmark: recall latency + bundle size stay ~flat as the DAG grows to N=1000.
+- **Bounded, windowed context recall.** Push the budget into the query: recall fetches the K most-relevant decisions, immediate-ancestor outputs (summarize deeper ancestry), and the latest proof verdict per ancestor — via a batched ancestor fetch (no N+1). "Relevant decision-log slice" has a defined cap. Indices: `tasks(project_id,status)`, `task_deps`, `proofs(task_id)`. Acceptance benchmark: recall latency + bundle size stay ~flat as the DAG grows to N=1000.
 - **Cheap-first drift detection.** A low-cost embedding/heuristic similarity runs per step; the expensive LLM re-anchor fires only on threshold breach or fixed cadence (`drift.check_every_n_steps`). Spec embedding cached once per run; drift/re-anchor tokens count against the run budget.
 - **TUI liveness contract.** Every long op (especially proof) emits incremental progress events (per-mode start/finish, mutation %, Lookout boot/probe phases) with a heartbeat on the internal event channel; no pane goes >N seconds without an update.
 - **Polaris context cached + relevance-filtered.** Local cache with `polaris.cache_ttl`, incremental sync (ETag/`updated_since`), and per-task injection filtered to the task's risk dimensions / tier — not the whole catalog in every prompt.
@@ -435,7 +637,7 @@ Each `orion` subcommand above is itself a V2.0 implementation task (the non-inte
 
 ## Out of Scope
 
-- **Web/GUI surface.** V2 is TUI-first. No web UI for Orion itself (Polaris keeps its own).
+- **Web/GUI as the control plane.** V2 is TUI-first; the TUI is the authoritative control/conversation surface. An *optional companion web surface* (design review + fleet/proof dashboards) is in scope but read-mostly-plus-approve, phased post-V2.0, and never required to run the loop.
 - **Autonomous delivery / auto-deploy.** Deferred to V2.3 and gated by reliability tier; V2.0/V2.1 deliver human-mergeable, proof-passed artifacts only.
 - **Polaris failure-mode write-back.** Consume-only until V2.3.
 - **Brownfield intake and tracker projection (GitHub Issues).** V2.1.
