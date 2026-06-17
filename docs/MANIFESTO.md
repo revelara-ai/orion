@@ -9,6 +9,8 @@ This is not a condemnation of AI. It is an observation about architecture. The d
 
 Orion is a new loop. It is an opinionated, agentic driver of the software development lifecycle whose single obsession is reliability. It takes a developer's intent — a one-line idea, a design document, or a mature backlog of issues; the developer chooses the starting point — and drives it to software that is **proven correct, operable at 3 a.m., and ready to deploy.** Where the intent is incomplete, Orion does not guess; it brings the human in to make the spec unambiguous before a line of code is written. Where the intent is clear, Orion delivers to it at the highest reliability standard the project warrants.
 
+And Orion's reliability does not come from the model. Microservice architecture made reliable systems possible on cheap, unreliable commodity hardware — because making the hardware itself reliable was prohibitively expensive. Orion makes the same move one layer up: it produces reliable software on top of commodity, fallible code-generation models. We start on frontier models because they are the best available today, but the guarantees come from the loop, not the model.
+
 Orion is the reliability layer of the agentic software development lifecycle.
 
 ---
@@ -159,6 +161,9 @@ The compounding math is unforgiving. Orion keeps chains short, checkpoints frequ
 **9. Reliability knowledge compounds across runs.**
 A failure understood once should never recur silently. Orion is a learning system: every encountered failure mode enriches the shared knowledge that guards the next change, the next project, and every other developer on the platform.
 
+**10. Reliability is the harness's job, not the model's.**
+The vulnerability rate of generated code has held roughly flat across model generations; bigger and newer models have not made the output reliable. Orion therefore does not wait for a better model. Like microservices on commodity hardware, Orion treats the generation model as a cheap, fallible component and places the reliability in the architecture around it — independent proof, bounded steps, embedded reliability knowledge. We use frontier models today because they are the best components available, but nothing in Orion depends on a particular model. As models commoditize, this is the layer that turns inexpensive, fallible generation into dependable software — and the layer whose value grows as the components get cheaper.
+
 ---
 
 ## Part IV: How Orion Works
@@ -216,6 +221,8 @@ Orion is not another coding agent. It orchestrates generating agents and assumes
 Orion is not a trust boundary wrapped around AI to contain it. It is a development loop designed to remain correct despite adversarial behavior from its own components.
 
 Orion is not a claim that today's models produce reliable code on their own. The research is clear that they do not. Orion is the loop that makes the output reliable anyway — and that earns, through proof, the right to ship it.
+
+Orion is not a bet that the next, larger model will finally be reliable. It is the opposite bet: that the generation model will remain a fallible commodity, and that durable reliability must live in the loop that governs it — not in the component it governs.
 
 ---
 
