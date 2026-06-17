@@ -1,0 +1,485 @@
+---
+title: Orion V2 — The Reliability Layer of the Agentic SDLC
+status: draft
+authors: Joseph Bironas
+created: 2026-06-17
+last_updated: 2026-06-17
+supersedes:
+  - docs/archive/PRD/orion-v1.md
+  - docs/archive/SPEC/Orion-SPEC.md (+ drafts 1-3)
+derived_from:
+  - docs/MANIFESTO.md
+  - docs/research/Harness-reliability-research-2026-06-16.md
+references:
+  - docs/PRD/A2A-Protocol-Spec.md
+  - docs/PRD/Lookout-Agent-Spec.md
+  - docs/PRD/Orchestrator-Logic-Spec.md
+  - docs/PRD/Task-Decomposer-Spec.md
+  - docs/PRD/Verification-Engine-Spec.md
+  - docs/TDS/Orchestrator-Decision-Matrix.md
+---
+
+# Orion V2 PRD: The Reliability Layer of the Agentic SDLC
+
+> This PRD is the product-level realization of [the Orion Manifesto](../MANIFESTO.md). Every mechanism here traces to a manifesto goal and a documented failure mode. Where the manifesto states a belief, this PRD states what gets built, how data flows, and how we prove it works.
+
+## Problem Statement
+
+A developer wants to build reliable software with agents. Today the only options are:
+
+- **Single-agent assistants** (Copilot, Cursor): fast at producing code, but they game their own verifiers, drift from intent over long runs, emit uninstrumented code, and leave the developer holding an artifact nobody can operate at 3 a.m.
+- **Multi-agent harnesses** (Gastown, Hermes, OpenClaw, Pi): good at coordinating fleets of agents, but they inherit and *amplify* the reliability failure modes — error compounding across steps, context/memory decay, non-reversible side effects, "green build is lying" verification — because the orchestrator trusts its own subagents' checkmarks.
+
+In both cases the loop optimizes for a **local signal** (a passing test, an agent's confidence) while the developer's **true intent** drifts, decays, or goes unmeasured. The cost is not paid at write time; it is paid at comprehension time, during an incident, when there is no author to page and no proof that the code does what was meant.
+
+There is no harness whose first-class obsession is **reliability** — one that makes intent complete before building, proves correctness by independent means before calling the loop done, produces operable software, calibrates rigor to the project's real risk, and gets smarter from every failure it sees. That is the gap Orion V2 fills.
+
+## Solution
+
+**Orion V2 is a local-first, TUI-driven agentic harness for building reliable software.** The developer converses with a single orchestrator — the **Conductor** — through a terminal UI. The Conductor takes the developer's intent (a bare idea, a design doc, or an existing backlog), makes it unambiguous, decomposes it, and coordinates a fleet of specialized single-task agents to build it. Behind the simple TUI, Orion solves the hard problems the manifesto names: efficient agent coordination, context and memory management, durable task tracking, and — above all — **independent, multi-modal proof of correctness as the condition for completion.**
+
+The shape of the loop:
+
+```
+ ┌────────────────────────── TUI (developer ⇄ Conductor) ──────────────────────────┐
+ │                                                                                 │
+ │   intent ──▶ [Intent Completeness Gate] ──▶ executable spec                     │
+ │                   │ (elicit from human when ambiguous)                          │
+ │                   ▼                                                             │
+ │            [Task Decomposer] ──▶ task DAG ──▶ Project Context Store             │
+ │                   │                                                             │
+ │                   ▼                                                             │
+ │            [Conductor dispatch] ──A2A──▶ specialist agents (sandboxed)          │
+ │                   │                       (generate · test · instrument)        │
+ │                   ▼                                                             │
+ │            [Proof Harness]  behavioral + empirical + hazard  (independent)      │
+ │                   │            no agent grades its own homework                 │
+ │                   ▼                                                             │
+ │            [Deployment Bar] ── proof passes? ──▶ deliver (autonomy by tier)     │
+ │                   │                          └─▶ fallback: human-mergeable      │
+ │                   ▼                                                             │
+ │            [Polaris loop] consume controls/KB/risks · contribute failure modes  │
+ │                                                                                 │
+ └─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Runtime:** everything in the loop runs locally on the developer's machine — Conductor, specialist agents, sandbox, proof harness, and the Project Context Store. The only cloud dependency is **Polaris**, which supplies reliability knowledge (controls catalog, knowledge base, risk register) and receives the failure modes Orion encounters.
+
+**The completion criterion is proof, not assertion.** A task is "done" only when independent, non-agentic verification converges across three modes — behavioral (tests, mutation-scored), empirical (Lookout-style shell probes of the running artifact), and hazard (STPA-derived: the unsafe control actions are controlled). Proof is the right to ship: when the bar is met at the project's reliability tier, Orion delivers autonomously; when it cannot be met, Orion falls back to a proven, human-mergeable change.
+
+**This PRD defines the full V2 product and phases delivery.** The first buildable slice — **V2.0** — proves the entire loop on one path: *a developer states an idea in the TUI and receives a proven, instrumented, runnable Go service.* Polyglot (Go/TS/Python) and brownfield intake are full-V2 scope, phased after the tracer bullet.
+
+### Phasing
+
+| Phase | Theme | Scope |
+|---|---|---|
+| **V2.0** | Tracer bullet | Go **greenfield**: TUI → Conductor → completeness gate → decompose → 1–2 Go specialist agents → multi-modal proof → proven runnable service + runbook. Context Store with beads-backed default. Polaris consume-only. Delivery = local proven artifact (human-mergeable; no auto-deploy yet). |
+| **V2.1** | Brownfield + tracker projection | Existing Go repo intake; task tracker projection (beads ⇄ GitHub Issues); human-mergeable PR delivery; drift detection + re-anchoring hardened. |
+| **V2.2** | Polyglot | TypeScript and Python generators + proof harnesses; per-language hazard libraries. |
+| **V2.3** | Earned autonomy + learning write-back | Reliability-tier-gated autonomous delivery for low-risk classes; Polaris failure-mode write-back loop. |
+
+## User Stories
+
+### Developer — intent and the TUI
+
+1. As a developer, I want to describe what I want to build in plain language in a terminal UI, so that I can start without writing a formal spec myself.
+2. As a developer, I want Orion to tell me *exactly which decisions are underspecified* and ask me about them, so that I resolve ambiguity up front instead of discovering it in a rebuild.
+3. As a developer, I want to see the executable spec Orion derived from our conversation and approve it, so that I know what contract the build is held to.
+4. As a developer, I want to converse with one orchestrator (the Conductor) rather than manage individual agents, so that coordination complexity stays hidden behind a simple interface.
+5. As a developer, I want to see, at a glance in the TUI, what the fleet is doing right now — which agents are active, on which tasks, with what status — so that I have situational awareness without micromanaging.
+6. As a developer, I want to interrupt the Conductor at any time to change direction, so that I stay in control of the work.
+7. As a developer, I want the TUI to surface when Orion is blocked on a decision only I can make, so that I am pulled in exactly when needed and not before.
+8. As a developer, I want a readable transcript of decisions the Conductor and agents made, so that I can audit the trajectory after the fact.
+
+### Developer — intake modes
+
+9. As a developer with only an idea, I want Orion to scaffold a greenfield project from intent, so that I get a reliable starting point instead of a blank repo.
+10. As a developer with an existing codebase, I want Orion to ingest it and build context, so that new work respects what's already there. *(V2.1)*
+11. As a developer with a backlog, I want Orion to pull work items from my tracker and drive them, so that I don't have to re-describe each task. *(V2.1)*
+12. As a developer, I want to choose the starting point — idea, design doc, or backlog — so that Orion adapts to where I actually am.
+
+### Developer — reliability and proof
+
+13. As a developer, I want Orion to refuse to call a task "done" until correctness is independently proven, so that "the agent says it works" is never the verdict.
+14. As a developer, I want test quality measured by whether tests actually catch faults (mutation score), not by coverage percentage, so that a green build is not a lie.
+15. As a developer, I want Orion to verify the *running* artifact (ports open, files present, real requests succeed), so that proof reflects reality, not the agent's report of reality.
+16. As a developer, I want Orion to identify the unsafe things a change could cause and prove they're controlled, so that hazards are caught before they ship.
+17. As a developer, I want every component delivered with structured logs, traces, metrics, and a runbook, so that I can operate it at 3 a.m. without paging the author who doesn't exist.
+18. As a developer, I want Orion to verify that every dependency it adds actually exists and resolves to the real artifact, so that I'm not exposed to slopsquatting.
+19. As a developer, I want Orion to set the rigor to my project's real risk via a reliability tier, so that a throwaway tool isn't over-engineered and a payments path isn't under-protected.
+20. As a developer, I want Orion to detect when a refinement pass made things worse and stop, so that "keep prompting until it works" doesn't silently degrade the artifact.
+
+### Developer — delivery and autonomy
+
+21. As a developer, I want Orion to deliver a proven, runnable artifact when the proof bar is met, so that I get working software, not a draft.
+22. As a developer, I want Orion to fall back to a clearly-marked human-mergeable change when the proof bar can't be met, so that I make the judgment call exactly when proof is insufficient. *(V2.1)*
+23. As a developer on a low-risk project, I want Orion to deliver autonomously once proof passes at my tier, so that I'm not the bottleneck on changes that are provably safe. *(V2.3)*
+24. As a developer, I want any destructive action (DB writes, infra changes, external calls) sandboxed and gated on a defined rollback path, so that a wrong agent action can't execute faster than I can intervene.
+
+### Operator / SRE
+
+25. As an SRE, I want the software Orion produces to carry the reliability primitives I'd add by hand (timeouts, retries with backoff, idempotency, bounded resources), so that reliability is built in, not bolted on.
+26. As an SRE, I want stated scaling and concurrency assumptions in the deliverable, so that "works on localhost" failures are surfaced before load, not after.
+27. As an SRE, I want a runbook generated for each component, so that the documented-failure-class coverage doesn't lag feature velocity.
+
+### Platform / learning loop
+
+28. As a developer, I want Orion to reason with Polaris's controls catalog and risk register on every task, so that reliability context is applied to feature work too — not reserved for "reliability work."
+29. As a platform owner, I want Orion to contribute the failure modes it encounters back to Polaris, so that every run makes the platform — and every other developer — smarter. *(V2.3)*
+30. As a developer, I want Orion to never silently repeat a failure mode that Polaris already knows about, so that learned knowledge actually guards future work.
+
+### Coordination internals (made visible)
+
+31. As a developer, I want any agent to be able to rebuild full context for a task from a durable store, so that a crashed or restarted agent resumes without losing the thread.
+32. As a developer, I want the original intent re-anchored periodically during long runs, so that the cumulative path doesn't drift away from what I asked for.
+33. As a developer, I want Orion to bound how much context each agent step carries, so that error compounding and context decay are contained by design.
+34. As a developer, I want Orion to treat injected or stale instructions as a threat, so that memory poisoning can't quietly corrupt intent across the run.
+35. As a developer, I want per-step confidence tracked and a circuit breaker that escalates to me when confidence degrades, so that the loop stops compounding errors instead of grinding on.
+
+## Data Flow Traces
+
+> Runtime is local; the **Project Context Store** is the durable source of truth (V2.0 default backing: an embedded store — see Implementation Decisions). "Module" references are target package boundaries, not committed file paths.
+
+### Trace 1: Intent → executable spec (the completeness gate)
+
+1. Developer types an intent in the TUI input pane → `tui` (input view).
+2. TUI forwards the raw intent to the Conductor as an `Intent` message → `orchestrator` (Conductor).
+3. Conductor runs **completeness analysis**: classifies the intent against a required-decisions checklist for the project type, producing a list of `OpenDecision`s → `orchestrator/completeness`.
+4. If `OpenDecision`s remain, Conductor emits clarifying questions back to the TUI; developer answers; answers are recorded as `Decision` rows → `context-store` (`decisions`).
+5. Loop until zero open decisions, then Conductor compiles the conversation + decisions into an **executable spec** (structured, testable; the immutable contract) → `orchestrator/spec`, persisted to `context-store` (`spec` for the project/work-item).
+6. TUI renders the spec for developer approval; approval flips spec status to `accepted` → `context-store` (`spec.status`).
+
+*Missing-implementation flags:* the required-decisions checklist per project type, and the spec schema, are V2.0 build tasks.
+
+### Trace 2: Spec → task DAG → dispatch
+
+1. Accepted spec → **Task Decomposer** (reuses [Task-Decomposer-Spec](Task-Decomposer-Spec.md)) → `decomposer`.
+2. Decomposer queries the Context Store for relevant prior context (existing code map, decision log, Polaris context) → `context-store` recall API.
+3. Decomposer emits a DAG of `Task` nodes, each carrying its own `VerificationContract` (what proof this task owes) → persisted as `context-store` (`tasks`, `task_edges`).
+4. TUI renders the DAG so the developer can review the plan before execution → `tui` (plan view).
+5. Conductor selects ready tasks (no unmet dependencies) and dispatches each to a specialist agent over the A2A protocol → `orchestrator/dispatch`, `a2a`.
+
+### Trace 3: Specialist task → A2A → evidence
+
+1. Conductor sends an `A2A` payload (`Intent` + constraints + `VerificationContract`, `verification_required: true`) to a specialist → `a2a` (reuses [A2A-Protocol-Spec](A2A-Protocol-Spec.md)).
+2. Specialist agent runs inside a sandbox with a bounded context budget → `agent-runtime`, `sandbox`, `context-engine`.
+3. Specialist produces artifacts (code diff, new files, test files) and a `Response Envelope` with claimed `assertion_status` and evidence → `a2a`.
+4. Envelope returns to the Conductor; raw claim recorded but **not trusted** → `context-store` (`task_attempts`).
+
+### Trace 4: Multi-modal proof → verdict → closure
+
+1. Conductor routes the completed task's `VerificationContract` to the **Proof Harness** → `proof` (reuses [Verification-Engine-Spec](Verification-Engine-Spec.md)).
+2. **Behavioral**: independent test run + mutation analysis on the artifact; test suite is owned by the harness, hidden from the generating agent → `proof/behavioral`.
+3. **Empirical**: a transient **Lookout** agent probes the running artifact — ports, files, hashes, real I/O (reuses [Lookout-Agent-Spec](Lookout-Agent-Spec.md)) → `proof/empirical`.
+4. **Hazard**: STPA-derived check that the unsafe control actions the change enables are controlled → `proof/hazard`.
+5. The **Truth Alignment** engine applies the Discrepancy Decision Matrix to `(claim, converged evidence)` → `Accept` / `Reject` / `Inconclusive` (reuses [Orchestrator-Decision-Matrix](../TDS/Orchestrator-Decision-Matrix.md)) → `orchestrator/truth-align`.
+6. Verdict persisted to `context-store` (`proofs`). A `Task` **cannot transition to `done`** unless its proof verdict is `Accept` — closure is verification-gated.
+7. On `Reject`/`Inconclusive`: task returns to the loop within its iteration budget; a degradation check compares this pass to the previous → `proof/degradation`. A net-negative pass terminates the loop rather than retrying.
+
+### Trace 5: Proven change → deployment bar → delivery
+
+1. When all tasks in a DAG are `done` (proof-passed), Conductor evaluates the **deployment bar** against the project's reliability tier → `delivery`.
+2. **Bar met + tier permits autonomy** (V2.3): Orion delivers autonomously (commit/merge/deploy per tier policy) → `delivery/autonomous`.
+3. **Bar met, autonomy not permitted** (V2.0/V2.1 default): Orion produces a proven, human-mergeable artifact/PR and marks it ready → `delivery/human-merge`.
+4. **Bar not met**: Orion routes the open decision to the developer via the TUI with the specific failed proof named → `tui`, `context-store` (`escalations`).
+5. Delivery outcome + the operating envelope (what was proven, under what workload/faults) recorded → `context-store` (`deliveries`).
+
+### Trace 6: Failure mode observed → Polaris learning loop
+
+1. On every task, the Decomposer and specialists are seeded with Polaris context (controls catalog, KB, risk register) pulled at session start → `polaris-connector` (consume) → `context-store` (`polaris_context`).
+2. When the Proof Harness or Truth Alignment surfaces a failure mode (e.g., a hazard not previously catalogued, a recurring reward-hack pattern), it is recorded locally as a `FailureMode` observation → `context-store` (`failure_modes`).
+3. **(V2.3)** Observed failure modes are contributed back to Polaris via a signed write-back → `polaris-connector` (contribute).
+4. Polaris incorporates them; the next session's pulled context includes them, closing the learning loop.
+
+### Trace 7: Context recall (any agent rebuilds context)
+
+1. An agent (new, resumed, or restarted) needs context for task T → calls the Context Store recall API with `task_id` → `context-store`.
+2. Store assembles a **context bundle**: the executable spec, the relevant decision-log slice, ancestor task outputs, prior proof verdicts, and applicable Polaris context → `context-store/recall`.
+3. The **Context Engine** budgets the bundle to the agent's window, prioritizing intent-anchoring content, and stamps it with a re-anchor checkpoint → `context-engine`.
+4. Agent proceeds with reconstructed, bounded, intent-anchored context — no dependence on in-memory session state.
+
+## UI Navigation
+
+> Orion V2's primary surface is a **TUI**. "Navigation" = panes/views and the commands that switch between them. There is no web UI in V2; Polaris (separate product) retains its own web UI.
+
+| View / Pane | How reached | Empty State | Gating |
+|---|---|---|---|
+| **Conversation** (default) | Launch `orion` | "Describe what you want to build, or point me at a repo or backlog." | always |
+| **Spec review** | Auto-shown when the completeness gate produces an accepted-pending spec; `:spec` | "No spec yet — still clarifying intent." | always |
+| **Plan / Task DAG** | `:plan` or auto on decomposition | "No plan yet — approve a spec to generate tasks." | always |
+| **Fleet status** | `:fleet` | "No agents active." | always |
+| **Proof / Evidence** | `:proof <task>` or selecting a task | "No proofs yet — tasks are still in progress." | always |
+| **Transcript / decision log** | `:log` | "No decisions recorded yet." | always |
+| **Escalations** | Auto-surfaced (modal) when blocked on a human decision; `:asks` | "Nothing needs you right now." | always |
+| **Delivery** | `:deliver` or auto on bar evaluation | "Nothing ready to deliver." | always |
+| **Reliability tier** | `:tier` | shows current tier + dimensions | always |
+
+Interaction model: the developer mostly lives in **Conversation**; the Conductor proactively raises **Escalations** (the "pull the human in" moment) and surfaces **Spec review** / **Plan** for approval gates. **Fleet status** and **Proof** are observability panes — visible on demand, never required for the happy path.
+
+## Implementation Decisions
+
+### Modules (target boundaries; deep modules favored)
+
+1. **`tui`** — terminal UI. Conversation, approval gates, observability panes, escalation modals. Shallow/presentation; talks to the Conductor over an internal event channel. *(Comparator UX: Gastown/Hermes/Pi.)*
+2. **`orchestrator` (the Conductor)** — deep module. Owns intent intake, the **completeness gate**, dispatch, truth alignment, drift re-anchoring, the circuit breaker, and the deployment-bar decision. Interface: `Conductor.Submit(intent)`, `Conductor.Answer(decision)`, `Conductor.Interrupt()`, `Conductor.Status()`. Reuses [Orchestrator-Logic-Spec](Orchestrator-Logic-Spec.md).
+3. **`decomposer`** — deep module. `Decompose(spec, context) → TaskDAG`, each node carrying a `VerificationContract`. Reuses [Task-Decomposer-Spec](Task-Decomposer-Spec.md).
+4. **`context-store`** — deep module; **the durable source of truth**. `Put/Get/Recall` over spec, decisions, tasks/DAG, attempts, proofs, deliveries, failure modes, Polaris context. Exposes a `Recall(task_id) → ContextBundle` API. Backed by an embedded store in V2.0 (see below). A **tracker projection adapter** syncs the task subset out to beads or GitHub Issues (V2.1); the tracker is a *view*, never the source of truth.
+5. **`context-engine`** — deep module. Context-window budgeting, intent-anchoring, drift detection + re-anchoring, memory-poisoning defense. Interface: `BudgetBundle(bundle, window) → PromptContext`, `DetectDrift(active, spec) → DriftScore`.
+6. **`a2a`** — agent-to-agent message protocol + bus. Structured `Intent`/`Payload`/`VerificationContract`/`Response Envelope`. Reuses [A2A-Protocol-Spec](A2A-Protocol-Spec.md).
+7. **`agent-runtime`** — specialist agent registry + lifecycle. Single-task agents (generator, test-author, instrumentor, dependency-checker, etc.), each bounded and sandboxed. Interface: `Registry.Spawn(role, task) → AgentHandle`.
+8. **`sandbox`** — isolated execution for generation and proof; reversibility gates on destructive ops; first-class mid-execution abort.
+9. **`proof`** — deep module; the **Proof Harness**. Sub-engines: `behavioral` (test run + mutation score), `empirical` (Lookout probes), `hazard` (STPA). `Prove(artifact, contract) → Verdict` requiring convergence. Reuses [Verification-Engine-Spec](Verification-Engine-Spec.md) + [Lookout-Agent-Spec](Lookout-Agent-Spec.md).
+10. **`dependency-provenance`** — deep module. `Verify(pkgRef) → {exists, resolves, provenance}` before any dependency enters the build.
+11. **`reliability-tier`** — config + policy. Maps a project's risk dimensions (data sensitivity, concurrency exposure, blast radius, reversibility, regulated domain) to the controls and proof rigor required, and to whether autonomous delivery is permitted.
+12. **`delivery`** — deployment-bar evaluation; autonomous delivery (V2.3) vs. human-mergeable fallback; operating-envelope reporting.
+13. **`polaris-connector`** — consume (controls/KB/risks) in V2.0; contribute (failure modes) in V2.3. Signed server-to-server.
+14. **`cmd/orion`** — TUI binary entrypoint.
+
+### The Project Context Store — design
+
+The Context Store is the answer to "externalize task/project context into a persistent layer any agent can call to build/rebuild/update context." Decisions:
+
+- **Source of truth vs. tracker are separated.** The store holds the full structured context (spec, decision log, task DAG with verification contracts, attempts, proofs, deliveries, failure modes, Polaris context). A **tracker** (beads or GitHub Issues) is a *projection* of the task subset, kept in sync by an adapter. This avoids coupling the source-of-truth to beads' setup fragility or to GitHub Issues' weak structured-recall.
+- **V2.0 backing store:** embedded and local (e.g., SQLite or an embedded KV) — no external service required for the core loop, consistent with local-first runtime. The exact engine is a V2.0 build decision; the *interface* (`Put/Get/Recall`) is the stable contract.
+- **Recall is first-class.** `Recall(task_id) → ContextBundle` is the API every agent uses to (re)build context; it is the mechanism that makes agents resumable and the run robust to crashes (Story 31).
+- **Tracker default:** V2.0 ships beads-backed (already integrated in the existing pipeline) behind the projection adapter; GitHub Issues projection lands in V2.1. Either can be swapped without touching the source of truth.
+
+### Schema (Context Store entities — logical)
+
+`projects`, `specs` (status: drafting/accepted), `decisions`, `tasks` (status: ready/in_progress/blocked/proven/done), `task_edges` (DAG), `task_attempts`, `verification_contracts`, `proofs` (mode: behavioral/empirical/hazard; verdict), `deliveries` (with operating envelope), `escalations`, `failure_modes`, `polaris_context`. All carry `project_id`; the task subset projects to the configured tracker.
+
+### Contracts (selective)
+
+- **A2A payload** (Conductor ⇄ specialist): `Intent`, `constraints`, `VerificationContract`, `Response Envelope{assertion_status, evidence}`. Per [A2A-Protocol-Spec](A2A-Protocol-Spec.md).
+- **Proof verdict**: `{mode_results: {behavioral, empirical, hazard}, converged: bool, verdict: Accept|Reject|Inconclusive, envelope}`.
+- **Polaris (server-to-server, signed):** `GET controls/kb/risks` (consume, V2.0); `POST failure-modes` (contribute, V2.3).
+
+### Feature Flag / Config Wiring
+
+Local config (V2 has no remote flag service for the core loop; flags are config keys read at startup and per-run):
+
+1. **`tracker.backend`** — `beads` (default V2.0) | `github` (V2.1).
+   - *Definition:* Orion config file. *Check:* `context-store` projection adapter. *Behavior:* selects which tracker the task subset projects to. (GitHub path is a V2.1 implementation task.)
+2. **`autonomy.enabled`** — `false` (default V2.0/V2.1) | `true` (V2.3, per tier).
+   - *Definition:* config + `reliability-tier` policy. *Check:* `delivery`. *Behavior:* on → autonomous delivery when proof passes at the tier; off → human-mergeable fallback always. (Autonomous path is a V2.3 task.)
+3. **`polaris.learning_writeback`** — `false` (default) | `true` (V2.3).
+   - *Definition:* config. *Check:* `polaris-connector`. *Behavior:* on → observed failure modes are contributed back; off → consume-only. (Write-back is a V2.3 task.)
+4. **`reliability.tier`** — `throwaway` | `standard` | `critical` (+ explicit risk-dimension overrides).
+   - *Definition:* per-project config. *Check:* `reliability-tier`, consumed by `proof` (rigor) and `delivery` (autonomy gate). *Behavior:* sets which controls are required and how strict the proof bar is.
+
+## Trust Domains and the Independence Invariant
+
+> Added by adversarial review. All six reviewers flagged this as the load-bearing gap: the manifesto's "no agent grades its own homework" is asserted in prose but must be a **structural invariant**, not a comment. This section is normative and overrides any looser language elsewhere.
+
+Orion has exactly two trust domains. Data crosses the boundary in one direction only.
+
+- **Generation domain (untrusted):** every specialist agent that produces or modifies artifacts — code generators, the test-*author*, instrumentors. Everything it emits is an *artifact* or an *EvidenceClaim*, never a proof input.
+- **Proof domain (trusted):** the Proof Harness (`proof/behavioral`, `proof/empirical`, `proof/hazard`), the held-out test corpus, the executable spec, and the Context Store. The verdict is computed **only** from evidence the proof domain collects itself.
+
+**Invariants (each must be enforced by topology/types/process, and each has an acceptance test):**
+
+1. **The behavioral test corpus is authored and held by the proof domain, from the executable spec — never by a generating fleet agent.** A dedicated harness-side `proof/test-synthesis` component authors tests from the Context Store spec. The generating agent never reads the corpus path. (Removes the `test-author` role from `agent-runtime`.) *Counters the manifesto's visible/held-out gap.*
+2. **Agent-supplied `EvidenceClaim` is recorded as an untrusted claim and is never an input to the `Verdict`.** The Verdict is recomputed from harness-collected evidence (harness-run tests, Lookout probes, hazard checks).
+3. **The Context Store and the held-out corpus live OUTSIDE the agent sandbox and are unreachable from inside it.** An agent that can read the spec's hidden tests or rewrite the spec defeats the whole design.
+4. **The Lookout (empirical) probe runs in an environment isolated from the generating agent** — separate process namespace, read-only artifact mount — and receives only the probe contract (ports, paths, expected responses), never how the artifact was built.
+5. **Adjudication is separated from dispatch.** The verdict adjudicator (`truth-align`) is not a dependency the dispatcher can influence; the Conductor *invokes* proof and acts on the result, it does not produce it.
+6. **The confidence/drift/degradation signals that trip safety controls are harness-derived, never agent-self-reported** (mutation-score delta, empirical pass-rate, hazard-control delta, attempt-to-verdict ratio) — a gamed agent reporting high confidence must not be able to hold the circuit breaker open.
+
+**ADR to write:** "Generation and Proof are separate trust domains; data flows generation→proof as artifacts only, never as proof inputs."
+
+## Harness Reliability Requirements
+
+> Added by adversarial review (reliability + performance). Orion is itself an agentic workflow and inherits the manifesto's failure modes; these close them at the harness layer. Each is a contract the implementation is held to, not an intention.
+
+- **Every external call (LLM provider, Polaris) MUST have:** a per-call timeout (`context.WithTimeout`), exponential backoff with full jitter honoring `Retry-After`, and a circuit breaker. A hung LLM call must never block the TUI indefinitely.
+- **Every specialist step MUST have a wall-clock deadline** (tier-derived) and a `Cancel(ctx)` path on `AgentHandle`. The Conductor enforces it; a hung agent is timed out, cancelled, and rescheduled.
+- **The Context Store write path MUST be crash-safe and transactional.** The sequence `(task_attempt, artifact reference, side-effect record, proof link)` commits as one atomic unit; the embedded store runs in write-ahead-journal mode. `task_attempt` rows carry an **idempotency key** so a restarted agent detects and skips an already-committed side effect. The resumability claim (Story 31 / acceptance) is only valid if the kill is tested *mid-write*, not just mid-compute.
+- **Orion MUST install signal handlers** (SIGINT/SIGTERM) that cancel all in-flight agent contexts and reap sandbox subprocesses before exit. Lookout-started subprocesses run under an Orion-owned process group so orphans are killed on crash. `Conductor.Interrupt()` triggers the same rollback path as the reversibility gate; abort is transactional w.r.t. any in-flight gated op.
+- **Polaris is optional at runtime.** The loop reads reliability context only from the local `polaris_context` cache; `polaris-connector` is a one-way importer with a freshness timestamp + TTL. If Polaris is unreachable, the loop proceeds on cached/empty context and **visibly flags reduced reliability context** on the delivery envelope (never silently lowers the bar). Add `polaris.offline_mode`.
+- **Mutation/proof verdicts MUST account for flakiness.** Behavioral verdict carries a `run_count`/variance; high-variance results map to `Inconclusive`, not a coin-flip `Accept`/`Reject`.
+- **Cross-task contamination:** when a downstream task's proof implicates an upstream artifact, the Conductor flags the upstream proof for re-examination before retrying. `task_attempt` records which upstream artifacts it consumed.
+- **Orion instruments itself** (the dogfood/3 a.m. test applied recursively): structured log per Conductor state transition, a trace span per A2A dispatch/response, a metric per proof verdict. A completed run produces a machine-readable audit trail.
+
+## Security Requirements
+
+> Added by adversarial review (security). The verification design assumes adversarial agents; that assumption MUST extend to the execution and memory substrate where untrusted code actually runs.
+
+- **Sandbox isolation is a pluggable backend with a stable interface.** Three implementations selectable via `sandbox.isolation`: **gVisor/runsc (default)**, container (Docker/Podman), and microVM (Firecracker) — so Orion serves the broadest user base (laptop to cloud) without changing the proof path. gVisor is the default because its userspace syscall interception *also* powers reversibility-by-interception (below) on a typical WSL2/Linux laptop without nested-virt. Every backend MUST meet the same contract: scoped workdir only (no host FS mount beyond it), default-deny network egress with an allowlist limited to the resolved dependency registries, no ambient cloud/SSH credentials, dropped capabilities. (Reinforces Trust-Domain invariant 3.)
+- **Reversibility gates enforce at the boundary by interception, not by agent declaration.** Destructive ops (external egress, persistent-storage writes outside the workdir) are detected from *observed* syscalls/network calls and paused for approval regardless of whether the agent declared them. The adversarial-agent assumption forbids trusting a self-reported side-effect list. Approval prompts show the *intercepted concrete operation*, not the agent's description of it.
+- **Context Store carries provenance + trust tier on every row** (`human-decision | agent-generated | polaris | ingested-repo | ingested-doc`). At bundle assembly, untrusted-origin content is rendered as **inert, delimited reference data — never as instructions**. Only the human-approved spec and human decisions are instruction-trust. Spec + decisions are hashed at approval; `Recall` verifies the anchor is unmutated. Embedded store is encrypted at rest with `0600` perms.
+- **Secret handling is a proof gate.** Secret-scanning of generated artifacts blocks the deployment bar (hardcoded credentials → fail). A redaction filter on the Context Store write path rejects/tokenizes secrets before persistence (matters acutely for brownfield/doc ingestion).
+- **Both Polaris directions are untrusted boundaries.** Consume path: validate response against a strict schema, reject instruction-like free-form fields, render as inert data, verify server identity (mTLS/signed). Write-back (V2.3): a minimized `FailureMode` schema carrying only abstracted pattern signatures (class, control category, hazard type) — **no raw code, no file paths, no spec text** — behind a local redaction + per-session developer-confirm gate (honors the draft-then-confirm guardrail; default off).
+- **Dependency provenance verifies more than existence.** Existence ≠ safe: a pre-registered slopsquat *exists*. `provenance` checks first-publish age, popularity/namespace ownership, and lockfile checksum pinning. Acceptance includes a typosquat that exists-but-is-anomalous and asserts rejection.
+- **Agent definitions are a signed, version-pinned supply chain.** `Registry.Spawn` loads role definitions + tool-grant manifests from a trusted, integrity-checked source the running loop cannot write (never the Context Store). Least-privilege tool grants per role (a test-author gets no network/FS-write). Startup asserts the loaded set matches a pinned manifest hash.
+- **TUI render path sanitizes control/escape sequences** from any agent- or ingestion-sourced text (terminal-injection defense).
+
+## Resource & Cost Governance
+
+> Added by adversarial review (performance). Orion's scaling axis is "many agents and expensive proofs on one machine against a token budget" — these gates keep it from bankrupting the API quota, melting the laptop, or stalling for hours.
+
+- **Budget accounting (warn-by-default; ceilings opt-in).** A `budget` accountant ALWAYS tracks and surfaces cumulative tokens + dollar-cost + wall-clock live in the TUI (all agents, retries, proof passes, drift checks) — visibility is never optional. **Hard ceilings are opt-in and unset by default** (`budget.run_token_ceiling`, `budget.run_dollar_ceiling`, `budget.task_iteration_max`). When a ceiling *is* configured, the loop escalates at ~80% *before* exhaustion and treats "out of budget" as a first-class terminal state with a human-mergeable fallback. With no ceiling set (the default), the loop warns but never halts on spend. *(Decision: the developer owns the spend/safety trade-off; Orion makes spend impossible to miss but does not impose a cap out of the box.)*
+- **Bounded concurrency.** `agent-runtime` owns a worker pool / dispatch semaphore: `concurrency.max_agents`, `concurrency.max_sandboxes`, `concurrency.max_inflight_llm`. The Conductor dispatches into a ready-queue drained at the configured parallelism; saturated → ready tasks wait (backpressure). Fleet status shows queued vs. active. Shared rate limiter ties into LLM-retry backoff.
+- **Mutation testing is scoped and cached.** Mutate the changed diff only (not the whole tree), with `proof.mutation.timeout_per_mutant`, `proof.mutation.max_mutants` (sampling above a threshold), and tier-calibrated thresholds (`throwaway` samples/skips; `critical` runs full diff). Results cached by artifact hash so retries don't re-mutate unchanged code. Time budget surfaced in the operating envelope.
+- **Warm sandbox pool.** Pre-pulled base images, `sandbox.warm_pool_size`, sandbox reuse across a task's retries, artifact-layer caching by hash. `sandbox.startup_timeout`; startup latency shown in Fleet status.
+- **Bounded, windowed context recall.** Push the budget into the query: recall fetches the K most-relevant decisions, immediate-ancestor outputs (summarize deeper ancestry), and the latest proof verdict per ancestor — via a batched ancestor fetch (no N+1). "Relevant decision-log slice" has a defined cap. Indices: `tasks(project_id,status)`, `task_edges`, `proofs(task_id)`. Acceptance benchmark: recall latency + bundle size stay ~flat as the DAG grows to N=1000.
+- **Cheap-first drift detection.** A low-cost embedding/heuristic similarity runs per step; the expensive LLM re-anchor fires only on threshold breach or fixed cadence (`drift.check_every_n_steps`). Spec embedding cached once per run; drift/re-anchor tokens count against the run budget.
+- **TUI liveness contract.** Every long op (especially proof) emits incremental progress events (per-mode start/finish, mutation %, Lookout boot/probe phases) with a heartbeat on the internal event channel; no pane goes >N seconds without an update.
+- **Polaris context cached + relevance-filtered.** Local cache with `polaris.cache_ttl`, incremental sync (ETag/`updated_since`), and per-task injection filtered to the task's risk dimensions / tier — not the whole catalog in every prompt.
+- **Embedded store concurrency.** If SQLite (the chosen engine — see Core Data Model Hardening): WAL mode + busy-timeout + a single serialized writer goroutine (agents enqueue writes); reads stay concurrent. The concurrency contract is part of the store interface.
+
+## Core Data Model Hardening
+
+> Added by adversarial review (data flow + architecture). The Context Store is the source of truth; these resolve under-specified entities and the proof decision logic before component specs are cut.
+
+- **Backing engine is SQLite (WAL), decided now — not deferred.** A plain KV cannot serve the DAG/recursive queries or enforce the `done`-gate as a constraint; the "interface stable, engine deferred" claim was false. Replace the `Put/Get/Recall` facade with per-aggregate repositories (`SpecStore`, `TaskGraph`, `ProofStore`, …) sharing a transaction boundary; `Recall` is a read-model over them.
+- **`ContextBundle` is a concrete, schematized type** (named fields, each tagged with its source entity and budget contribution), since it is load-bearing for resumability and is the spec source for proof. No prose-only definition.
+- **Rename the two `VerificationContract` meanings:** `ProofObligation` (what a task owes; harness-owned; read-only to the agent; travels Conductor→harness) vs. `EvidenceClaim` (untrusted agent self-report; travels agent→Conductor). The A2A payload carries the `ProofObligation`; the harness computes the `Verdict` independently.
+- **`Verdict` keeps per-mode provenance.** Define `Converge(behavioral, empirical, hazard) → {Accept | Reject | Inconclusive, dissenting_modes}` as an explicit, testable function (not a bare `converged: bool`), with the `Inconclusive` mapping spelled out. Reconcile with the Decision Matrix (per-mode decision, then aggregate). `proofs` rows carry quantitative metrics: `{mutation_score, empirical_pass_rate, hazard_controlled_count, hazard_total_count, run_count}` so degradation is computable.
+- **Spec versioning replaces naïve "immutability."** Add `version` + `parent_spec_id` + a `revised` status. Re-anchoring stays read-only (compare-only); a developer interrupt (Story 6) mints a new spec version requiring re-approval and marks in-flight tasks `blocked` pending re-evaluation. The *accepted version* is immutable; the spec lineage evolves.
+- **Tracker projection is one-way (store→tracker) in V2.1**, with a `tracker_sync` sub-schema (`entity_id, tracker_external_id, last_synced_at, conflict_policy=store-wins-with-alert`). Out-of-band human edits to the tracker are overwritten with a visible warning; bidirectional reconciliation is a named future phase. Entities carry `updated_at`/`version` for staleness.
+- **`failure_modes` gets a `canonical_key`** (deterministic hash over `{category, component_type, symptom_class}`) + a `Matches(other)` contract, so Story 30 ("never silently repeat a known failure") is implementable against both local rows and Polaris-seeded context.
+- **Add an `artifacts` entity** (`{task_id, artifact_type, storage_path, content_hash, created_at}`) with a producer step in Trace 3 — "ancestor task outputs" in the context bundle currently has no persistent producer.
+- **`tasks` gains `proof_id` FK → `proofs`;** the transition to `proven` is a store-enforced constraint requiring a non-null `proof_id` with `verdict=Accept`. The `done`-gate is a DB constraint, not just orchestrator code.
+- **Operating envelope is schematized and displayed:** `{proven_load, fault_classes_controlled, assumptions, tier}`, rendered in the `:proof`/`:deliver` panes and included in the delivery artifact/runbook (Stories 26–27).
+- **Hazard mode models the STPA control structure, not just a UCA list.** The hazard sub-engine builds a control-structure model for the change — controllers, control actions, and feedback loops — and derives unsafe control actions (UCAs) from the `ProofObligation` (Decomposer-authored, not generator) and/or the Polaris risk register. Critically, the modeled **control actions and feedback loops become first-class observability surfaces and test targets**: each control action gets a probe/assertion (is it issued when it should be, suppressed when it shouldn't, observable in telemetry), and each control loop gets a validation that its feedback actually closes. So hazard proof yields both "are UCAs controlled?" *and* a set of executable control-loop tests the empirical mode runs. The sub-engine checks controls; it does not enumerate UCAs for itself.
+- **Decomposition coverage check:** after decomposition, assert every behavioral requirement in the spec maps to ≥1 `ProofObligation` clause in the DAG; gate plan approval on it (closes the "Decomposer narrows the proof surface" leak). Define minimal fields for `decisions` and `escalations` (currently fieldless).
+- **Completeness gate is deterministic-first:** a rules-based required-decisions checklist per project type (unit-testable without an LLM) + an optional LLM enrichment pass replayed from recorded fixtures (cassettes) — so the golden test is meaningful, not flaky.
+
+## Testing Decisions
+
+### Test philosophy
+
+Test **external behavior**, not implementation. Every deep module has observable outputs that can be asserted without poking internals: the completeness gate emits a deterministic `OpenDecision` set for a given intent; the decomposer emits a DAG; the proof harness emits a `Verdict`; the context store's `Recall` emits a `ContextBundle`. Orion holds itself to its own bar: validation is independent of generation, and we measure our tests by **mutation score**, not coverage. Prior art: the existing `internal/architect` golden-file tests and `internal/verify` verdict unit tests in the archived V1 tree are reusable patterns.
+
+### Modules with priority coverage
+
+1. **`orchestrator/completeness`** — golden tests: given intent X for project type Y, the `OpenDecision` set matches expectation; a fully-specified intent yields zero open decisions.
+2. **`decomposer`** — given an accepted spec, the DAG covers the spec and every node carries a `VerificationContract`.
+3. **`proof`** — convergence logic: a verdict is `Accept` only when all three modes pass; any single failing/missing mode yields `Reject`/`Inconclusive`. Mutation-score gate behaves (high coverage + low mutation score does *not* pass behavioral).
+4. **`context-store`** — `Recall(task_id)` reconstructs a bundle sufficient to resume a task after simulated agent restart (no in-memory dependence).
+5. **`context-engine`** — drift detection flags a trajectory that diverges from the spec; budgeting preserves intent-anchoring content under a tight window.
+6. **`dependency-provenance`** — a hallucinated package name is rejected; a real one resolves.
+7. **`delivery`** — deployment-bar decision matches the tier policy; bar-not-met routes to escalation, never silently ships.
+
+### Integration Acceptance Test
+
+**Orion V2.0 acceptance test (FIRST issue created, LAST issue closed):**
+
+1. Launch the Orion TUI in an empty directory.
+2. In Conversation, state an intent with one deliberate ambiguity, e.g.: *"Build an HTTP service that returns the current time."* (ambiguous: format? timezone? port? endpoint path?).
+3. **Verify:** the completeness gate surfaces the specific open decisions (at minimum: response format, timezone, port/route) and asks about them — it does **not** silently guess.
+4. Answer the questions; **verify** an executable spec is produced and shown for approval, and approval is recorded.
+5. **Verify:** a task DAG is generated and rendered in the Plan view; each task carries a verification contract.
+6. **Verify:** specialist agents generate the Go service, its tests, and instrumentation, coordinated by the Conductor; Fleet status reflects activity.
+7. **Verify (behavioral):** the harness runs independent tests and reports a **mutation score**, not just coverage; a deliberately tautological assertion injected into the suite is flagged as not fault-catching.
+8. **Verify (empirical):** a Lookout probe starts the built service and confirms it listens on the chosen port and returns the spec-conformant response to a real request.
+9. **Verify (hazard):** the proof report names the unsafe control actions considered (e.g., unbounded request handling) and shows they're controlled (e.g., timeouts/limits present).
+10. **Verify:** the task DAG cannot reach `done` until all three proof modes converge; an artifact with passing tests but a failing empirical probe is **not** marked done.
+11. **Verify:** the deliverable includes structured logs, a metric/trace surface, and a generated runbook (the 3 a.m. test).
+12. **Verify:** every dependency added by the build is provenance-checked; a planted hallucinated dependency name is rejected.
+13. **Verify:** the final delivery is a proven, runnable Go service with a published operating envelope; the Context Store records spec, decisions, DAG, proofs, and delivery.
+14. **Verify (resumability):** kill an in-flight specialist agent; on retry, the replacement reconstructs context via `Recall` and completes the task without re-asking the developer.
+
+This pins end-to-end correctness of the V2.0 loop — intent → completeness → decomposition → coordinated generation → multi-modal proof → operable delivery — on a known greenfield path, and gates the V2.0 release.
+
+### Shell-Verifiable Acceptance Criteria (V2.0)
+
+> Added by adversarial review. The narrative test above is choreography; these are the runnable predicates a CI/`/build` gate checks. The `orion …` subcommands referenced here *define the CLI surface V2.0 must expose* (non-interactive control of the TUI loop). Every box is a command that exits 0 (or a named Go test that passes). The test harness MUST isolate state: `export ORION_DATA_DIR=$(mktemp -d) && orion init --dir $ORION_DATA_DIR`.
+
+```markdown
+# Intent completeness gate (no silent guessing)
+- [ ] echo "Build an HTTP service that returns the current time." | orion submit --non-interactive \
+      | jq -e '.open_decisions|map(.key)|contains(["response_format","timezone","port","route"])'
+- [ ] (after answering) orion spec show --json | jq -e '.status=="accepted" and (.open_decisions|length==0)'
+
+# Decomposition + coverage
+- [ ] orion plan show --json | jq -e '.tasks|length>0 and ([.tasks[]|select(.proof_obligation==null)]|length==0)'
+- [ ] go test ./decomposer/... -run TestEverySpecRequirementHasProofObligation   # coverage check
+
+# Trust-domain independence (the credibility hinge)
+- [ ] go test ./proof/... -run TestHarnessIsolation            # generating agent cannot read corpus/spec/store
+- [ ] go test ./proof/... -run TestKnownFaultyArtifactIsRejected   # canary: planted defect ⇒ Reject
+- [ ] go test ./proof/behavioral/... -run TestMutationGateRejectsTautology  # tautological test ⇒ not fault-catching
+
+# Multi-modal proof converges; done-gate is real
+- [ ] go test ./internal/conductor/... -run TestStateMachineRequiresAllThreeModes
+- [ ] orion task show <id> --json | jq -e '.status!="done"'   # while empirical probe = Reject
+- [ ] orion proof show --task <id> --mode empirical --json | jq -e '.port_open and .response_contract_satisfied'
+- [ ] orion proof show --task <id> --mode hazard --json | jq -e '(.ucas_considered|length>0) and (.uncontrolled_ucas|length==0)'
+- [ ] orion proof show --task <id> --mode hazard --json | jq -e '(.control_actions|length>0) and ([.control_actions[]|select(.test==null)]|length==0)'  # every control action has a test
+- [ ] go test ./proof/hazard/... -run TestControlLoopFeedbackValidated   # modeled feedback loops actually close
+
+# Operability (3 a.m. test)
+- [ ] orion deliver show --runbook --json \
+      | jq -e '.sections|keys|contains(["incident_response","escalation_path","known_failure_modes","operational_commands"])'
+- [ ] orion deliver show --json | jq -e '.operating_envelope!=null'
+
+# Security gates
+- [ ] orion deps verify github.com/nonexistent-org/nonexistent-pkg-xyzzy-42 ; test $? -ne 0   # hallucinated dep rejected
+- [ ] go test ./dependency-provenance/... -run TestPreRegisteredTyposquatRejected             # exists-but-anomalous
+- [ ] go test ./proof/... -run TestHardcodedSecretBlocksDeliveryBar
+- [ ] go test ./context-engine/... -run TestInjectedInstructionRenderedInert                  # memory-poisoning defense
+
+# Harness reliability
+- [ ] go test ./context-store/... -run TestRecallRebuildsContextAfterAgentKill    # kill mid-WRITE, resumes, +1 attempt, 0 new decisions
+- [ ] go test ./...           -run TestLLMCallHasTimeoutAndCircuitBreaker
+- [ ] go test ./...           -run TestSpendIsSurfacedLiveInTUI                  # accounting always on
+- [ ] go test ./...           -run TestRunHaltsAndEscalatesWhenCeilingConfigured  # only when an opt-in ceiling is set
+- [ ] go test ./polaris-connector/... -run TestLoopProceedsWhenPolarisUnreachable  # flags reduced context, does not block
+
+# Determinism of the completeness gate
+- [ ] go test ./orchestrator/completeness/... -run TestRequiredDecisionsChecklist  # rules-based, no live LLM
+```
+
+Each `orion` subcommand above is itself a V2.0 implementation task (the non-interactive CLI surface). A criterion that cannot be expressed as a command or named test signals an incomplete design, not acceptable prose.
+
+## Out of Scope
+
+- **Web/GUI surface.** V2 is TUI-first. No web UI for Orion itself (Polaris keeps its own).
+- **Autonomous delivery / auto-deploy.** Deferred to V2.3 and gated by reliability tier; V2.0/V2.1 deliver human-mergeable, proof-passed artifacts only.
+- **Polaris failure-mode write-back.** Consume-only until V2.3.
+- **Brownfield intake and tracker projection (GitHub Issues).** V2.1.
+- **TypeScript and Python generators + proof harnesses.** V2.2 (V2.0 is Go-only).
+- **Multi-developer / shared-session collaboration.** Single developer, single machine in V2.
+- **Production access / runtime telemetry ingestion.** Orion does not call production or scrape APM in V2; proof is generated in the local sandbox.
+- **Hosted SaaS execution of the core loop.** Local-first; only Polaris is cloud.
+- **Cross-tenant model training on user code.** Out of scope, permanently.
+
+## Further Notes
+
+- **Credibility hinge (from the manifesto):** Orion is itself an agentic workflow and inherits every failure mode it defends against. The design constraint is recursive — Orion must not trust its own subagents' green checkmarks. This is why the Proof Harness is independent of and hidden from generating agents, and why task closure is verification-gated. Any future change that lets a generating agent influence its own proof reintroduces the core defect and must be rejected in review.
+- **Triad reconciliation is a BLOCKING prerequisite, not a "refresh" (raised by architecture review).** The referenced component specs (A2A, Lookout, Orchestrator Logic, Task Decomposer, Verification Engine, Decision Matrix) are written for a **Rust / HTTP-microservice / beads-as-source-of-truth / 2-tier-verification** design that contradicts this PRD's **Go / local-first in-process / Context-Store-as-truth / 3-mode-proof** design. Therefore "reuses [spec]" anywhere above means **"re-derives the concept from"**, not "depends on" — those specs are conceptual ancestors that must be *reconciled and rewritten* before any module that cites them is built. Produce a reconciliation table (Rust→Go, HTTP→in-process channel, beads-truth→Context-Store-truth, 2-tier→3-mode, single-tuple Decision Matrix→per-mode `Converge`) as the first V2.0 design task.
+- **Why local-first:** the comparators that define this UX (Gastown, Hermes, OpenClaw, Pi) are local harnesses, and the manifesto's "operable by the developer" thesis is best served when the developer owns the loop on their machine. Polaris remains the cloud knowledge layer — the place reliability wisdom accumulates across everyone.
+- **Dogfood path:** prove V2.0 on small greenfield Go services, then turn Orion on Revelara's own repos (V2.1 brownfield) before any external user.
+
+## Adversarial Review Summary
+
+Six parallel expert reviews (architecture, security, testability, data flow, performance, reliability) on 2026-06-17.
+
+Findings by reviewer:
+- **Architecture:** 12 findings (3 blocker, 8 important, 1 nit)
+- **Security:** 12 findings (3 blocker, 6 important, 3 nit)
+- **Testability:** 14 findings (6 blocker, 7 important, 1 nit)
+- **Data flow:** 14 findings (5 blocker, 6 important, 3 nit)
+- **Performance:** 11 findings (3 blocker, 7 important, 1 nit)
+- **Reliability:** 13 findings (4 blocker, 8 important, 1 nit)
+
+The single highest-signal finding, raised independently by **all six** reviewers: the generation⊥proof independence boundary — the manifesto's "no agent grades its own homework" — was asserted in prose but not structurally enforced (a `test-author` agent sat on the generating side, agent-supplied evidence fed the verdict, no module owned the held-out corpus). All reviewers also affirmed the architecture and the manifesto→mechanism mapping are coherent; the blockers are "specify the mechanism," not "the design is wrong."
+
+**Patched inline (new normative sections):** Trust Domains and the Independence Invariant · Harness Reliability Requirements · Security Requirements · Resource & Cost Governance · Core Data Model Hardening. Plus: shell-verifiable Acceptance Criteria added; "reuses [Triad spec]" corrected to "re-derives" and the Triad reconciliation made a blocking prerequisite.
+
+**Acceptance Criteria:** converted from a 14-step narrative test to ~25 shell/Go-test predicates.
+
+**Net effect:** the blockers that were *mechanism-missing* are now stated as contracts. The blockers that were *judgment calls* are recorded in Resolved Design Decisions below (all five resolved). This PRD is now at the altitude where the next step is the component-spec / Triad-reconciliation pass — not another `/write-a-prd`.
+
+## Resolved Design Decisions (post-review)
+
+The five judgment calls surfaced by the adversarial review, resolved 2026-06-17:
+
+1. **Budget posture — warn-by-default, ceilings opt-in.** Spend (tokens/$/wall-clock) is always tracked and surfaced live in the TUI, but no hard ceiling ships by default; ceilings are opt-in config. With a ceiling set, the loop escalates at ~80% and treats out-of-budget as a terminal-with-fallback state. The developer owns the spend/safety trade-off. *(See Resource & Cost Governance.)*
+2. **Sandbox — gVisor/runsc default, pluggable across all three.** Isolation is a swappable backend (`sandbox.isolation`): gVisor/runsc (default, and it powers reversibility-by-interception on WSL2), container (Docker/Podman), microVM (Firecracker) — to reach the broadest user base. All backends meet one isolation contract. *(See Security Requirements.)*
+3. **Triad — reconciliation table first, then decide per-spec.** The concept-mapping table is the first V2.0 design task; each Triad spec is then refreshed to V2 or archived. *(See Further Notes / Triad reconciliation.)*
+4. **Empirical proof — generic "run the real entry point, observe real effects" + per-type adapters.** service = port + request; CLI = exec + exit/stdout/fs; library = harness-authored driver program; batch = fixture run + output diff. V2.0 ships the service adapter only; the others are defined for V2.2. *(See Core Data Model Hardening.)*
+5. **Response contract — auto-derived + ratified + amendable, plus STPA control-loop modeling.** The completeness gate compiles the human-approved decisions into a machine-checkable `ResponseContract`, surfaced in spec review for ratification and amendment (derived from human-approved decisions, so it stays in the trusted proof domain — never authored by the generating agent). **Additionally**, hazard mode models the STPA control structure (controllers, control actions, feedback loops) so those become observability surfaces and executable test targets the empirical mode validates — extending proof from "is the response conformant?" to "are the control actions and feedback loops correct and observable?" *(See Core Data Model Hardening — hazard mode.)*
+
+No open questions remain. Next step: the Triad reconciliation table + component specs.
