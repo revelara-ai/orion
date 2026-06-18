@@ -227,14 +227,31 @@ type AttemptRepo struct{ tx *sql.Tx }
 // Create records a task attempt with an idempotency key (UNIQUE per task) so a
 // restarted agent detects and skips an already-committed side effect.
 func (r *AttemptRepo) Create(ctx context.Context, taskID, idempotencyKey string) (string, error) {
+	return r.CreateWithClaim(ctx, taskID, idempotencyKey, "{}")
+}
+
+// CreateWithClaim records an attempt together with the agent's untrusted
+// EvidenceClaim (stored verbatim as JSON). The claim is persisted as a claim,
+// never as a verdict — the proof domain recomputes verdicts independently.
+func (r *AttemptRepo) CreateWithClaim(ctx context.Context, taskID, idempotencyKey, evidenceClaimJSON string) (string, error) {
+	if evidenceClaimJSON == "" {
+		evidenceClaimJSON = "{}"
+	}
 	id, now := newID(), nowRFC3339()
 	_, err := r.tx.ExecContext(ctx,
-		`INSERT INTO task_attempts (id, task_id, idempotency_key, created_at) VALUES (?,?,?,?)`,
-		id, taskID, idempotencyKey, now)
+		`INSERT INTO task_attempts (id, task_id, idempotency_key, evidence_claim, created_at) VALUES (?,?,?,?,?)`,
+		id, taskID, idempotencyKey, evidenceClaimJSON, now)
 	if err != nil {
 		return "", fmt.Errorf("create task attempt: %w", err)
 	}
 	return id, nil
+}
+
+// CountByTask returns the number of attempts recorded for a task.
+func (r *AttemptRepo) CountByTask(ctx context.Context, taskID string) (int, error) {
+	var n int
+	err := r.tx.QueryRowContext(ctx, `SELECT count(*) FROM task_attempts WHERE task_id=?`, taskID).Scan(&n)
+	return n, err
 }
 
 // ── ProofRepo ────────────────────────────────────────────────────────────────
@@ -254,6 +271,13 @@ func (r *ProofRepo) Create(ctx context.Context, taskID string, p Proof) (string,
 		return "", fmt.Errorf("create proof: %w", err)
 	}
 	return id, nil
+}
+
+// CountByTask returns the number of proofs recorded for a task.
+func (r *ProofRepo) CountByTask(ctx context.Context, taskID string) (int, error) {
+	var n int
+	err := r.tx.QueryRowContext(ctx, `SELECT count(*) FROM proofs WHERE task_id=?`, taskID).Scan(&n)
+	return n, err
 }
 
 // ── ArtifactRepo ─────────────────────────────────────────────────────────────

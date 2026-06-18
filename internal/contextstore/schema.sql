@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS task_attempts (
     id              TEXT PRIMARY KEY,
     task_id         TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     idempotency_key TEXT NOT NULL,
+    evidence_claim  TEXT NOT NULL DEFAULT '{}',
     created_at      TEXT NOT NULL,
     UNIQUE (task_id, idempotency_key)
 );
