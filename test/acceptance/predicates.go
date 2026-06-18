@@ -67,11 +67,11 @@ var predicates = []predicate{
 
 	// ── Trust-domain independence (the credibility hinge) ────────────────────
 	{"trust-domain", "harness isolation", kindGoTest,
-		`go test ./proof/... -run TestHarnessIsolation`},
+		`go test ./internal/proof/... -run TestHarnessIsolation`},
 	{"trust-domain", "known faulty artifact rejected", kindGoTest,
-		`go test ./proof/... -run TestKnownFaultyArtifactIsRejected`},
+		`go test ./internal/proof/... -run TestKnownFaultyArtifactIsRejected`},
 	{"trust-domain", "mutation gate rejects tautology", kindGoTest,
-		`go test ./proof/behavioral/... -run TestMutationGateRejectsTautology`},
+		`go test ./internal/proof/behavioral/... -run TestMutationGateRejectsTautology`},
 
 	// ── Multi-modal proof converges; done-gate is real ───────────────────────
 	{"proof-converge", "state machine requires all three modes", kindGoTest,
@@ -85,7 +85,7 @@ var predicates = []predicate{
 	{"proof-converge", "hazard: every control action has a test", kindCLI,
 		`TASK=$(orion plan show --json | jq -r '.tasks[0].id'); test -n "$TASK" && orion proof show --task "$TASK" --mode hazard --json | jq -e '(.control_actions|length>0) and ([.control_actions[]|select(.test==null)]|length==0)'`},
 	{"proof-converge", "control-loop feedback validated", kindGoTest,
-		`go test ./proof/hazard/... -run TestControlLoopFeedbackValidated`},
+		`go test ./internal/proof/hazard/... -run TestControlLoopFeedbackValidated`},
 
 	// ── Operability (3 a.m. test) ────────────────────────────────────────────
 	{"operability", "runbook sections present", kindCLI,
@@ -99,7 +99,7 @@ var predicates = []predicate{
 	{"security", "pre-registered typosquat rejected", kindGoTest,
 		`go test ./dependency-provenance/... -run TestPreRegisteredTyposquatRejected`},
 	{"security", "hardcoded secret blocks delivery bar", kindGoTest,
-		`go test ./proof/... -run TestHardcodedSecretBlocksDeliveryBar`},
+		`go test ./internal/proof/... -run TestHardcodedSecretBlocksDeliveryBar`},
 	{"security", "injected instruction rendered inert", kindGoTest,
 		`go test ./internal/contextengine/... -run TestInjectedInstructionRenderedInert`},
 
