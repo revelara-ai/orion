@@ -54,7 +54,44 @@ func Open(dir string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("contextstore migrate: %w", err)
 	}
+	if err := ensureColumn(db, "task_attempts", "evidence_claim", "TEXT NOT NULL DEFAULT '{}'"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("contextstore migrate columns: %w", err)
+	}
 	return &Store{db: db, dir: dir}, nil
+}
+
+// ensureColumn adds a column to a table if it does not already exist (additive
+// migration for stores created by an earlier schema version). SQLite has no
+// "ADD COLUMN IF NOT EXISTS", so we probe PRAGMA table_info first.
+func ensureColumn(db *sql.DB, table, column, decl string) error {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if name == column {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	_ = rows.Close()
+	if found {
+		return nil
+	}
+	_, err = db.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + decl)
+	return err
 }
 
 // Close checkpoints the WAL and closes the database.
@@ -146,6 +183,29 @@ func (s *Store) SpecsForProject(ctx context.Context, projectID string) ([]Spec, 
 		return e
 	})
 	return out, err
+}
+
+// AttemptCount returns how many attempts have been recorded for a task.
+func (s *Store) AttemptCount(ctx context.Context, taskID string) (int, error) {
+	var n int
+	err := s.view(ctx, func(tx *Tx) error {
+		var e error
+		n, e = tx.Attempts().CountByTask(ctx, taskID)
+		return e
+	})
+	return n, err
+}
+
+// ProofCount returns how many proofs have been recorded for a task. Dispatch
+// must never create a proof (the EvidenceClaim is not a verdict).
+func (s *Store) ProofCount(ctx context.Context, taskID string) (int, error) {
+	var n int
+	err := s.view(ctx, func(tx *Tx) error {
+		var e error
+		n, e = tx.Proofs().CountByTask(ctx, taskID)
+		return e
+	})
+	return n, err
 }
 
 // Task loads a task by id.
