@@ -1,0 +1,210 @@
+{
+  "losses": [
+    {
+      "id": "L1",
+      "description": "Clients cannot obtain the time (service unavailable)"
+    },
+    {
+      "id": "L2",
+      "description": "Clients receive an incorrect or stale time"
+    },
+    {
+      "id": "L3",
+      "description": "Service resources exhausted by unbounded/abusive requests"
+    },
+    {
+      "id": "L4",
+      "description": "Users abandon the service due to chronic SLA misses (sustained unavailability/latency erodes trust)"
+    }
+  ],
+  "control_structure": {
+    "controllers": [
+      "HTTP Server",
+      "Request Handler",
+      "Observability/Monitoring",
+      "On-call/Incident Response"
+    ],
+    "actions": [
+      {
+        "id": "CA1",
+        "controller": "Request Handler",
+        "action": "serve time response",
+        "feedback": {
+          "from": "Request Handler",
+          "to": "metrics/logs",
+          "signal": "response status + latency"
+        }
+      },
+      {
+        "id": "CA2",
+        "controller": "HTTP Server",
+        "action": "accept connection",
+        "feedback": {
+          "from": "HTTP Server",
+          "to": "metrics",
+          "signal": "in-flight connection count"
+        }
+      },
+      {
+        "id": "CA3",
+        "controller": "Observability/Monitoring",
+        "action": "emit golden-signal/SLO telemetry + fire alert on SLO breach",
+        "feedback": {
+          "from": "Observability/Monitoring",
+          "to": "On-call",
+          "signal": "alert delivery + SLO burn-rate"
+        }
+      },
+      {
+        "id": "CA4",
+        "controller": "On-call/Incident Response",
+        "action": "acknowledge + remediate incident",
+        "feedback": {
+          "from": "On-call/Incident Response",
+          "to": "runbook/postmortem",
+          "signal": "incident status + MTTR"
+        }
+      }
+    ]
+  },
+  "ucas": [
+    {
+      "id": "UCA1",
+      "control_action": "CA1",
+      "type": "not_provided",
+      "hazard": "handler never responds (hang)",
+      "loss_refs": [
+        "L1"
+      ],
+      "disposition": "controlled",
+      "rationale": "handler always responds; bounded by server timeouts",
+      "decided_by": "developer"
+    },
+    {
+      "id": "UCA2",
+      "control_action": "CA1",
+      "type": "provided_incorrectly",
+      "hazard": "wrong/stale time or wrong format returned",
+      "loss_refs": [
+        "L2"
+      ],
+      "disposition": "controlled",
+      "rationale": "UTC + JSON ResponseContract verified by behavioral + empirical proof",
+      "decided_by": "developer"
+    },
+    {
+      "id": "UCA3",
+      "control_action": "CA1",
+      "type": "wrong_timing",
+      "hazard": "response exceeds acceptable latency / request timeout",
+      "loss_refs": [
+        "L1",
+        "L4"
+      ],
+      "disposition": "controlled",
+      "rationale": "server read/write timeouts bound latency",
+      "decided_by": "developer"
+    },
+    {
+      "id": "UCA4",
+      "control_action": "CA2",
+      "type": "wrong_duration",
+      "hazard": "connection held open indefinitely (slowloris)",
+      "loss_refs": [
+        "L3"
+      ],
+      "disposition": "controlled",
+      "rationale": "ReadHeaderTimeout mitigates slowloris",
+      "decided_by": "developer"
+    },
+    {
+      "id": "UCA5",
+      "control_action": "CA3",
+      "type": "not_provided",
+      "hazard": "SLO breached but no alert fires (silent SLA miss)",
+      "loss_refs": [
+        "L1",
+        "L4"
+      ],
+      "disposition": "accepted_gap",
+      "rationale": "observability/alerting not yet implemented; accepted gap — revisit when telemetry lands (brownfield-closable)",
+      "decided_by": "developer"
+    },
+    {
+      "id": "UCA6",
+      "control_action": "CA3",
+      "type": "wrong_timing",
+      "hazard": "alert fires only after a sustained breach",
+      "loss_refs": [
+        "L4"
+      ],
+      "disposition": "accepted_gap",
+      "rationale": "SLO burn-rate alerting timeliness not yet implemented; accepted gap",
+      "decided_by": "developer"
+    },
+    {
+      "id": "UCA7",
+      "control_action": "CA4",
+      "type": "not_provided",
+      "hazard": "alert fires but no ack/remediation (prolonged MTTR)",
+      "loss_refs": [
+        "L1",
+        "L4"
+      ],
+      "disposition": "accepted_gap",
+      "rationale": "on-call/runbook/escalation not yet wired; accepted gap — ties to delivery F2 runbook+escalation",
+      "decided_by": "developer"
+    }
+  ],
+  "loss_scenarios": [
+    {
+      "id": "S1",
+      "trigger": "burst of requests",
+      "sustaining_condition": "no request timeouts or concurrency limits",
+      "loss": "L3",
+      "controls": [
+        "server read/write timeouts",
+        "bounded concurrency"
+      ]
+    },
+    {
+      "id": "S2",
+      "trigger": "timezone/clock handling error",
+      "sustaining_condition": "no UTC normalization",
+      "loss": "L2",
+      "controls": [
+        "format times in UTC per the ResponseContract"
+      ]
+    },
+    {
+      "id": "S3",
+      "trigger": "slow client (slowloris)",
+      "sustaining_condition": "no ReadHeaderTimeout",
+      "loss": "L1",
+      "controls": [
+        "ReadHeaderTimeout"
+      ]
+    },
+    {
+      "id": "S4",
+      "trigger": "SLO breach (latency/availability)",
+      "sustaining_condition": "no golden-signal telemetry/alerting",
+      "loss": "L4",
+      "controls": [
+        "emit golden-signal metrics",
+        "SLO burn-rate alerts"
+      ]
+    },
+    {
+      "id": "S5",
+      "trigger": "incident occurs",
+      "sustaining_condition": "no on-call/runbook/escalation",
+      "loss": "L4",
+      "controls": [
+        "runbook",
+        "on-call escalation",
+        "incident response"
+      ]
+    }
+  ]
+}
