@@ -13,6 +13,8 @@ And Orion's reliability does not come from the model. Microservice architecture 
 
 Orion is the reliability layer of the agentic software development lifecycle.
 
+**In one line:** *Orion is a reliability-first multi-agent orchestration system with a strongly opinionated view of proof and validation — it drives a fleet of specialist agents from intent to working software, and treats output as done only when its correctness has been independently proven, never merely asserted.*
+
 ---
 
 ## Part I: The Failure Modes
