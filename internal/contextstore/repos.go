@@ -658,6 +658,48 @@ func (r *FailureModeRepo) Record(ctx context.Context, projectID, category, compo
 	return existing, nil
 }
 
+// ── PolarisContextRepo ───────────────────────────────────────────────────────
+
+// PolarisCacheEntry is a cached Polaris payload (controls/knowledge/risks) with
+// its freshness metadata.
+type PolarisCacheEntry struct {
+	Kind       string
+	Payload    string
+	FetchedAt  string
+	TTLSeconds int
+}
+
+type PolarisContextRepo struct{ tx *sql.Tx }
+
+// Upsert caches a Polaris payload for a project+kind (replace-by-kind).
+func (r *PolarisContextRepo) Upsert(ctx context.Context, projectID, kind, payload string, ttlSeconds int) error {
+	if _, err := r.tx.ExecContext(ctx, `DELETE FROM polaris_context WHERE project_id=? AND kind=?`, projectID, kind); err != nil {
+		return fmt.Errorf("clear polaris cache: %w", err)
+	}
+	_, err := r.tx.ExecContext(ctx,
+		`INSERT INTO polaris_context (id, project_id, kind, payload, fetched_at, ttl_seconds) VALUES (?,?,?,?,?,?)`,
+		newID(), projectID, kind, payload, nowRFC3339(), ttlSeconds)
+	if err != nil {
+		return fmt.Errorf("cache polaris context: %w", err)
+	}
+	return nil
+}
+
+// Get returns the cached entry for a project+kind, if present.
+func (r *PolarisContextRepo) Get(ctx context.Context, projectID, kind string) (PolarisCacheEntry, bool, error) {
+	var e PolarisCacheEntry
+	err := r.tx.QueryRowContext(ctx,
+		`SELECT kind, payload, fetched_at, ttl_seconds FROM polaris_context WHERE project_id=? AND kind=? LIMIT 1`,
+		projectID, kind).Scan(&e.Kind, &e.Payload, &e.FetchedAt, &e.TTLSeconds)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PolarisCacheEntry{}, false, nil
+	}
+	if err != nil {
+		return PolarisCacheEntry{}, false, err
+	}
+	return e, true, nil
+}
+
 // ── WorktreeRepo ─────────────────────────────────────────────────────────────
 
 // WorktreeRecord is a persisted per-task worktree (keyed by issue id).
