@@ -126,7 +126,7 @@ var predicates = []predicate{
 	{"harness", "run halts and escalates when ceiling configured", kindGoTest,
 		`go test ./... -run TestRunHaltsAndEscalatesWhenCeilingConfigured`},
 	{"harness", "loop proceeds when Polaris unreachable", kindGoTest,
-		`go test ./polaris-connector/... -run TestLoopProceedsWhenPolarisUnreachable`},
+		`go test ./internal/polaris/... -run TestLoopProceedsWhenPolarisUnreachable`},
 
 	// ── Determinism of the completeness gate ─────────────────────────────────
 	{"determinism", "required-decisions checklist is rules-based", kindGoTest,
@@ -200,9 +200,9 @@ var predicates = []predicate{
 
 	// ── Round-2: Polaris write integrity ─────────────────────────────────────
 	{"polaris", "evidence write is idempotent on retry", kindGoTest,
-		`go test ./polaris-connector/... -run TestPolarisEvidenceWriteIsIdempotentOnRetry`},
+		`go test ./internal/polaris/... -run TestPolarisEvidenceWriteIsIdempotentOnRetry`},
 	{"polaris", "knowledge contribution contains no raw code or paths", kindGoTest,
-		`go test ./polaris-connector/... -run TestKnowledgeContributionContainsNoRawCodeOrPaths`},
+		`go test ./internal/polaris/... -run TestKnowledgeContributionContainsNoRawCodeOrPaths`},
 	{"polaris", "Polaris token not in context store, unreachable from sandbox", kindGoTest,
-		`go test ./polaris-connector/... -run TestPolarisTokenNotInContextStoreAndUnreachableFromSandbox`},
+		`go test ./internal/polaris/... -run TestPolarisTokenNotInContextStoreAndUnreachableFromSandbox`},
 }
