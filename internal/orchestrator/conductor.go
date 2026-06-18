@@ -17,16 +17,17 @@ import (
 	"sync"
 
 	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 )
 
-// Confirmation is the Conductor's acknowledgement of a submitted intent. In the
-// skeleton it echoes the intent; once the completeness gate lands, Accepted will
-// gate on whether intake succeeded and Message will carry the first clarifying
-// questions.
+// Confirmation is the Conductor's acknowledgement of a submitted intent. It
+// carries the OpenDecisions the completeness gate raised — the clarifying
+// questions the developer must answer before the spec is complete.
 type Confirmation struct {
-	Intent   string
-	Accepted bool
-	Message  string
+	Intent        string
+	Accepted      bool
+	Message       string
+	OpenDecisions []completeness.OpenDecision
 }
 
 // Status is the situational-awareness snapshot the TUI's Conversation/Fleet
@@ -46,6 +47,7 @@ type Decision struct {
 type Conductor struct {
 	log   *slog.Logger
 	store *contextstore.Store // optional; nil = in-memory only
+	gate  *completeness.Analyzer
 
 	mu        sync.RWMutex
 	intent    string
@@ -55,13 +57,13 @@ type Conductor struct {
 // New returns an in-memory Conductor ready to accept an intent. It
 // self-instruments via the default structured logger (3 a.m. test).
 func New() *Conductor {
-	return &Conductor{log: slog.Default()}
+	return &Conductor{log: slog.Default(), gate: completeness.NewAnalyzer("http-service")}
 }
 
 // NewWithStore returns a Conductor that persists intake to the Context Store, so
 // a submitted intent (project + draft spec) survives a restart.
 func NewWithStore(store *contextstore.Store) *Conductor {
-	return &Conductor{log: slog.Default(), store: store}
+	return &Conductor{log: slog.Default(), store: store, gate: completeness.NewAnalyzer("http-service")}
 }
 
 // ProjectID returns the persisted project id for the current intent, if any.
@@ -109,12 +111,21 @@ func (c *Conductor) Submit(ctx context.Context, intent string) (Confirmation, er
 		c.mu.Unlock()
 	}
 
-	c.log.InfoContext(ctx, "intent submitted", "intent", trimmed)
+	// Run the deterministic completeness gate. Unresolved dimensions become open
+	// decisions the developer must answer — we never silently guess.
+	open := c.gate.Analyze(trimmed, nil)
 
+	c.log.InfoContext(ctx, "intent submitted", "intent", trimmed, "open_decisions", len(open))
+
+	msg := fmt.Sprintf("Got it — I'll build: %s", trimmed)
+	if len(open) > 0 {
+		msg = fmt.Sprintf("Before I build %q, I need %d decision(s) — see the questions below.", trimmed, len(open))
+	}
 	return Confirmation{
-		Intent:   trimmed,
-		Accepted: true,
-		Message:  fmt.Sprintf("Got it — I'll build: %s", trimmed),
+		Intent:        trimmed,
+		Accepted:      true,
+		Message:       msg,
+		OpenDecisions: open,
 	}, nil
 }
 

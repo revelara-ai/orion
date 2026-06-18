@@ -34,11 +34,31 @@ func TestConversationAcceptsAndEchoesIntent(t *testing.T) {
 	if !strings.Contains(view, intent) {
 		t.Fatalf("view should echo the submitted intent; got:\n%s", view)
 	}
-	if !strings.Contains(view, "Got it") {
-		t.Fatalf("view should show the Conductor confirmation; got:\n%s", view)
+	if !strings.Contains(view, "orion") {
+		t.Fatalf("view should show the Conductor's response; got:\n%s", view)
+	}
+	// The ambiguous canonical intent must be grilled, not silently accepted: at
+	// least one clarifying question (a spec dimension) appears.
+	if !strings.Contains(view, "response format") {
+		t.Fatalf("view should surface clarifying questions from the completeness gate; got:\n%s", view)
 	}
 	if m.input.Value() != "" {
 		t.Fatalf("input should be cleared after submit; got %q", m.input.Value())
+	}
+}
+
+// TestConversationFullySpecifiedIntentIsAccepted: an intent that resolves the
+// functional decisions still surfaces non-functional dimensions (no silent
+// guess), but a clearly-stated one is acknowledged.
+func TestConversationFullySpecifiedIntentIsAccepted(t *testing.T) {
+	m := NewConversation(orchestrator.New())
+	m.input.SetValue("Build an HTTP service on port 9090 at path /time returning JSON in UTC.")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Conversation)
+	// Functional decisions are resolved, so those specific questions should not
+	// appear; the response is still shown.
+	if !strings.Contains(m.View(), "orion") {
+		t.Fatalf("expected an orion response; got:\n%s", m.View())
 	}
 }
 

@@ -87,6 +87,10 @@ func (m *Conversation) submitCurrent() {
 		return
 	}
 	m.lines = append(m.lines, orionStyle.Render("orion › ")+conf.Message)
+	// Grill: surface the open decisions as numbered clarifying questions.
+	for i, od := range conf.OpenDecisions {
+		m.lines = append(m.lines, dimStyle.Render(fmt.Sprintf("   %d. [%s] %s", i+1, od.Dimension, od.Question)))
+	}
 }
 
 // View renders the pane: banner, transcript (or empty-state prompt), and input.
