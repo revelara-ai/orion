@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/revelara-ai/orion/internal/budget"
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 )
@@ -45,9 +46,10 @@ type Decision struct {
 
 // Conductor owns intent intake. Safe for concurrent use.
 type Conductor struct {
-	log   *slog.Logger
-	store *contextstore.Store // optional; nil = in-memory only
-	gate  *completeness.Analyzer
+	log    *slog.Logger
+	store  *contextstore.Store // optional; nil = in-memory only
+	gate   *completeness.Analyzer
+	budget *budget.Accountant
 
 	mu        sync.RWMutex
 	intent    string
@@ -55,16 +57,20 @@ type Conductor struct {
 }
 
 // New returns an in-memory Conductor ready to accept an intent. It
-// self-instruments via the default structured logger (3 a.m. test).
+// self-instruments via the default structured logger (3 a.m. test) and an
+// always-on budget accountant (no ceiling by default).
 func New() *Conductor {
-	return &Conductor{log: slog.Default(), gate: completeness.NewAnalyzer("http-service")}
+	return &Conductor{log: slog.Default(), gate: completeness.NewAnalyzer("http-service"), budget: budget.New()}
 }
 
 // NewWithStore returns a Conductor that persists intake to the Context Store, so
 // a submitted intent (project + draft spec) survives a restart.
 func NewWithStore(store *contextstore.Store) *Conductor {
-	return &Conductor{log: slog.Default(), store: store, gate: completeness.NewAnalyzer("http-service")}
+	return &Conductor{log: slog.Default(), store: store, gate: completeness.NewAnalyzer("http-service"), budget: budget.New()}
 }
+
+// Budget returns the always-on resource/cost accountant.
+func (c *Conductor) Budget() *budget.Accountant { return c.budget }
 
 // ProjectID returns the persisted project id for the current intent, if any.
 func (c *Conductor) ProjectID() string {
