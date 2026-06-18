@@ -150,7 +150,7 @@ Natural-language specifications are lossy, and the loss accrues across every ste
 Code that works but cannot be operated is incomplete. The real cost of agentic development is comprehension at 3 a.m. Orion produces the telemetry, the runbooks, and the executable intent that make a system understandable to someone who did not build it.
 
 **6. Context and memory are engineered, not free.**
-Drift, forgetting, and poisoning are consequences of treating the context window as infinite and memory as trustworthy. Orion engineers what the agent sees and remembers — bounding it, anchoring it to the original intent, and re-grounding before decay turns into divergence.
+Context erosion, drift, forgetting, and poisoning are all consequences of treating the context window as infinite and memory as trustworthy. Orion engineers what each agent sees and remembers — a tiered, heat-managed memory (short-, mid-, and long-term) that bounds context, pins the original intent so it can never be evicted, summarizes rather than drops, and re-grounds before decay turns into divergence. That same long-term memory lets the harness *evolve itself*: validated patterns, procedures, and refinements accumulate and make every future run better — without changing a line of code.
 
 **7. Reliability is calibrated to the project, not maximized blindly.**
 Rigor is a function of risk. Orion accepts a reliability profile as input and tunes its controls to the actual stakes. The right amount of reliability is a decision, not a default.
