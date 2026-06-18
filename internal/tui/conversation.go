@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -109,9 +110,21 @@ func (m Conversation) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(m.input.View())
 	b.WriteString("\n")
+	b.WriteString(dimStyle.Render(m.spendLine()))
+	b.WriteString("\n")
 	b.WriteString(dimStyle.Render("enter: submit · ctrl+c: quit"))
 	b.WriteString("\n")
 	return b.String()
+}
+
+// spendLine renders the always-on, live budget spend (read fresh each frame).
+func (m Conversation) spendLine() string {
+	s := m.conductor.Budget().Snapshot()
+	line := fmt.Sprintf("spend: %d tok · $%.2f · %s", s.Tokens, s.Dollars, s.Wall.Round(time.Second))
+	if s.HasCeiling {
+		line += fmt.Sprintf(" · ceiling:%s", s.State)
+	}
+	return line
 }
 
 // Run launches the Conversation pane as a full-screen bubbletea program over the

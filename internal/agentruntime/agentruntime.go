@@ -133,19 +133,38 @@ func (r *Registry) Fleet() []FleetEntry {
 }
 
 // Dispatcher runs a task on a spawned specialist over the a2a bus, enforcing a
-// wall-clock deadline, and records the untrusted EvidenceClaim as an attempt.
+// wall-clock deadline, and records the untrusted EvidenceClaim as an attempt. A
+// bounded dispatch semaphore caps concurrency with backpressure.
 type Dispatcher struct {
 	reg     *Registry
 	store   *contextstore.Store
 	timeout time.Duration
+	sem     chan struct{} // nil = unbounded
+}
+
+// Option configures a Dispatcher.
+type Option func(*Dispatcher)
+
+// WithMaxConcurrency bounds the number of concurrently-dispatched agents.
+// Further dispatches block (backpressure) until a slot frees.
+func WithMaxConcurrency(n int) Option {
+	return func(d *Dispatcher) {
+		if n > 0 {
+			d.sem = make(chan struct{}, n)
+		}
+	}
 }
 
 // NewDispatcher wires a registry + Context Store with a per-step deadline.
-func NewDispatcher(reg *Registry, store *contextstore.Store, timeout time.Duration) *Dispatcher {
+func NewDispatcher(reg *Registry, store *contextstore.Store, timeout time.Duration, opts ...Option) *Dispatcher {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
-	return &Dispatcher{reg: reg, store: store, timeout: timeout}
+	d := &Dispatcher{reg: reg, store: store, timeout: timeout}
+	for _, o := range opts {
+		o(d)
+	}
+	return d
 }
 
 // Dispatch spawns the role's agent, runs it (deadline + cancel) over the a2a bus,
@@ -154,6 +173,18 @@ func NewDispatcher(reg *Registry, store *contextstore.Store, timeout time.Durati
 // domain.
 func (d *Dispatcher) Dispatch(ctx context.Context, req a2a.Request, idempotencyKey string) (a2a.EvidenceClaim, error) {
 	taskID := req.Obligation.TaskID
+
+	// Bounded concurrency: acquire a dispatch slot (backpressure when full),
+	// honoring cancellation while waiting.
+	if d.sem != nil {
+		select {
+		case d.sem <- struct{}{}:
+			defer func() { <-d.sem }()
+		case <-ctx.Done():
+			return a2a.EvidenceClaim{}, ctx.Err()
+		}
+	}
+
 	h, err := d.reg.Spawn(req.Role, taskID)
 	if err != nil {
 		return a2a.EvidenceClaim{}, err
