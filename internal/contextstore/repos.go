@@ -21,13 +21,22 @@ type Project struct {
 }
 
 type Spec struct {
-	ID           string
-	ProjectID    string
-	Status       string // drafting | accepted | revised
-	Version      int
-	ParentSpecID string
-	CreatedAt    string
-	UpdatedAt    string
+	ID               string
+	ProjectID        string
+	Status           string // drafting | accepted | revised
+	Version          int
+	ParentSpecID     string
+	Hash             string
+	ResponseContract string // JSON
+	CreatedAt        string
+	UpdatedAt        string
+}
+
+// Decision is a developer's answer to a required decision.
+type Decision struct {
+	Key       string
+	Value     string
+	ValueKind string // precise | fallback_preset
 }
 
 type Task struct {
@@ -82,6 +91,18 @@ func (r *ProjectRepo) Get(ctx context.Context, id string) (Project, error) {
 	return p, err
 }
 
+// Latest returns the most recently created project.
+func (r *ProjectRepo) Latest(ctx context.Context) (Project, error) {
+	var p Project
+	err := r.tx.QueryRowContext(ctx,
+		`SELECT id, name, intent, created_at, updated_at FROM projects ORDER BY created_at DESC, id DESC LIMIT 1`).
+		Scan(&p.ID, &p.Name, &p.Intent, &p.CreatedAt, &p.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Project{}, ErrNotFound
+	}
+	return p, err
+}
+
 func (r *ProjectRepo) List(ctx context.Context) ([]Project, error) {
 	rows, err := r.tx.QueryContext(ctx,
 		`SELECT id, name, intent, created_at, updated_at FROM projects ORDER BY created_at DESC, id`)
@@ -126,23 +147,146 @@ func (r *SpecRepo) SetStatus(ctx context.Context, id, status string) error {
 	return mustAffectOne(res, "spec")
 }
 
+// SetAccepted marks a spec accepted and anchors it with its hash + the compiled
+// ResponseContract.
+func (r *SpecRepo) SetAccepted(ctx context.Context, id, hash, responseContract string) error {
+	res, err := r.tx.ExecContext(ctx,
+		`UPDATE specs SET status='accepted', spec_hash=?, response_contract=?, updated_at=? WHERE id=?`,
+		hash, responseContract, nowRFC3339(), id)
+	if err != nil {
+		return fmt.Errorf("set spec accepted: %w", err)
+	}
+	return mustAffectOne(res, "spec")
+}
+
+const specCols = `id, project_id, status, version, COALESCE(parent_spec_id,''), spec_hash, response_contract, created_at, updated_at`
+
+func scanSpec(sc interface{ Scan(...any) error }) (Spec, error) {
+	var s Spec
+	err := sc.Scan(&s.ID, &s.ProjectID, &s.Status, &s.Version, &s.ParentSpecID, &s.Hash, &s.ResponseContract, &s.CreatedAt, &s.UpdatedAt)
+	return s, err
+}
+
+func (r *SpecRepo) Get(ctx context.Context, id string) (Spec, error) {
+	s, err := scanSpec(r.tx.QueryRowContext(ctx, `SELECT `+specCols+` FROM specs WHERE id=?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Spec{}, ErrNotFound
+	}
+	return s, err
+}
+
+// LatestForProject returns the most recent spec for a project.
+func (r *SpecRepo) LatestForProject(ctx context.Context, projectID string) (Spec, error) {
+	s, err := scanSpec(r.tx.QueryRowContext(ctx,
+		`SELECT `+specCols+` FROM specs WHERE project_id=? ORDER BY version DESC, created_at DESC LIMIT 1`, projectID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Spec{}, ErrNotFound
+	}
+	return s, err
+}
+
 func (r *SpecRepo) ForProject(ctx context.Context, projectID string) ([]Spec, error) {
-	rows, err := r.tx.QueryContext(ctx,
-		`SELECT id, project_id, status, version, COALESCE(parent_spec_id,''), created_at, updated_at
-		 FROM specs WHERE project_id=? ORDER BY version`, projectID)
+	rows, err := r.tx.QueryContext(ctx, `SELECT `+specCols+` FROM specs WHERE project_id=? ORDER BY version`, projectID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []Spec
 	for rows.Next() {
-		var s Spec
-		if err := rows.Scan(&s.ID, &s.ProjectID, &s.Status, &s.Version, &s.ParentSpecID, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		s, err := scanSpec(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// ── DecisionRepo ─────────────────────────────────────────────────────────────
+
+type DecisionRepo struct{ tx *sql.Tx }
+
+// Create records a developer's answer to a required decision.
+func (r *DecisionRepo) Create(ctx context.Context, projectID, specID, key, value, valueKind string, securityRelevant bool) (string, error) {
+	id, now := newID(), nowRFC3339()
+	sr := 0
+	if securityRelevant {
+		sr = 1
+	}
+	var specArg any
+	if specID != "" {
+		specArg = specID
+	}
+	_, err := r.tx.ExecContext(ctx,
+		`INSERT INTO decisions (id, project_id, spec_id, key, value, value_kind, security_relevant, created_at)
+		 VALUES (?,?,?,?,?,?,?,?)`, id, projectID, specArg, key, value, valueKind, sr, now)
+	if err != nil {
+		return "", fmt.Errorf("create decision: %w", err)
+	}
+	return id, nil
+}
+
+// ListForSpec returns the latest answer per key for a spec (last write wins).
+func (r *DecisionRepo) ListForSpec(ctx context.Context, specID string) ([]Decision, error) {
+	rows, err := r.tx.QueryContext(ctx,
+		`SELECT key, value, value_kind FROM decisions WHERE spec_id=? ORDER BY created_at`, specID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	latest := map[string]Decision{}
+	var order []string
+	for rows.Next() {
+		var d Decision
+		if err := rows.Scan(&d.Key, &d.Value, &d.ValueKind); err != nil {
+			return nil, err
+		}
+		if _, seen := latest[d.Key]; !seen {
+			order = append(order, d.Key)
+		}
+		latest[d.Key] = d
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]Decision, 0, len(order))
+	for _, k := range order {
+		out = append(out, latest[k])
+	}
+	return out, nil
+}
+
+// ── SpecDimensionRepo ────────────────────────────────────────────────────────
+
+type SpecDimensionRepo struct{ tx *sql.Tx }
+
+// Upsert writes a typed spec dimension (one row per dimension per spec).
+func (r *SpecDimensionRepo) Upsert(ctx context.Context, specID, dimension, valueStructured, valueKind string, tierRequired bool) error {
+	tr := 0
+	if tierRequired {
+		tr = 1
+	}
+	id, now := newID(), nowRFC3339()
+	_, err := r.tx.ExecContext(ctx,
+		`INSERT INTO spec_dimensions (id, spec_id, dimension, value_structured, value_kind, tier_required, resolved_at)
+		 VALUES (?,?,?,?,?,?,?)
+		 ON CONFLICT(spec_id, dimension) DO UPDATE SET
+		   value_structured=excluded.value_structured,
+		   value_kind=excluded.value_kind,
+		   tier_required=excluded.tier_required,
+		   resolved_at=excluded.resolved_at`,
+		id, specID, dimension, valueStructured, valueKind, tr, now)
+	if err != nil {
+		return fmt.Errorf("upsert spec dimension: %w", err)
+	}
+	return nil
+}
+
+// CountForSpec returns how many dimensions are persisted for a spec.
+func (r *SpecDimensionRepo) CountForSpec(ctx context.Context, specID string) (int, error) {
+	var n int
+	err := r.tx.QueryRowContext(ctx, `SELECT count(*) FROM spec_dimensions WHERE spec_id=?`, specID).Scan(&n)
+	return n, err
 }
 
 // ── EpicRepo ─────────────────────────────────────────────────────────────────

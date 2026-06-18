@@ -9,25 +9,59 @@ import (
 	"os"
 	"strings"
 
+	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 )
 
+// withStore opens the Context Store at the resolved data dir and runs fn with a
+// store-backed Conductor. State persists across CLI invocations under
+// ORION_DATA_DIR — the headless loop-control surface.
+func withStore(fn func(context.Context, *orchestrator.Conductor) int) int {
+	dir, err := resolveDataDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "orion:", err)
+		return 1
+	}
+	store, err := contextstore.Open(dir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "orion: open context store:", err)
+		return 1
+	}
+	defer store.Close()
+	return fn(context.Background(), orchestrator.NewWithStore(store))
+}
+
+// cmdInit initializes the Orion data dir + Context Store.
+func cmdInit(_ []string) int {
+	dir, err := resolveDataDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "orion init:", err)
+		return 1
+	}
+	store, err := contextstore.Open(dir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "orion init:", err)
+		return 1
+	}
+	_ = store.Close()
+	fmt.Printf("initialized orion data dir at %s\n", dir)
+	return 0
+}
+
 // cmdSubmit implements `orion submit`. With --non-interactive it reads the intent
-// from stdin, runs the deterministic completeness gate, and prints the open
-// decisions as JSON — the headless surface the acceptance criteria exercise.
+// from stdin, persists it (project + draft spec), runs the deterministic
+// completeness gate, and prints the open decisions as JSON.
 func cmdSubmit(args []string) int {
 	fs := flag.NewFlagSet("submit", flag.ContinueOnError)
 	nonInteractive := fs.Bool("non-interactive", false, "read intent from stdin and emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-
 	if !*nonInteractive {
 		fmt.Fprintln(os.Stderr, "orion submit: interactive submit is the TUI; use --non-interactive for headless mode")
 		return 2
 	}
-
 	raw, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion submit: read stdin:", err)
@@ -38,30 +72,93 @@ func cmdSubmit(args []string) int {
 		fmt.Fprintln(os.Stderr, "orion submit: empty intent on stdin")
 		return 1
 	}
+	return withStore(func(ctx context.Context, c *orchestrator.Conductor) int {
+		conf, err := c.Submit(ctx, intent)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "orion submit:", err)
+			return 1
+		}
+		out := struct {
+			Intent        string                      `json:"intent"`
+			Accepted      bool                        `json:"accepted"`
+			OpenDecisions []completeness.OpenDecision `json:"open_decisions"`
+		}{conf.Intent, conf.Accepted, conf.OpenDecisions}
+		if out.OpenDecisions == nil {
+			out.OpenDecisions = []completeness.OpenDecision{}
+		}
+		return emitJSON(out)
+	})
+}
 
-	c := orchestrator.New()
-	conf, err := c.Submit(context.Background(), intent)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "orion submit:", err)
-		return 1
+// cmdAnswer implements `orion answer --key K --value V`.
+func cmdAnswer(args []string) int {
+	fs := flag.NewFlagSet("answer", flag.ContinueOnError)
+	key := fs.String("key", "", "decision key")
+	value := fs.String("value", "", "decision value")
+	if err := fs.Parse(args); err != nil {
+		return 2
 	}
+	if *key == "" {
+		fmt.Fprintln(os.Stderr, "orion answer: --key is required")
+		return 2
+	}
+	return withStore(func(ctx context.Context, c *orchestrator.Conductor) int {
+		if err := c.RecordAnswer(ctx, *key, *value); err != nil {
+			fmt.Fprintln(os.Stderr, "orion answer:", err)
+			return 1
+		}
+		fmt.Printf("recorded %s=%s\n", *key, *value)
+		return 0
+	})
+}
 
-	out := struct {
-		Intent        string                      `json:"intent"`
-		Accepted      bool                        `json:"accepted"`
-		OpenDecisions []completeness.OpenDecision `json:"open_decisions"`
-	}{
-		Intent:        conf.Intent,
-		Accepted:      conf.Accepted,
-		OpenDecisions: conf.OpenDecisions,
+// cmdSpec implements `orion spec <approve|show>`.
+func cmdSpec(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "orion spec: expected 'approve' or 'show'")
+		return 2
 	}
-	if out.OpenDecisions == nil {
-		out.OpenDecisions = []completeness.OpenDecision{}
+	sub, rest := args[0], args[1:]
+	switch sub {
+	case "approve":
+		return withStore(func(ctx context.Context, c *orchestrator.Conductor) int {
+			es, err := c.ApproveSpec(ctx)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "orion spec approve:", err)
+				return 1
+			}
+			fmt.Printf("spec accepted (hash %s)\n", es.Hash)
+			return 0
+		})
+	case "show":
+		fs := flag.NewFlagSet("spec show", flag.ContinueOnError)
+		asJSON := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(rest); err != nil {
+			return 2
+		}
+		return withStore(func(ctx context.Context, c *orchestrator.Conductor) int {
+			v, err := c.SpecView(ctx)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "orion spec show:", err)
+				return 1
+			}
+			if *asJSON {
+				return emitJSON(v)
+			}
+			fmt.Printf("status: %s\nopen decisions: %d\nhash: %s\n", v.Status, len(v.OpenDecisions), v.Hash)
+			return 0
+		})
+	default:
+		fmt.Fprintf(os.Stderr, "orion spec: unknown subcommand %q\n", sub)
+		return 2
 	}
+}
+
+func emitJSON(v any) int {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(out); err != nil {
-		fmt.Fprintln(os.Stderr, "orion submit: encode:", err)
+	if err := enc.Encode(v); err != nil {
+		fmt.Fprintln(os.Stderr, "orion: encode:", err)
 		return 1
 	}
 	return 0
