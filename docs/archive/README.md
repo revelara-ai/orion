@@ -16,6 +16,10 @@ The V2 manifesto reframes Orion as a **local-first, TUI-driven, intent-to-proven
 - `PRD/orion-v1.md` — Orion V1 PRD (Autonomous Reliability Synthesis).
 - `SPEC/Orion-SPEC.md` + `draft1..3` — the V1 specification and its adversarial-review drafts.
 
-## Not archived (still active)
+### Orion Triad component specs (archived 2026-06-17)
 
-The **"Orion Triad" component specs** under `docs/PRD/` (A2A Protocol, Lookout Agent, Orchestrator Logic, Task Decomposer, Verification Engine) and `docs/TDS/Orchestrator-Decision-Matrix.md` remain active. They are largely *aligned* with the V2 manifesto (the "Liar pattern" = agents gaming the verifier; Lookout = empirical proof; Truth Alignment = proof-not-assertion). The V2 PRD references them as component-level design and flags where they need a vocabulary-refresh pass.
+- `PRD/A2A-Protocol-Spec.md`, `PRD/Lookout-Agent-Spec.md`, `PRD/Orchestrator-Logic-Spec.md`, `PRD/Task-Decomposer-Spec.md`, `PRD/Verification-Engine-Spec.md`
+- `TDS/Orchestrator-Decision-Matrix.md`
+- `specs/A2A-Protocol-Spec.md` (draft v0.1, redundant with the PRD A2A spec)
+
+These were written for a different architecture (Rust / HTTP microservices / beads-as-source-of-truth / 2-tier verification). Their *concepts* are absorbed into the V2 module list and preserved by **[`docs/SPEC/Orion-Triad-Reconciliation.md`](../SPEC/Orion-Triad-Reconciliation.md)** — read that bridge, not these originals, when building the V2 components.
