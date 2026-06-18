@@ -154,6 +154,35 @@ func cmdSpec(args []string) int {
 	}
 }
 
+// cmdPlan implements `orion plan show [--json]`. It decomposes the accepted spec
+// on demand and renders the Epic/Task plan.
+func cmdPlan(args []string) int {
+	if len(args) == 0 || args[0] != "show" {
+		fmt.Fprintln(os.Stderr, "orion plan: expected 'show'")
+		return 2
+	}
+	fs := flag.NewFlagSet("plan show", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "emit JSON")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+	return withStore(func(ctx context.Context, c *orchestrator.Conductor) int {
+		pv, err := c.PlanView(ctx)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "orion plan show:", err)
+			return 1
+		}
+		if *asJSON {
+			return emitJSON(pv)
+		}
+		fmt.Printf("epic: %s\ntasks: %d\n", pv.EpicTitle, len(pv.Tasks))
+		for _, t := range pv.Tasks {
+			fmt.Printf("  - %s [%s]\n", t.Title, t.FileScope)
+		}
+		return 0
+	})
+}
+
 func emitJSON(v any) int {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")

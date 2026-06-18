@@ -148,16 +148,17 @@ func (s *Store) view(ctx context.Context, fn func(*Tx) error) error {
 // repos returned from one Tx share the same underlying transaction.
 type Tx struct{ tx *sql.Tx }
 
-func (t *Tx) Projects() *ProjectRepo             { return &ProjectRepo{t.tx} }
-func (t *Tx) Specs() *SpecRepo                   { return &SpecRepo{t.tx} }
-func (t *Tx) SpecDimensions() *SpecDimensionRepo { return &SpecDimensionRepo{t.tx} }
-func (t *Tx) Decisions() *DecisionRepo           { return &DecisionRepo{t.tx} }
-func (t *Tx) Epics() *EpicRepo                   { return &EpicRepo{t.tx} }
-func (t *Tx) Tasks() *TaskRepo                   { return &TaskRepo{t.tx} }
-func (t *Tx) Attempts() *AttemptRepo             { return &AttemptRepo{t.tx} }
-func (t *Tx) Proofs() *ProofRepo                 { return &ProofRepo{t.tx} }
-func (t *Tx) Artifacts() *ArtifactRepo           { return &ArtifactRepo{t.tx} }
-func (t *Tx) FailureModes() *FailureModeRepo     { return &FailureModeRepo{t.tx} }
+func (t *Tx) Projects() *ProjectRepo                 { return &ProjectRepo{t.tx} }
+func (t *Tx) Specs() *SpecRepo                       { return &SpecRepo{t.tx} }
+func (t *Tx) SpecDimensions() *SpecDimensionRepo     { return &SpecDimensionRepo{t.tx} }
+func (t *Tx) Decisions() *DecisionRepo               { return &DecisionRepo{t.tx} }
+func (t *Tx) Epics() *EpicRepo                       { return &EpicRepo{t.tx} }
+func (t *Tx) ProofObligations() *ProofObligationRepo { return &ProofObligationRepo{t.tx} }
+func (t *Tx) Tasks() *TaskRepo                       { return &TaskRepo{t.tx} }
+func (t *Tx) Attempts() *AttemptRepo                 { return &AttemptRepo{t.tx} }
+func (t *Tx) Proofs() *ProofRepo                     { return &ProofRepo{t.tx} }
+func (t *Tx) Artifacts() *ArtifactRepo               { return &ArtifactRepo{t.tx} }
+func (t *Tx) FailureModes() *FailureModeRepo         { return &FailureModeRepo{t.tx} }
 
 // ── Store-level read helpers (read-model over the repositories) ──────────────
 

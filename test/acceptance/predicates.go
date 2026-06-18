@@ -58,9 +58,12 @@ var predicates = []predicate{
 
 	// ── Decomposition + coverage ─────────────────────────────────────────────
 	{"decomposition", "plan has tasks, all with proof obligations", kindCLI,
-		`orion plan show --json | jq -e '.tasks|length>0 and ([.tasks[]|select(.proof_obligation==null)]|length==0)'`},
+		// NOTE: the PRD wrote `.tasks|length>0 and (...)`, which jq parses as
+		// `.tasks | (... .tasks[] ...)` — the second clause then indexes the array
+		// and errors. Parenthesized so each clause is evaluated against the root.
+		`orion plan show --json | jq -e '(.tasks|length>0) and ([.tasks[]|select(.proof_obligation==null)]|length==0)'`},
 	{"decomposition", "every spec requirement has a proof obligation", kindGoTest,
-		`go test ./decomposer/... -run TestEverySpecRequirementHasProofObligation`},
+		`go test ./internal/decomposer/... -run TestEverySpecRequirementHasProofObligation`},
 
 	// ── Trust-domain independence (the credibility hinge) ────────────────────
 	{"trust-domain", "harness isolation", kindGoTest,
@@ -152,7 +155,7 @@ var predicates = []predicate{
 	{"spec-dimensions", "each missing dimension raises an open decision", kindGoTest,
 		`for d in scale observability oncall data slo security deps; do go test ./internal/orchestrator/completeness/... -run "TestMissing${d}DimensionRaisesOpenDecision" || exit 1; done`},
 	{"spec-dimensions", "stated scale produces capacity proof obligation", kindGoTest,
-		`go test ./decomposer/... -run TestStatedScaleDimensionProducesCapacityProofObligation`},
+		`go test ./internal/decomposer/... -run TestStatedScaleDimensionProducesCapacityProofObligation`},
 	{"spec-dimensions", "scale fallback preset produces concrete threshold", kindGoTest,
 		`go test ./internal/orchestrator/completeness/... -run TestScaleFallbackPresetProducesConcreteThreshold`},
 

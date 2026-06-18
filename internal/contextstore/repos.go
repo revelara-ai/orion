@@ -343,6 +343,51 @@ func (r *EpicRepo) Get(ctx context.Context, id string) (Epic, error) {
 	return e, err
 }
 
+// LatestForProject returns the most recent epic for a project.
+func (r *EpicRepo) LatestForProject(ctx context.Context, projectID string) (Epic, error) {
+	var e Epic
+	err := r.tx.QueryRowContext(ctx,
+		`SELECT id, project_id, spec_id, title FROM epics WHERE project_id=? ORDER BY created_at DESC LIMIT 1`, projectID).
+		Scan(&e.ID, &e.ProjectID, &e.SpecID, &e.Title)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Epic{}, ErrNotFound
+	}
+	return e, err
+}
+
+// ── ProofObligationRepo ──────────────────────────────────────────────────────
+
+type ProofObligationRepo struct{ tx *sql.Tx }
+
+func (r *ProofObligationRepo) Create(ctx context.Context, taskID, clause string) (string, error) {
+	id, now := newID(), nowRFC3339()
+	_, err := r.tx.ExecContext(ctx,
+		`INSERT INTO proof_obligations (id, task_id, clause, created_at) VALUES (?,?,?,?)`, id, taskID, clause, now)
+	if err != nil {
+		return "", fmt.Errorf("create proof obligation: %w", err)
+	}
+	return id, nil
+}
+
+// ListForTask returns the obligation clauses for a task, in order.
+func (r *ProofObligationRepo) ListForTask(ctx context.Context, taskID string) ([]string, error) {
+	rows, err := r.tx.QueryContext(ctx,
+		`SELECT clause FROM proof_obligations WHERE task_id=? ORDER BY created_at`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // ── TaskRepo (the Task graph) ────────────────────────────────────────────────
 
 type TaskRepo struct{ tx *sql.Tx }
@@ -389,6 +434,44 @@ func (r *TaskRepo) AddDep(ctx context.Context, taskID, dependsOn string) error {
 		return fmt.Errorf("add task dep: %w", err)
 	}
 	return nil
+}
+
+// ListByEpic returns an epic's tasks in creation order.
+func (r *TaskRepo) ListByEpic(ctx context.Context, epicID string) ([]Task, error) {
+	rows, err := r.tx.QueryContext(ctx,
+		`SELECT id, epic_id, title, status, file_scope, COALESCE(proof_id,''), created_at, updated_at
+		 FROM tasks WHERE epic_id=? ORDER BY created_at`, epicID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Task
+	for rows.Next() {
+		var t Task
+		if err := rows.Scan(&t.ID, &t.EpicID, &t.Title, &t.Status, &t.FileScope, &t.ProofID, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// DepsOf returns the task ids a task depends on.
+func (r *TaskRepo) DepsOf(ctx context.Context, taskID string) ([]string, error) {
+	rows, err := r.tx.QueryContext(ctx, `SELECT depends_on FROM task_deps WHERE task_id=? ORDER BY depends_on`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
 
 func (r *TaskRepo) Get(ctx context.Context, id string) (Task, error) {

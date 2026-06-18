@@ -3,10 +3,12 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/decomposer"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 )
@@ -182,6 +184,154 @@ func (c *Conductor) RecallSpec(ctx context.Context) (spec.ExecutableSpec, error)
 		return spec.ExecutableSpec{}, fmt.Errorf("spec anchor mismatch: stored=%s recomputed=%s (tampered?)", sp.Hash, es.Hash)
 	}
 	return es, nil
+}
+
+// PlanTask is one task in the rendered plan.
+type PlanTask struct {
+	ID              string   `json:"id"`
+	Title           string   `json:"title"`
+	ProofObligation string   `json:"proof_obligation"`
+	FileScope       string   `json:"file_scope"`
+	DependsOn       []string `json:"depends_on"`
+}
+
+// PlanView is the Plan pane / `orion plan show` projection.
+type PlanView struct {
+	EpicTitle string     `json:"epic_title"`
+	Tasks     []PlanTask `json:"tasks"`
+}
+
+// PlanView returns the Epic/Task plan for the current accepted spec, decomposing
+// it on demand (and persisting) the first time. The decomposition is gated: every
+// spec requirement must map to >=1 ProofObligation before the plan is persisted.
+func (c *Conductor) PlanView(ctx context.Context) (PlanView, error) {
+	if c.store == nil {
+		return PlanView{}, errNoStore
+	}
+	proj, sp, err := c.store.CurrentProjectSpec(ctx)
+	if err != nil {
+		return PlanView{}, fmt.Errorf("no current spec: %w", err)
+	}
+	if sp.Status != "accepted" {
+		return PlanView{}, fmt.Errorf("spec is not accepted (status=%s); approve it before planning", sp.Status)
+	}
+
+	if _, err := c.ensurePlan(ctx, proj, sp); err != nil {
+		return PlanView{}, err
+	}
+	return c.readPlan(ctx, proj)
+}
+
+// ensurePlan decomposes + persists the plan if no epic exists yet (idempotent).
+//
+// NOTE: decomposition (RecallSpec, which opens its own read transactions) is done
+// BEFORE the write transaction — the Context Store caps connections at one, so
+// opening a nested transaction inside WithTx would deadlock.
+func (c *Conductor) ensurePlan(ctx context.Context, proj contextstore.Project, sp contextstore.Spec) (string, error) {
+	// Fast path: a plan already exists.
+	if existing, err := c.currentEpicID(ctx, proj.ID); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, contextstore.ErrNotFound) {
+		return "", err
+	}
+
+	// Decompose the anchor-verified spec (uses its own read transactions).
+	es, err := c.RecallSpec(ctx)
+	if err != nil {
+		return "", err
+	}
+	epic := decomposer.Decompose(es)
+	if err := decomposer.CoverageGate(es, epic); err != nil {
+		return "", err
+	}
+
+	var epicID string
+	err = c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+		// Re-check inside the write tx to avoid a double-decompose race.
+		if existing, e := tx.Epics().LatestForProject(ctx, proj.ID); e == nil {
+			epicID = existing.ID
+			return nil
+		} else if !errors.Is(e, contextstore.ErrNotFound) {
+			return e
+		}
+		eid, err := tx.Epics().Create(ctx, proj.ID, sp.ID, epic.Title)
+		if err != nil {
+			return err
+		}
+		epicID = eid
+		keyToID := map[string]string{}
+		for _, task := range epic.Tasks {
+			tid, err := tx.Tasks().Create(ctx, eid, task.Title, task.FileScope)
+			if err != nil {
+				return err
+			}
+			keyToID[task.Key] = tid
+			if _, err := tx.ProofObligations().Create(ctx, tid, task.ProofObligation); err != nil {
+				return err
+			}
+		}
+		for _, task := range epic.Tasks {
+			for _, dep := range task.DependsOn {
+				if err := tx.Tasks().AddDep(ctx, keyToID[task.Key], keyToID[dep]); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	return epicID, err
+}
+
+// currentEpicID returns the latest epic id for a project (read-only).
+func (c *Conductor) currentEpicID(ctx context.Context, projectID string) (string, error) {
+	var id string
+	err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+		e, err := tx.Epics().LatestForProject(ctx, projectID)
+		if err != nil {
+			return err
+		}
+		id = e.ID
+		return nil
+	})
+	return id, err
+}
+
+func (c *Conductor) readPlan(ctx context.Context, proj contextstore.Project) (PlanView, error) {
+	var pv PlanView
+	err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+		epic, err := tx.Epics().LatestForProject(ctx, proj.ID)
+		if err != nil {
+			return err
+		}
+		pv.EpicTitle = epic.Title
+		tasks, err := tx.Tasks().ListByEpic(ctx, epic.ID)
+		if err != nil {
+			return err
+		}
+		for _, t := range tasks {
+			obligations, err := tx.ProofObligations().ListForTask(ctx, t.ID)
+			if err != nil {
+				return err
+			}
+			deps, err := tx.Tasks().DepsOf(ctx, t.ID)
+			if err != nil {
+				return err
+			}
+			ob := ""
+			if len(obligations) > 0 {
+				ob = obligations[0]
+			}
+			pv.Tasks = append(pv.Tasks, PlanTask{
+				ID:              t.ID,
+				Title:           t.Title,
+				ProofObligation: ob,
+				FileScope:       t.FileScope,
+				DependsOn:       deps,
+			})
+		}
+		return nil
+	})
+	return pv, err
 }
 
 // fallbackValue chooses the concrete value a fallback-eligible decision defaults
