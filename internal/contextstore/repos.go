@@ -638,6 +638,77 @@ func (r *FailureModeRepo) Record(ctx context.Context, projectID, category, compo
 	return existing, nil
 }
 
+// ── WorktreeRepo ─────────────────────────────────────────────────────────────
+
+// WorktreeRecord is a persisted per-task worktree (keyed by issue id).
+type WorktreeRecord struct {
+	IssueID   string
+	Path      string
+	Branch    string
+	Status    string // active | removing | gone
+	CreatedAt string
+	UpdatedAt string
+}
+
+type WorktreeRepo struct{ tx *sql.Tx }
+
+// Upsert records (or updates) a worktree for an issue id.
+func (r *WorktreeRepo) Upsert(ctx context.Context, issueID, path, branch, status string) error {
+	now := nowRFC3339()
+	_, err := r.tx.ExecContext(ctx,
+		`INSERT INTO worktrees (issue_id, path, branch, status, created_at, updated_at)
+		 VALUES (?,?,?,?,?,?)
+		 ON CONFLICT(issue_id) DO UPDATE SET path=excluded.path, branch=excluded.branch,
+		   status=excluded.status, updated_at=excluded.updated_at`,
+		issueID, path, branch, status, now, now)
+	if err != nil {
+		return fmt.Errorf("upsert worktree: %w", err)
+	}
+	return nil
+}
+
+// SetStatus updates a worktree record's status.
+func (r *WorktreeRepo) SetStatus(ctx context.Context, issueID, status string) error {
+	_, err := r.tx.ExecContext(ctx, `UPDATE worktrees SET status=?, updated_at=? WHERE issue_id=?`,
+		status, nowRFC3339(), issueID)
+	return err
+}
+
+// Delete removes a worktree record.
+func (r *WorktreeRepo) Delete(ctx context.Context, issueID string) error {
+	_, err := r.tx.ExecContext(ctx, `DELETE FROM worktrees WHERE issue_id=?`, issueID)
+	return err
+}
+
+func (r *WorktreeRepo) Get(ctx context.Context, issueID string) (WorktreeRecord, error) {
+	var w WorktreeRecord
+	err := r.tx.QueryRowContext(ctx,
+		`SELECT issue_id, path, branch, status, created_at, updated_at FROM worktrees WHERE issue_id=?`, issueID).
+		Scan(&w.IssueID, &w.Path, &w.Branch, &w.Status, &w.CreatedAt, &w.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return WorktreeRecord{}, ErrNotFound
+	}
+	return w, err
+}
+
+func (r *WorktreeRepo) List(ctx context.Context) ([]WorktreeRecord, error) {
+	rows, err := r.tx.QueryContext(ctx,
+		`SELECT issue_id, path, branch, status, created_at, updated_at FROM worktrees ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WorktreeRecord
+	for rows.Next() {
+		var w WorktreeRecord
+		if err := rows.Scan(&w.IssueID, &w.Path, &w.Branch, &w.Status, &w.CreatedAt, &w.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 func mustAffectOne(res sql.Result, entity string) error {
