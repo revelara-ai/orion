@@ -54,9 +54,16 @@ func Open(dir string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("contextstore migrate: %w", err)
 	}
-	if err := ensureColumn(db, "task_attempts", "evidence_claim", "TEXT NOT NULL DEFAULT '{}'"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("contextstore migrate columns: %w", err)
+	for _, m := range []struct{ table, col, decl string }{
+		{"task_attempts", "evidence_claim", "TEXT NOT NULL DEFAULT '{}'"},
+		{"specs", "spec_hash", "TEXT NOT NULL DEFAULT ''"},
+		{"specs", "response_contract", "TEXT NOT NULL DEFAULT '{}'"},
+		{"decisions", "value_kind", "TEXT NOT NULL DEFAULT 'precise'"},
+	} {
+		if err := ensureColumn(db, m.table, m.col, m.decl); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("contextstore migrate columns: %w", err)
+		}
 	}
 	return &Store{db: db, dir: dir}, nil
 }
@@ -141,14 +148,16 @@ func (s *Store) view(ctx context.Context, fn func(*Tx) error) error {
 // repos returned from one Tx share the same underlying transaction.
 type Tx struct{ tx *sql.Tx }
 
-func (t *Tx) Projects() *ProjectRepo         { return &ProjectRepo{t.tx} }
-func (t *Tx) Specs() *SpecRepo               { return &SpecRepo{t.tx} }
-func (t *Tx) Epics() *EpicRepo               { return &EpicRepo{t.tx} }
-func (t *Tx) Tasks() *TaskRepo               { return &TaskRepo{t.tx} }
-func (t *Tx) Attempts() *AttemptRepo         { return &AttemptRepo{t.tx} }
-func (t *Tx) Proofs() *ProofRepo             { return &ProofRepo{t.tx} }
-func (t *Tx) Artifacts() *ArtifactRepo       { return &ArtifactRepo{t.tx} }
-func (t *Tx) FailureModes() *FailureModeRepo { return &FailureModeRepo{t.tx} }
+func (t *Tx) Projects() *ProjectRepo             { return &ProjectRepo{t.tx} }
+func (t *Tx) Specs() *SpecRepo                   { return &SpecRepo{t.tx} }
+func (t *Tx) SpecDimensions() *SpecDimensionRepo { return &SpecDimensionRepo{t.tx} }
+func (t *Tx) Decisions() *DecisionRepo           { return &DecisionRepo{t.tx} }
+func (t *Tx) Epics() *EpicRepo                   { return &EpicRepo{t.tx} }
+func (t *Tx) Tasks() *TaskRepo                   { return &TaskRepo{t.tx} }
+func (t *Tx) Attempts() *AttemptRepo             { return &AttemptRepo{t.tx} }
+func (t *Tx) Proofs() *ProofRepo                 { return &ProofRepo{t.tx} }
+func (t *Tx) Artifacts() *ArtifactRepo           { return &ArtifactRepo{t.tx} }
+func (t *Tx) FailureModes() *FailureModeRepo     { return &FailureModeRepo{t.tx} }
 
 // ── Store-level read helpers (read-model over the repositories) ──────────────
 
@@ -206,6 +215,34 @@ func (s *Store) ProofCount(ctx context.Context, taskID string) (int, error) {
 		return e
 	})
 	return n, err
+}
+
+// CurrentProjectSpec returns the latest project and its latest spec — the single
+// in-flight work item for V2.0. Returns ErrNotFound if nothing has been submitted.
+func (s *Store) CurrentProjectSpec(ctx context.Context) (Project, Spec, error) {
+	var p Project
+	var sp Spec
+	err := s.view(ctx, func(tx *Tx) error {
+		var e error
+		p, e = tx.Projects().Latest(ctx)
+		if e != nil {
+			return e
+		}
+		sp, e = tx.Specs().LatestForProject(ctx, p.ID)
+		return e
+	})
+	return p, sp, err
+}
+
+// DecisionsForSpec returns the latest answer per key for a spec.
+func (s *Store) DecisionsForSpec(ctx context.Context, specID string) ([]Decision, error) {
+	var out []Decision
+	err := s.view(ctx, func(tx *Tx) error {
+		var e error
+		out, e = tx.Decisions().ListForSpec(ctx, specID)
+		return e
+	})
+	return out, err
 }
 
 // Task loads a task by id.

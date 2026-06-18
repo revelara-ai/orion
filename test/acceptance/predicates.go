@@ -45,7 +45,16 @@ var predicates = []predicate{
 	{"intent-gate", "open_decisions surfaced", kindCLI,
 		`echo "Build an HTTP service that returns the current time." | orion submit --non-interactive | jq -e '.open_decisions|map(.key)|contains(["response_format","timezone","port","route"])'`},
 	{"intent-gate", "spec accepted with zero open decisions", kindCLI,
-		`orion spec show --json | jq -e '.status=="accepted" and (.open_decisions|length==0)'`},
+		// "(after answering)" per the PRD: drive the canonical flow, then assert the
+		// spec is accepted with no open decisions. Self-contained so the predicate is
+		// independent of execution order.
+		`echo "Build an HTTP service that returns the current time." | orion submit --non-interactive >/dev/null && ` +
+			`orion answer --key response_format --value json >/dev/null && ` +
+			`orion answer --key timezone --value UTC >/dev/null && ` +
+			`orion answer --key port --value 8080 >/dev/null && ` +
+			`orion answer --key route --value /time >/dev/null && ` +
+			`orion spec approve >/dev/null && ` +
+			`orion spec show --json | jq -e '.status=="accepted" and (.open_decisions|length==0)'`},
 
 	// ── Decomposition + coverage ─────────────────────────────────────────────
 	{"decomposition", "plan has tasks, all with proof obligations", kindCLI,

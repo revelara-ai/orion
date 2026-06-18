@@ -34,8 +34,14 @@ func run(args []string) int {
 		case "-h", "--help", "help":
 			usage(os.Stdout)
 			return 0
+		case "init":
+			return cmdInit(args[1:])
 		case "submit":
 			return cmdSubmit(args[1:])
+		case "answer":
+			return cmdAnswer(args[1:])
+		case "spec":
+			return cmdSpec(args[1:])
 		default:
 			// Unknown subcommand. The non-interactive loop-control surface is
 			// implemented by later tasks; until then an unknown command is a hard
