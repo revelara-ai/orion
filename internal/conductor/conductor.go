@@ -10,9 +10,11 @@ package conductor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/proof"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 )
 
@@ -75,6 +77,60 @@ func (sm *StateMachine) Close(ctx context.Context, taskID, proofID string) error
 	return sm.store.WithTx(ctx, func(tx *contextstore.Tx) error {
 		return tx.Tasks().SetProofAndStatus(ctx, taskID, proofID, "done")
 	})
+}
+
+// RecordReport persists each proof mode (with its detail) plus a converged proof
+// row, and returns the converged proof id. All verdicts come from the proof
+// harness, never an agent.
+func (sm *StateMachine) RecordReport(ctx context.Context, taskID string, r proof.Report) (string, error) {
+	var convergedID string
+	err := sm.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+		for _, m := range r.Modes {
+			verdict := "Reject"
+			if m.Result.Pass {
+				verdict = "Accept"
+			}
+			detail := "{}"
+			if m.Detail != nil {
+				if b, e := json.Marshal(m.Detail); e == nil {
+					detail = string(b)
+				}
+			}
+			if _, e := tx.Proofs().Create(ctx, taskID, contextstore.Proof{
+				Mode:              m.Result.Mode,
+				Verdict:           verdict,
+				Detail:            detail,
+				MutationScore:     m.Result.Metrics["mutation_score"],
+				EmpiricalPassRate: m.Result.Metrics["empirical_pass_rate"],
+				RunCount:          int(m.Result.Metrics["run_count"]),
+			}); e != nil {
+				return e
+			}
+		}
+		var e error
+		convergedID, e = tx.Proofs().Create(ctx, taskID, contextstore.Proof{
+			Mode:    "converged",
+			Verdict: string(r.Outcome.Verdict),
+		})
+		return e
+	})
+	return convergedID, err
+}
+
+// ProveAndCloseReport records a multi-mode report and closes the task only if the
+// converged verdict is Accept. Returns whether the task was closed.
+func (sm *StateMachine) ProveAndCloseReport(ctx context.Context, taskID string, r proof.Report) (bool, error) {
+	convergedID, err := sm.RecordReport(ctx, taskID, r)
+	if err != nil {
+		return false, err
+	}
+	if r.Outcome.Verdict != truthalign.Accept {
+		return false, nil
+	}
+	if err := sm.Close(ctx, taskID, convergedID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ProveAndClose records the verdict and, only if it is Accept, closes the task.

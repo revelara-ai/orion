@@ -83,13 +83,14 @@ type Epic struct {
 type Proof struct {
 	ID                string
 	TaskID            string
-	Mode              string // behavioral | empirical | hazard
+	Mode              string // behavioral | empirical | hazard | converged
 	Verdict           string // Accept | Reject | Inconclusive
 	MutationScore     float64
 	EmpiricalPassRate float64
 	HazardControlled  int
 	HazardTotal       int
 	RunCount          int
+	Detail            string // mode-specific JSON (e.g. empirical {port_open,...})
 	CreatedAt         string
 }
 
@@ -555,17 +556,36 @@ type ProofRepo struct{ tx *sql.Tx }
 
 func (r *ProofRepo) Create(ctx context.Context, taskID string, p Proof) (string, error) {
 	id, now := newID(), nowRFC3339()
+	detail := p.Detail
+	if detail == "" {
+		detail = "{}"
+	}
 	_, err := r.tx.ExecContext(ctx,
 		`INSERT INTO proofs
 		   (id, task_id, mode, verdict, mutation_score, empirical_pass_rate,
-		    hazard_controlled_count, hazard_total_count, run_count, created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		    hazard_controlled_count, hazard_total_count, run_count, detail, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 		id, taskID, p.Mode, p.Verdict, p.MutationScore, p.EmpiricalPassRate,
-		p.HazardControlled, p.HazardTotal, p.RunCount, now)
+		p.HazardControlled, p.HazardTotal, p.RunCount, detail, now)
 	if err != nil {
 		return "", fmt.Errorf("create proof: %w", err)
 	}
 	return id, nil
+}
+
+// GetByTaskMode returns the latest proof for a task in a given mode.
+func (r *ProofRepo) GetByTaskMode(ctx context.Context, taskID, mode string) (Proof, error) {
+	var p Proof
+	err := r.tx.QueryRowContext(ctx,
+		`SELECT id, task_id, mode, verdict, mutation_score, empirical_pass_rate,
+		        hazard_controlled_count, hazard_total_count, run_count, detail, created_at
+		 FROM proofs WHERE task_id=? AND mode=? ORDER BY created_at DESC LIMIT 1`, taskID, mode).
+		Scan(&p.ID, &p.TaskID, &p.Mode, &p.Verdict, &p.MutationScore, &p.EmpiricalPassRate,
+			&p.HazardControlled, &p.HazardTotal, &p.RunCount, &p.Detail, &p.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Proof{}, ErrNotFound
+	}
+	return p, err
 }
 
 // CountByTask returns the number of proofs recorded for a task.
