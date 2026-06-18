@@ -159,6 +159,7 @@ func (t *Tx) Attempts() *AttemptRepo                 { return &AttemptRepo{t.tx}
 func (t *Tx) Proofs() *ProofRepo                     { return &ProofRepo{t.tx} }
 func (t *Tx) Artifacts() *ArtifactRepo               { return &ArtifactRepo{t.tx} }
 func (t *Tx) FailureModes() *FailureModeRepo         { return &FailureModeRepo{t.tx} }
+func (t *Tx) Worktrees() *WorktreeRepo               { return &WorktreeRepo{t.tx} }
 
 // ── Store-level read helpers (read-model over the repositories) ──────────────
 

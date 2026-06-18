@@ -11,13 +11,16 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/proc"
 	"github.com/revelara-ai/orion/internal/tui"
+	"github.com/revelara-ai/orion/internal/worktree"
 )
 
 // version is overridable at build time via -ldflags "-X main.version=...".
@@ -74,8 +77,17 @@ func run(args []string) int {
 	// Install SIGINT/SIGTERM cleanup: cancel in-flight work and reap sandbox
 	// process groups before exit (no orphaned children).
 	reaper := proc.NewReaper()
-	_, stop := proc.Install(context.Background(), reaper)
+	ctx, stop := proc.Install(context.Background(), reaper)
 	defer stop()
+
+	// Startup worktree reconciliation (filesystem as source of truth): prune
+	// deleted worktrees, reap orphans, repair Context Store drift. Best-effort —
+	// only meaningful inside a git repo.
+	if repoRoot, err := gitToplevel(); err == nil {
+		if err := worktree.New(repoRoot, store).Reconcile(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "orion: worktree reconcile:", err)
+		}
+	}
 
 	if err := tui.Run(orchestrator.NewWithStore(store)); err != nil {
 		fmt.Fprintln(os.Stderr, "orion:", err)
@@ -115,6 +127,16 @@ func resolveVersion() string {
 		}
 	}
 	return version
+}
+
+// gitToplevel returns the root of the git repo containing the cwd, or an error
+// if the cwd is not inside a git repo.
+func gitToplevel() (string, error) {
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func usage(w *os.File) {

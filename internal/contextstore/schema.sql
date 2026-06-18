@@ -148,6 +148,18 @@ CREATE TABLE IF NOT EXISTS polaris_context (
     ttl_seconds INTEGER NOT NULL DEFAULT 0
 );
 
+-- One worktree per task, keyed by the beads issue id (its unique name). The
+-- in-use set is reconciled from the filesystem (worktree.Reconcile); this record
+-- makes a crash mid-create/mid-remove recoverable.
+CREATE TABLE IF NOT EXISTS worktrees (
+    issue_id   TEXT PRIMARY KEY,
+    path       TEXT NOT NULL,
+    branch     TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 -- The done-gate as a DB constraint (PRD: Core Data Model Hardening). A task may
 -- only enter 'proven' or 'done' when it carries a proof_id whose verdict=Accept.
 CREATE TRIGGER IF NOT EXISTS trg_tasks_done_gate_insert
