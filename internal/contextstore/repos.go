@@ -50,6 +50,34 @@ type Task struct {
 	UpdatedAt string
 }
 
+// Attempt is a recorded task attempt with its idempotency key and the agent's
+// untrusted evidence claim.
+type Attempt struct {
+	ID             string
+	TaskID         string
+	IdempotencyKey string
+	EvidenceClaim  string
+	CreatedAt      string
+}
+
+// Artifact references a file an agent produced for a task.
+type Artifact struct {
+	ID           string
+	TaskID       string
+	ArtifactType string
+	StoragePath  string
+	ContentHash  string
+	CreatedAt    string
+}
+
+// Epic is an accepted spec's unit of delivery.
+type Epic struct {
+	ID        string
+	ProjectID string
+	SpecID    string
+	Title     string
+}
+
 // Proof carries per-mode provenance and quantitative metrics so degradation is
 // computable (PRD Core Data Model Hardening).
 type Proof struct {
@@ -304,6 +332,17 @@ func (r *EpicRepo) Create(ctx context.Context, projectID, specID, title string) 
 	return id, nil
 }
 
+func (r *EpicRepo) Get(ctx context.Context, id string) (Epic, error) {
+	var e Epic
+	err := r.tx.QueryRowContext(ctx,
+		`SELECT id, project_id, spec_id, title FROM epics WHERE id=?`, id).
+		Scan(&e.ID, &e.ProjectID, &e.SpecID, &e.Title)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Epic{}, ErrNotFound
+	}
+	return e, err
+}
+
 // ── TaskRepo (the Task graph) ────────────────────────────────────────────────
 
 type TaskRepo struct{ tx *sql.Tx }
@@ -398,6 +437,35 @@ func (r *AttemptRepo) CountByTask(ctx context.Context, taskID string) (int, erro
 	return n, err
 }
 
+// HasAttempt reports whether an attempt with the given idempotency key already
+// committed for a task — the check a restarted agent uses to skip an
+// already-applied side effect.
+func (r *AttemptRepo) HasAttempt(ctx context.Context, taskID, idempotencyKey string) (bool, error) {
+	var n int
+	err := r.tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM task_attempts WHERE task_id=? AND idempotency_key=?`, taskID, idempotencyKey).Scan(&n)
+	return n > 0, err
+}
+
+// List returns a task's attempts in order.
+func (r *AttemptRepo) List(ctx context.Context, taskID string) ([]Attempt, error) {
+	rows, err := r.tx.QueryContext(ctx,
+		`SELECT id, task_id, idempotency_key, evidence_claim, created_at FROM task_attempts WHERE task_id=? ORDER BY created_at`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Attempt
+	for rows.Next() {
+		var a Attempt
+		if err := rows.Scan(&a.ID, &a.TaskID, &a.IdempotencyKey, &a.EvidenceClaim, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // ── ProofRepo ────────────────────────────────────────────────────────────────
 
 type ProofRepo struct{ tx *sql.Tx }
@@ -437,6 +505,25 @@ func (r *ArtifactRepo) Create(ctx context.Context, taskID, artifactType, storage
 		return "", fmt.Errorf("create artifact: %w", err)
 	}
 	return id, nil
+}
+
+// ListByTask returns the artifacts a task produced (ancestor outputs for recall).
+func (r *ArtifactRepo) ListByTask(ctx context.Context, taskID string) ([]Artifact, error) {
+	rows, err := r.tx.QueryContext(ctx,
+		`SELECT id, task_id, artifact_type, storage_path, content_hash, created_at FROM artifacts WHERE task_id=? ORDER BY created_at`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Artifact
+	for rows.Next() {
+		var a Artifact
+		if err := rows.Scan(&a.ID, &a.TaskID, &a.ArtifactType, &a.StoragePath, &a.ContentHash, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 // ── FailureModeRepo ──────────────────────────────────────────────────────────
