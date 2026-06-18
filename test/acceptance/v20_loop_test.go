@@ -196,6 +196,17 @@ func TestV20Loop(t *testing.T) {
 			}
 			code, out := runScript(execScript, root, env)
 			passed := code == 0
+			// A CLI predicate must not read as a pass when the subcommand is
+			// unimplemented. `orion` prints a recognizable marker and exits non-zero
+			// for unknown/not-implemented commands; some predicates invert the exit
+			// code (e.g. the negative `deps verify` case), so guard on the marker
+			// regardless of exit status.
+			if p.Kind == kindCLI {
+				lc := strings.ToLower(out)
+				if strings.Contains(lc, "not implemented") || strings.Contains(lc, "unknown command") {
+					passed = false
+				}
+			}
 			if passed && p.Kind == kindGoTest {
 				lc := strings.ToLower(out)
 				for _, m := range noPackagesMarkers {
