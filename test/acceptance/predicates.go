@@ -93,7 +93,7 @@ var predicates = []predicate{
 
 	// ── Harness reliability ──────────────────────────────────────────────────
 	{"harness", "recall rebuilds context after agent kill", kindGoTest,
-		`go test ./context-store/... -run TestRecallRebuildsContextAfterAgentKill`},
+		`go test ./internal/contextstore/... -run TestRecallRebuildsContextAfterAgentKill`},
 	{"harness", "LLM call has timeout and circuit breaker", kindGoTest,
 		`go test ./... -run TestLLMCallHasTimeoutAndCircuitBreaker`},
 	{"harness", "spend surfaced live in TUI", kindGoTest,

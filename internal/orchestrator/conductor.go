@@ -15,6 +15,8 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+
+	"github.com/revelara-ai/orion/internal/contextstore"
 )
 
 // Confirmation is the Conductor's acknowledgement of a submitted intent. In the
@@ -42,16 +44,31 @@ type Decision struct {
 
 // Conductor owns intent intake. Safe for concurrent use.
 type Conductor struct {
-	log *slog.Logger
+	log   *slog.Logger
+	store *contextstore.Store // optional; nil = in-memory only
 
-	mu     sync.RWMutex
-	intent string
+	mu        sync.RWMutex
+	intent    string
+	projectID string
 }
 
-// New returns a Conductor ready to accept an intent. It self-instruments via the
-// default structured logger (3 a.m. test).
+// New returns an in-memory Conductor ready to accept an intent. It
+// self-instruments via the default structured logger (3 a.m. test).
 func New() *Conductor {
 	return &Conductor{log: slog.Default()}
+}
+
+// NewWithStore returns a Conductor that persists intake to the Context Store, so
+// a submitted intent (project + draft spec) survives a restart.
+func NewWithStore(store *contextstore.Store) *Conductor {
+	return &Conductor{log: slog.Default(), store: store}
+}
+
+// ProjectID returns the persisted project id for the current intent, if any.
+func (c *Conductor) ProjectID() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.projectID
 }
 
 // Submit intakes a developer intent and returns a confirmation. It honors
@@ -70,6 +87,27 @@ func (c *Conductor) Submit(ctx context.Context, intent string) (Confirmation, er
 	c.mu.Lock()
 	c.intent = trimmed
 	c.mu.Unlock()
+
+	// Persist the intent as a project + draft spec so it survives a restart. The
+	// project + spec commit as one transaction (atomic intake).
+	if c.store != nil {
+		var projectID string
+		err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+			pid, err := tx.Projects().Create(ctx, projectName(trimmed), trimmed)
+			if err != nil {
+				return err
+			}
+			projectID = pid
+			_, err = tx.Specs().CreateDraft(ctx, pid)
+			return err
+		})
+		if err != nil {
+			return Confirmation{}, fmt.Errorf("persist intent: %w", err)
+		}
+		c.mu.Lock()
+		c.projectID = projectID
+		c.mu.Unlock()
+	}
 
 	c.log.InfoContext(ctx, "intent submitted", "intent", trimmed)
 
@@ -98,6 +136,16 @@ func (c *Conductor) Status() Status {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return Status{Intent: c.intent}
+}
+
+// projectName derives a short, human-readable project name from an intent.
+func projectName(intent string) string {
+	fields := strings.Fields(intent)
+	if len(fields) > 6 {
+		fields = fields[:6]
+	}
+	name := strings.Join(fields, " ")
+	return strings.TrimRight(name, ".,;:")
 }
 
 // Interrupt is the developer's "change direction" / abort hook. Skeleton: a

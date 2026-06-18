@@ -10,8 +10,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 
+	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/tui"
 )
@@ -43,12 +45,40 @@ func run(args []string) int {
 		}
 	}
 
-	// Default: launch the interactive Conversation pane.
-	if err := tui.Run(orchestrator.New()); err != nil {
+	// Default: launch the interactive Conversation pane, backed by the durable
+	// Context Store so submitted intent survives a restart.
+	dir, err := resolveDataDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "orion: resolve data dir:", err)
+		return 1
+	}
+	store, err := contextstore.Open(dir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "orion: open context store:", err)
+		return 1
+	}
+	defer store.Close()
+
+	if err := tui.Run(orchestrator.NewWithStore(store)); err != nil {
 		fmt.Fprintln(os.Stderr, "orion:", err)
 		return 1
 	}
 	return 0
+}
+
+// resolveDataDir returns the Orion data directory: $ORION_DATA_DIR if set,
+// otherwise ~/.orion. The directory is created with 0700 (it holds project
+// context and, later, tokens).
+func resolveDataDir() (string, error) {
+	if d := os.Getenv("ORION_DATA_DIR"); d != "" {
+		return d, os.MkdirAll(d, 0o700)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	d := filepath.Join(home, ".orion")
+	return d, os.MkdirAll(d, 0o700)
 }
 
 func resolveVersion() string {
