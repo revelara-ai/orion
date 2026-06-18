@@ -59,6 +59,7 @@ func Open(dir string) (*Store, error) {
 		{"specs", "spec_hash", "TEXT NOT NULL DEFAULT ''"},
 		{"specs", "response_contract", "TEXT NOT NULL DEFAULT '{}'"},
 		{"decisions", "value_kind", "TEXT NOT NULL DEFAULT 'precise'"},
+		{"proofs", "detail", "TEXT NOT NULL DEFAULT '{}'"},
 	} {
 		if err := ensureColumn(db, m.table, m.col, m.decl); err != nil {
 			_ = db.Close()
@@ -298,6 +299,17 @@ func (s *Store) Recall(ctx context.Context, taskID string) (FactBundle, error) {
 		return nil
 	})
 	return fb, err
+}
+
+// ProofByTaskMode returns the latest proof for a task in a given mode.
+func (s *Store) ProofByTaskMode(ctx context.Context, taskID, mode string) (Proof, error) {
+	var p Proof
+	err := s.view(ctx, func(tx *Tx) error {
+		var e error
+		p, e = tx.Proofs().GetByTaskMode(ctx, taskID, mode)
+		return e
+	})
+	return p, err
 }
 
 // Task loads a task by id.

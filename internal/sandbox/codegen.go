@@ -119,8 +119,12 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc({{printf "%q" .Route}}, handleTime)
 
+	addr := ":{{.Port}}"
+	if p := os.Getenv("PORT"); p != "" {
+		addr = ":" + p
+	}
 	srv := &http.Server{
-		Addr:              ":{{.Port}}",
+		Addr:              addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,

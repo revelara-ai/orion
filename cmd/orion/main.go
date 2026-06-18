@@ -49,6 +49,10 @@ func run(args []string) int {
 			return cmdSpec(args[1:])
 		case "plan":
 			return cmdPlan(args[1:])
+		case "run":
+			return cmdRun(args[1:])
+		case "proof":
+			return cmdProof(args[1:])
 		default:
 			// Unknown subcommand. The non-interactive loop-control surface is
 			// implemented by later tasks; until then an unknown command is a hard

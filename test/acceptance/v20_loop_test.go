@@ -12,20 +12,6 @@ import (
 	"time"
 )
 
-// canonicalIntent is the V2.0 acceptance scenario: deliberately ambiguous
-// (format? timezone? port? route?) so the completeness gate must grill rather
-// than silently guess.
-const canonicalIntent = "Build an HTTP service that returns the current time."
-
-// canonicalAnswers resolve the deliberate ambiguities. These define the
-// non-interactive answer contract the loop must accept (`orion answer`).
-var canonicalAnswers = []struct{ Key, Value string }{
-	{"response_format", "json"},
-	{"timezone", "UTC"},
-	{"port", "8080"},
-	{"route", "/time"},
-}
-
 // noPackagesMarkers signal that a `go test ./pkg/...` matched nothing or failed
 // to build the target — which must read as FAIL (RED), never as a pass.
 var noPackagesMarkers = []string{
@@ -133,18 +119,11 @@ func runScript(script, dir string, env []string) (exitCode int, output string) {
 // non-interactive CLI contract the loop must satisfy.
 func driveLoop(t *testing.T, dir string, env []string) {
 	t.Helper()
-	steps := []string{
-		"orion init",
-		fmt.Sprintf(`printf %%s %q | orion submit --non-interactive`, canonicalIntent),
-	}
-	for _, a := range canonicalAnswers {
-		steps = append(steps, fmt.Sprintf("orion answer --key %s --value %s", a.Key, a.Value))
-	}
-	steps = append(steps, "orion spec approve", "orion run")
-	for _, s := range steps {
-		if code, out := runScript(s, dir, env); code != 0 {
-			t.Logf("driveLoop step failed (expected while RED): %s -> exit %d\n%s", s, code, strings.TrimSpace(out))
-		}
+	// Initialize the data dir/store. The stateful CLI predicates are
+	// self-contained (each drives its own submit→answer→approve→run flow) so they
+	// are independent of execution order and of each other's "current project".
+	if code, out := runScript("orion init", dir, env); code != 0 {
+		t.Logf("driveLoop init failed (expected while RED): exit %d\n%s", code, strings.TrimSpace(out))
 	}
 }
 

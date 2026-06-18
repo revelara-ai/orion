@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/proof"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 )
 
@@ -86,6 +87,46 @@ func TestStateMachineRequiresProofToClose(t *testing.T) {
 	}
 	if got := taskStatus(t, s, taskID); got != "done" {
 		t.Fatalf("status = %q, want done", got)
+	}
+}
+
+// TestProveAndCloseReportRejectsFailingProbe: an artifact that passes behavioral
+// but fails the empirical probe converges Reject and is NOT closed (the 2-mode
+// gate — passing tests are not enough).
+func TestProveAndCloseReportRejectsFailingProbe(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	sm := New(s)
+	taskID := seedTask(t, s)
+
+	report := proof.Report{
+		Outcome: truthalign.Converge(
+			truthalign.ModeResult{Mode: "behavioral", Pass: true, Metrics: map[string]float64{"run_count": 1}},
+			truthalign.ModeResult{Mode: "empirical", Pass: false, Metrics: map[string]float64{"empirical_pass_rate": 0, "run_count": 1}},
+		),
+		Modes: []proof.ModeReport{
+			{Result: truthalign.ModeResult{Mode: "behavioral", Pass: true, Metrics: map[string]float64{"run_count": 1}}},
+			{Result: truthalign.ModeResult{Mode: "empirical", Pass: false, Metrics: map[string]float64{"empirical_pass_rate": 0, "run_count": 1}},
+				Detail: map[string]any{"port_open": false, "response_contract_satisfied": false}},
+		},
+	}
+	closed, err := sm.ProveAndCloseReport(ctx, taskID, report)
+	if err != nil {
+		t.Fatalf("prove+close report: %v", err)
+	}
+	if closed {
+		t.Fatal("a failing empirical probe must not close the task")
+	}
+	if taskStatus(t, s, taskID) == "done" {
+		t.Fatal("task is done despite a failing empirical probe")
+	}
+	// The empirical proof row is persisted with its detail (for `orion proof show`).
+	ep, err := s.ProofByTaskMode(ctx, taskID, "empirical")
+	if err != nil {
+		t.Fatalf("empirical proof not recorded: %v", err)
+	}
+	if ep.Verdict != "Reject" {
+		t.Fatalf("empirical verdict = %s, want Reject", ep.Verdict)
 	}
 }
 

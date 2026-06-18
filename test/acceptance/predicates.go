@@ -40,6 +40,16 @@ type predicate struct {
 // predicates is the full V2.0 target: the core block plus the Round-2 additions.
 // Every entry must exit 0 for the V2.0 loop to be PROVEN. The `-run` names are
 // the contract the implementation tasks must satisfy exactly.
+// driveAndRun is the canonical V2.0 flow up to (and including) `orion run`,
+// reused by self-contained stateful predicates so they don't depend on a shared
+// "current project".
+const driveAndRun = `echo "Build an HTTP service that returns the current time." | orion submit --non-interactive >/dev/null && ` +
+	`orion answer --key response_format --value json >/dev/null && ` +
+	`orion answer --key timezone --value UTC >/dev/null && ` +
+	`orion answer --key port --value 8080 >/dev/null && ` +
+	`orion answer --key route --value /time >/dev/null && ` +
+	`orion spec approve >/dev/null && orion run >/dev/null && `
+
 var predicates = []predicate{
 	// ── Intent completeness gate (no silent guessing) ────────────────────────
 	{"intent-gate", "open_decisions surfaced", kindCLI,
@@ -79,7 +89,10 @@ var predicates = []predicate{
 	{"proof-converge", "task not done while empirical rejects", kindCLI,
 		`TASK=$(orion plan show --json | jq -r '.tasks[0].id'); test -n "$TASK" && orion task show "$TASK" --json | jq -e '.status!="done"'`},
 	{"proof-converge", "empirical: port open and contract satisfied", kindCLI,
-		`TASK=$(orion plan show --json | jq -r '.tasks[0].id'); test -n "$TASK" && orion proof show --task "$TASK" --mode empirical --json | jq -e '.port_open and .response_contract_satisfied'`},
+		// Self-contained: drive the full loop (submit→answer→approve→run) then read
+		// the empirical proof for the lead task. Independent of execution order.
+		driveAndRun + `TASK=$(orion plan show --json | jq -r '.tasks[0].id') && ` +
+			`orion proof show --task "$TASK" --mode empirical --json | jq -e '.port_open and .response_contract_satisfied'`},
 	{"proof-converge", "hazard: UCAs considered, none uncontrolled", kindCLI,
 		`TASK=$(orion plan show --json | jq -r '.tasks[0].id'); test -n "$TASK" && orion proof show --task "$TASK" --mode hazard --json | jq -e '(.ucas_considered|length>0) and (.uncontrolled_ucas|length==0)'`},
 	{"proof-converge", "hazard: every control action has a test", kindCLI,

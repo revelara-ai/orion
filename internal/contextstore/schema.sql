@@ -57,13 +57,14 @@ CREATE TABLE IF NOT EXISTS epics (
 CREATE TABLE IF NOT EXISTS proofs (
     id                     TEXT PRIMARY KEY,
     task_id                TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    mode                   TEXT NOT NULL CHECK (mode IN ('behavioral','empirical','hazard')),
+    mode                   TEXT NOT NULL CHECK (mode IN ('behavioral','empirical','hazard','converged')),
     verdict                TEXT NOT NULL CHECK (verdict IN ('Accept','Reject','Inconclusive')),
     mutation_score         REAL NOT NULL DEFAULT 0,
     empirical_pass_rate    REAL NOT NULL DEFAULT 0,
     hazard_controlled_count INTEGER NOT NULL DEFAULT 0,
     hazard_total_count     INTEGER NOT NULL DEFAULT 0,
     run_count              INTEGER NOT NULL DEFAULT 0,
+    detail                 TEXT NOT NULL DEFAULT '{}',
     created_at             TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_proofs_task ON proofs(task_id);

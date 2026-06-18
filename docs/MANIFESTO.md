@@ -228,4 +228,17 @@ Orion is not a bet that the next, larger model will finally be reliable. It is t
 
 ---
 
+## External Corroboration
+
+These are not idiosyncratic positions. Google SRE, describing how it is engineering reliable operations in the agentic era, independently arrives at Orion's load-bearing principles:
+
+- **Independent harnesses.** *"The AI agent that generates the source code must be strictly isolated from the AI agent that defines the test cases or reviews the output … so that untested correctness requirements are caught mechanically rather than assumed by the authoring LLM."* That is Orion's generation⊥proof invariant verbatim.
+- **Proof by deterministic scoring, not LLM opinion.** Final outputs are scored "correct" only when they *deterministically* match verified golden data — "rather than a vague, LLM-generated suggestion."
+- **Oversight moves up the abstraction ladder** to reviewing *designs, intent, and policies*, with humans co-authoring and approving specifications **before** code generation.
+- **Safety lives in deterministic, caller-agnostic boundaries** that hold "regardless of who or what is calling them," with the reasoning engine decoupled from the execution engine, least-privilege agent identity, circuit breakers, and dry-run actuation.
+
+When the team operating planet-scale production reaches the same conclusions independently, the thesis is not speculative. (See [docs/research/Google-SRE-AI-practices-2026-06-18.md](research/Google-SRE-AI-practices-2026-06-18.md) for the full mapping and the practices Orion adopts from it — autonomy levels, golden-data tiers, dynamic risk evaluation, fix-forward.)
+
+---
+
 *The problem is not the model. The problem is that the development loop hasn't caught up. Orion is the loop that has — and the proof is the right to ship.*

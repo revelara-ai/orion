@@ -11,9 +11,23 @@ import (
 	"context"
 
 	"github.com/revelara-ai/orion/internal/proof/behavioral"
+	"github.com/revelara-ai/orion/internal/proof/empirical"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 )
+
+// ModeReport is one mode's result plus its mode-specific detail (persisted as the
+// proof row's detail JSON, e.g. empirical {port_open, response_contract_satisfied}).
+type ModeReport struct {
+	Result truthalign.ModeResult
+	Detail map[string]any
+}
+
+// Report is the converged verdict plus per-mode reports.
+type Report struct {
+	Outcome truthalign.Outcome
+	Modes   []ModeReport
+}
 
 // ProveBehavioral synthesizes the behavioral corpus from the contract, runs it
 // against the artifact, and converges a (single-mode) Verdict.
@@ -23,4 +37,30 @@ func ProveBehavioral(ctx context.Context, artifactDir string, c testsynth.Contra
 		return truthalign.Outcome{}, err
 	}
 	return truthalign.Converge(mr), nil
+}
+
+// Prove runs behavioral AND empirical proof and converges. A Verdict is Accept
+// only when BOTH modes pass — so a passing-tests-but-failing-probe artifact does
+// not converge to Accept.
+func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (Report, error) {
+	bmr, err := behavioral.Prove(ctx, artifactDir, c, nil)
+	if err != nil {
+		return Report{}, err
+	}
+	emr, pr, err := empirical.Prove(ctx, artifactDir, c)
+	if err != nil {
+		return Report{}, err
+	}
+	outcome := truthalign.Converge(bmr, emr)
+	return Report{
+		Outcome: outcome,
+		Modes: []ModeReport{
+			{Result: bmr},
+			{Result: emr, Detail: map[string]any{
+				"port_open":                   pr.PortOpen,
+				"response_contract_satisfied": pr.ResponseContractSatisfied,
+				"detail":                      pr.Detail,
+			}},
+		},
+	}, nil
 }
