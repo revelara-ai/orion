@@ -105,7 +105,7 @@ var predicates = []predicate{
 
 	// ── Determinism of the completeness gate ─────────────────────────────────
 	{"determinism", "required-decisions checklist is rules-based", kindGoTest,
-		`go test ./orchestrator/completeness/... -run TestRequiredDecisionsChecklist`},
+		`go test ./internal/orchestrator/completeness/... -run TestRequiredDecisionsChecklist`},
 
 	// ── Round-2: Memory & context-erosion ────────────────────────────────────
 	{"memory", "anti-erosion pins never evicted under pressure", kindGoTest,
@@ -141,11 +141,11 @@ var predicates = []predicate{
 
 	// ── Round-2: Executable spec dimensions ──────────────────────────────────
 	{"spec-dimensions", "each missing dimension raises an open decision", kindGoTest,
-		`for d in scale observability oncall data slo security deps; do go test ./orchestrator/completeness/... -run "TestMissing${d}DimensionRaisesOpenDecision" || exit 1; done`},
+		`for d in scale observability oncall data slo security deps; do go test ./internal/orchestrator/completeness/... -run "TestMissing${d}DimensionRaisesOpenDecision" || exit 1; done`},
 	{"spec-dimensions", "stated scale produces capacity proof obligation", kindGoTest,
 		`go test ./decomposer/... -run TestStatedScaleDimensionProducesCapacityProofObligation`},
 	{"spec-dimensions", "scale fallback preset produces concrete threshold", kindGoTest,
-		`go test ./orchestrator/completeness/... -run TestScaleFallbackPresetProducesConcreteThreshold`},
+		`go test ./internal/orchestrator/completeness/... -run TestScaleFallbackPresetProducesConcreteThreshold`},
 
 	// ── Round-2: Phase E2 integration (run with -race) ───────────────────────
 	{"integration", "lease blocks overlapping scope", kindGoTest,
