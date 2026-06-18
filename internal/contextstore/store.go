@@ -245,6 +245,59 @@ func (s *Store) DecisionsForSpec(ctx context.Context, specID string) ([]Decision
 	return out, err
 }
 
+// FactBundle is the durable, anchor-verified context the Context Store can
+// reconstruct for a task — the FACTS (spec, decisions, prior attempts, ancestor
+// artifacts) an agent needs to resume after a crash/restart. The context-engine
+// later budgets and adds cognition on top; this layer never invents anything.
+type FactBundle struct {
+	Task      Task
+	Project   Project
+	Spec      Spec
+	Decisions []Decision
+	Attempts  []Attempt
+	Artifacts []Artifact
+}
+
+// Recall rebuilds the FactBundle for a task from the durable store. It is the
+// mechanism that makes agents resumable: a restarted agent calls Recall and
+// continues without re-asking the developer (Story 31 / acceptance resumability).
+func (s *Store) Recall(ctx context.Context, taskID string) (FactBundle, error) {
+	var fb FactBundle
+	err := s.view(ctx, func(tx *Tx) error {
+		task, err := tx.Tasks().Get(ctx, taskID)
+		if err != nil {
+			return err
+		}
+		epic, err := tx.Epics().Get(ctx, task.EpicID)
+		if err != nil {
+			return err
+		}
+		project, err := tx.Projects().Get(ctx, epic.ProjectID)
+		if err != nil {
+			return err
+		}
+		spec, err := tx.Specs().Get(ctx, epic.SpecID)
+		if err != nil {
+			return err
+		}
+		decisions, err := tx.Decisions().ListForSpec(ctx, spec.ID)
+		if err != nil {
+			return err
+		}
+		attempts, err := tx.Attempts().List(ctx, taskID)
+		if err != nil {
+			return err
+		}
+		artifacts, err := tx.Artifacts().ListByTask(ctx, taskID)
+		if err != nil {
+			return err
+		}
+		fb = FactBundle{Task: task, Project: project, Spec: spec, Decisions: decisions, Attempts: attempts, Artifacts: artifacts}
+		return nil
+	})
+	return fb, err
+}
+
 // Task loads a task by id.
 func (s *Store) Task(ctx context.Context, id string) (Task, error) {
 	var t Task

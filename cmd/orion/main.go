@@ -8,6 +8,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/orchestrator"
+	"github.com/revelara-ai/orion/internal/proc"
 	"github.com/revelara-ai/orion/internal/tui"
 )
 
@@ -66,6 +68,12 @@ func run(args []string) int {
 		return 1
 	}
 	defer store.Close()
+
+	// Install SIGINT/SIGTERM cleanup: cancel in-flight work and reap sandbox
+	// process groups before exit (no orphaned children).
+	reaper := proc.NewReaper()
+	_, stop := proc.Install(context.Background(), reaper)
+	defer stop()
 
 	if err := tui.Run(orchestrator.NewWithStore(store)); err != nil {
 		fmt.Fprintln(os.Stderr, "orion:", err)
