@@ -13,6 +13,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
+	"github.com/revelara-ai/orion/internal/reliabilitytier"
 )
 
 // Prove runs the synthesized behavioral corpus against the artifact in
@@ -47,16 +48,32 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract, corpus
 		return truthalign.ModeResult{}, fmt.Errorf("write corpus: %w", err)
 	}
 
-	// Run the tests independently.
+	// Run the tests independently (the baseline).
 	cmd := exec.CommandContext(ctx, "go", "test", "./...")
 	cmd.Dir = proofDir
 	cmd.Env = append(os.Environ(), "GOFLAGS=") // inherit toolchain/cache
 	out, err := cmd.CombinedOutput()
 	pass := err == nil
+
+	metrics := map[string]float64{"run_count": 1, "mutation_score": 0}
+	output := string(out)
+	if pass {
+		// Behavioral quality gate: the corpus must KILL behavior-changing mutants
+		// (green coverage is a vanity metric; mutation score is the signal).
+		killed, total, mErr := MutationScore(ctx, artifactDir, corpus)
+		if mErr == nil {
+			score := MutationScoreValue(killed, total)
+			metrics["mutation_score"] = score
+			if total > 0 && score < reliabilitytier.MutationThreshold(reliabilitytier.Standard) {
+				pass = false
+				output += fmt.Sprintf("\nmutation gate: score %.2f (%d/%d) below threshold — corpus is not fault-catching", score, killed, total)
+			}
+		}
+	}
 	return truthalign.ModeResult{
 		Mode:    "behavioral",
 		Pass:    pass,
-		Output:  string(out),
-		Metrics: map[string]float64{"run_count": 1},
+		Output:  output,
+		Metrics: metrics,
 	}, nil
 }
