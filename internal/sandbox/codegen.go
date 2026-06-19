@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"text/template"
 
+	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/contextstore"
 )
 
@@ -170,3 +171,35 @@ func main() {
 	_ = srv.Shutdown(ctx)
 }
 `
+
+// PrepareArtifact writes the given files into dir, or — under dryRun — predicts
+// the effect and blast radius WITHOUT mutating the filesystem (or-nwb dry-run
+// contract). The reversibility gate calls this with dryRun=true first.
+func PrepareArtifact(dir string, files map[string]string, dryRun bool) (actuation.Prediction, error) {
+	if dryRun {
+		return actuation.Prediction{
+			Tool:        "sandbox.write",
+			Effect:      fmt.Sprintf("would write %d file(s)", len(files)),
+			BlastRadius: "task worktree: " + dir,
+			Mutated:     false,
+		}, nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return actuation.Prediction{}, err
+	}
+	for name, content := range files {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return actuation.Prediction{}, err
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			return actuation.Prediction{}, err
+		}
+	}
+	return actuation.Prediction{
+		Tool:        "sandbox.write",
+		Effect:      fmt.Sprintf("wrote %d file(s)", len(files)),
+		BlastRadius: "task worktree: " + dir,
+		Mutated:     true,
+	}, nil
+}
