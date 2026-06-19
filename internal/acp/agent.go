@@ -9,10 +9,18 @@ import (
 )
 
 // PromptFunc runs one prompt turn: it may stream session/update notifications via
-// stream and returns the terminal result. This is where an agent's reasoning
-// lives (in production, the spawned vendor agent — here, a Go implementation such
-// as the primed Conductor).
-type PromptFunc func(ctx context.Context, sessionID, text string, stream func(Update)) (PromptResult, error)
+// stream, and may request a client-side authorization mid-turn via ask (a
+// blocking session/request_permission call back to the client). It returns the
+// terminal result. This is where an agent's reasoning lives (in production, the
+// spawned vendor agent — here, a Go implementation such as the primed Conductor).
+//
+// Deadlock note: ask issues an inbound REQUEST to the client; the client
+// dispatches requests on their own goroutine (off its read loop), so the gate may
+// block on a human without stalling the stream.
+type PromptFunc func(ctx context.Context, sessionID, text string, stream func(Update), ask AskFunc) (PromptResult, error)
+
+// AskFunc requests a client-side permission decision mid-turn.
+type AskFunc func(req PermissionRequest) (PermissionResult, error)
 
 // Agent is the ACP agent (server) side: the counterpart to Client. It answers
 // initialize / session/new / session/prompt and streams session/update during a
@@ -69,7 +77,13 @@ func (a *Agent) handle(ctx context.Context, method string, params json.RawMessag
 			u.SessionID = p.SessionID
 			_ = a.conn.Notify("session/update", u)
 		}
-		return a.prompt(turnCtx, p.SessionID, p.Text, stream)
+		ask := func(req PermissionRequest) (PermissionResult, error) {
+			req.SessionID = p.SessionID
+			var res PermissionResult
+			err := a.conn.Call(turnCtx, "session/request_permission", req, &res)
+			return res, err
+		}
+		return a.prompt(turnCtx, p.SessionID, p.Text, stream, ask)
 	}
 	return nil, fmt.Errorf("acp agent: method not found: %s", method)
 }

@@ -59,7 +59,7 @@ func (ca *ConductorAgent) sessionState(sid string) *convoState {
 }
 
 // Prompt runs one turn of the intent → grill → review → ratified conversation.
-func (ca *ConductorAgent) Prompt(ctx context.Context, sessionID, text string, stream func(acp.Update)) (acp.PromptResult, error) {
+func (ca *ConductorAgent) Prompt(ctx context.Context, sessionID, text string, stream func(acp.Update), ask acp.AskFunc) (acp.PromptResult, error) {
 	end := acp.PromptResult{StopReason: "end_turn"}
 	if ca.conductor == nil {
 		stream(acp.Update{Kind: "agent_message", Text: "conductor backend not configured"})
@@ -69,20 +69,20 @@ func (ca *ConductorAgent) Prompt(ctx context.Context, sessionID, text string, st
 
 	switch {
 	case !st.started:
-		return ca.handleIntent(ctx, st, text, stream), nil
+		return ca.handleIntent(ctx, st, text, stream, ask), nil
 	case st.ratified:
 		stream(acp.Update{Kind: "agent_message", Text: "Spec is ratified — run `orion run` to build, or start a new intent."})
 		return end, nil
 	case st.awaitingRatify:
 		return ca.handleReview(ctx, st, text, stream), nil
 	default:
-		return ca.handleAnswer(ctx, st, text, stream), nil
+		return ca.handleAnswer(ctx, st, text, stream, ask), nil
 	}
 }
 
 // handleIntent: the first turn submits the intent and either asks the first
 // blocking question or presents the spec for review.
-func (ca *ConductorAgent) handleIntent(ctx context.Context, st *convoState, text string, stream func(acp.Update)) acp.PromptResult {
+func (ca *ConductorAgent) handleIntent(ctx context.Context, st *convoState, text string, stream func(acp.Update), ask acp.AskFunc) acp.PromptResult {
 	end := acp.PromptResult{StopReason: "end_turn"}
 	conf, err := ca.conductor.Submit(ctx, text)
 	if err != nil {
@@ -93,7 +93,7 @@ func (ca *ConductorAgent) handleIntent(ctx context.Context, st *convoState, text
 	stream(acp.Update{Kind: "agent_thought", Text: conf.Message})
 	st.pending = blockingOpen(conf.OpenDecisions)
 	if len(st.pending) == 0 {
-		ca.presentSpec(ctx, st, stream)
+		ca.presentSpec(ctx, st, stream, ask)
 		return end
 	}
 	ca.askOne(st, stream)
@@ -101,7 +101,7 @@ func (ca *ConductorAgent) handleIntent(ctx context.Context, st *convoState, text
 }
 
 // handleAnswer records the answer to the current question and advances.
-func (ca *ConductorAgent) handleAnswer(ctx context.Context, st *convoState, text string, stream func(acp.Update)) acp.PromptResult {
+func (ca *ConductorAgent) handleAnswer(ctx context.Context, st *convoState, text string, stream func(acp.Update), ask acp.AskFunc) acp.PromptResult {
 	end := acp.PromptResult{StopReason: "end_turn"}
 	od := st.pending[0]
 	if strings.TrimSpace(text) == "" {
@@ -118,7 +118,7 @@ func (ca *ConductorAgent) handleAnswer(ctx context.Context, st *convoState, text
 		st.pending = st.pending[1:]
 	}
 	if len(st.pending) == 0 {
-		ca.presentSpec(ctx, st, stream)
+		ca.presentSpec(ctx, st, stream, ask)
 		return end
 	}
 	ca.askOne(st, stream)
@@ -132,15 +132,7 @@ func (ca *ConductorAgent) handleReview(ctx context.Context, st *convoState, text
 	reply := strings.TrimSpace(text)
 	switch strings.ToLower(reply) {
 	case "y", "yes", "ratify", "approve":
-		es, err := ca.conductor.ApproveSpec(ctx)
-		if err != nil {
-			stream(acp.Update{Kind: "agent_message", Text: "I can't finalize the spec yet: " + err.Error()})
-			return end
-		}
-		st.awaitingRatify = false
-		st.ratified = true
-		stream(acp.Update{Kind: "plan", Text: fmt.Sprintf("Spec ratified ✓  route=%s  format=%s  (hash %s) — run `orion run` to build.",
-			es.ResponseContract.Route, es.Decisions["response_format"], shortHash(es.Hash))})
+		ca.ratify(ctx, st, stream)
 		return end
 	}
 
@@ -169,7 +161,7 @@ func (ca *ConductorAgent) handleReview(ctx context.Context, st *convoState, text
 	if len(st.pending) > 0 {
 		ca.askOne(st, stream)
 	} else {
-		ca.presentSpec(ctx, st, stream)
+		ca.presentSpec(ctx, st, stream, nil) // conversational re-present (next-turn, no live gate)
 	}
 	return end
 }
@@ -180,16 +172,48 @@ func (ca *ConductorAgent) askOne(st *convoState, stream func(acp.Update)) {
 	stream(acp.Update{Kind: "agent_message", Text: fmt.Sprintf("[%s] %s   (%d to answer)", od.Dimension, od.Question, len(st.pending))})
 }
 
-// presentSpec assembles the spec (without accepting it) and streams it for review.
-func (ca *ConductorAgent) presentSpec(ctx context.Context, st *convoState, stream func(acp.Update)) {
+// presentSpec assembles the spec (without accepting it) and streams it for
+// review, then seeks ratification. With a client permission gate (the TUI), it
+// uses a blocking session/request_permission(spec_ratify) — the developer
+// authorizes in-place. Without a gate (headless / no UI), it falls back to a
+// conversational ratify ('y' / '<field> <value>') handled on the next turn.
+func (ca *ConductorAgent) presentSpec(ctx context.Context, st *convoState, stream func(acp.Update), ask acp.AskFunc) {
 	es, err := ca.conductor.PreviewSpec(ctx)
 	if err != nil {
 		stream(acp.Update{Kind: "agent_message", Text: "I can't assemble the spec yet: " + err.Error()})
 		return
 	}
 	stream(acp.Update{Kind: "spec", Text: formatSpecCard(es)})
+
+	if ask != nil {
+		res, aerr := ask(acp.PermissionRequest{Kind: "spec_ratify", Title: "Ratify the assembled spec?"})
+		if aerr == nil {
+			if res.Outcome == "granted" {
+				ca.ratify(ctx, st, stream)
+				return
+			}
+			// Declined → let the developer change a field, then we re-present.
+			stream(acp.Update{Kind: "agent_message", Text: "Not ratified. Reply '<field> <value>' to change one (e.g. 'port 9090'), or 'y' to ratify."})
+			st.awaitingRatify = true
+			return
+		}
+		// ask errored (no gate configured) → conversational fallback below.
+	}
 	stream(acp.Update{Kind: "agent_message", Text: "Review the spec above. Reply 'y' to ratify, or '<field> <value>' to change one (e.g. 'port 9090')."})
 	st.awaitingRatify = true
+}
+
+// ratify accepts the spec and streams the ready signal.
+func (ca *ConductorAgent) ratify(ctx context.Context, st *convoState, stream func(acp.Update)) {
+	es, err := ca.conductor.ApproveSpec(ctx)
+	if err != nil {
+		stream(acp.Update{Kind: "agent_message", Text: "I can't finalize the spec yet: " + err.Error()})
+		return
+	}
+	st.awaitingRatify = false
+	st.ratified = true
+	stream(acp.Update{Kind: "plan", Text: fmt.Sprintf("Spec ratified ✓  route=%s  format=%s  (hash %s) — run `orion run` to build.",
+		es.ResponseContract.Route, es.Decisions["response_format"], shortHash(es.Hash))})
 }
 
 // formatSpecCard renders the assembled spec for developer review — dimension

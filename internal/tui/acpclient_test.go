@@ -29,7 +29,7 @@ func TestACPClientPromptTurn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	prompt := func(_ context.Context, sid, text string, stream func(acp.Update)) (acp.PromptResult, error) {
+	prompt := func(_ context.Context, sid, text string, stream func(acp.Update), _ acp.AskFunc) (acp.PromptResult, error) {
 		stream(acp.Update{Kind: "agent_thought", Text: "thinking about " + text})
 		stream(acp.Update{Kind: "plan", Text: "decompose → prove"})
 		stream(acp.Update{Kind: "tool_call", Text: "generator running"})
