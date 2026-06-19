@@ -4,22 +4,22 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
+	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 )
 
 // ConductorAgent is the Conductor exposed as an ACP agent (SPEC §3): primed by a
-// role template, it runs the prompt-turn conversation that narrows an intent into
-// a ratified spec — the completeness "agent skill" lives HERE, server-side, so
-// the TUI is a thin ACP client (or-owz). It reasons/coordinates only; proof, the
-// deployment bar, and leases stay deterministic tools it invokes, never overrides.
-//
-// In production the reasoning is the spawned vendor agent; this Go agent is the
-// reference/headless Conductor and the seam the TUI drives.
+// role template, it runs the conversation that narrows an intent into a ratified
+// spec — the completeness "agent skill" lives HERE, server-side. After the
+// blocking questions it PRESENTS the assembled spec for review and ratifies only
+// on the developer's say-so (or-owz, or-owo). It reasons/coordinates only; proof,
+// the deployment bar, and leases stay deterministic tools it invokes.
 type ConductorAgent struct {
 	Role      RoleTemplate
 	conductor *orchestrator.Conductor
@@ -30,13 +30,14 @@ type ConductorAgent struct {
 
 // convoState is per-ACP-session conversation progress.
 type convoState struct {
-	started bool                        // intent submitted?
-	pending []completeness.OpenDecision // blocking questions still to answer
+	started        bool                        // intent submitted?
+	pending        []completeness.OpenDecision // blocking questions still to answer
+	awaitingRatify bool                        // spec presented, awaiting ratify/edit
+	ratified       bool
 }
 
 // NewConductorAgent builds a Conductor agent backed by the orchestrator Conductor
-// (which owns the store + completeness gate). The backing conductor is what makes
-// the questioning a real skill rather than a canned echo.
+// (which owns the store + completeness gate).
 func NewConductorAgent(role RoleTemplate, c *orchestrator.Conductor) *ConductorAgent {
 	return &ConductorAgent{Role: role, conductor: c, sessions: map[string]*convoState{}}
 }
@@ -57,10 +58,7 @@ func (ca *ConductorAgent) sessionState(sid string) *convoState {
 	return st
 }
 
-// Prompt runs one turn of the intent → grill → ready conversation. The first
-// prompt is the intent; each subsequent prompt answers the current blocking
-// question. One question is streamed per turn (with its dimension + remaining
-// count) so the developer always knows what to answer.
+// Prompt runs one turn of the intent → grill → review → ratified conversation.
 func (ca *ConductorAgent) Prompt(ctx context.Context, sessionID, text string, stream func(acp.Update)) (acp.PromptResult, error) {
 	end := acp.PromptResult{StopReason: "end_turn"}
 	if ca.conductor == nil {
@@ -69,50 +67,111 @@ func (ca *ConductorAgent) Prompt(ctx context.Context, sessionID, text string, st
 	}
 	st := ca.sessionState(sessionID)
 
-	// First turn: the intent.
-	if !st.started {
-		conf, err := ca.conductor.Submit(ctx, text)
-		if err != nil {
-			stream(acp.Update{Kind: "agent_message", Text: "I can't take that yet: " + err.Error()})
-			return end, nil
-		}
-		st.started = true
-		stream(acp.Update{Kind: "agent_thought", Text: conf.Message})
-		st.pending = blockingOpen(conf.OpenDecisions)
-		if len(st.pending) == 0 {
-			return ca.finalize(ctx, stream)
-		}
-		ca.askOne(st, stream)
-		return end, nil
-	}
-
-	// Already ratified: guide toward the build.
-	if len(st.pending) == 0 {
+	switch {
+	case !st.started:
+		return ca.handleIntent(ctx, st, text, stream), nil
+	case st.ratified:
 		stream(acp.Update{Kind: "agent_message", Text: "Spec is ratified — run `orion run` to build, or start a new intent."})
 		return end, nil
+	case st.awaitingRatify:
+		return ca.handleReview(ctx, st, text, stream), nil
+	default:
+		return ca.handleAnswer(ctx, st, text, stream), nil
 	}
+}
 
-	// Otherwise: this prompt answers the current blocking question.
+// handleIntent: the first turn submits the intent and either asks the first
+// blocking question or presents the spec for review.
+func (ca *ConductorAgent) handleIntent(ctx context.Context, st *convoState, text string, stream func(acp.Update)) acp.PromptResult {
+	end := acp.PromptResult{StopReason: "end_turn"}
+	conf, err := ca.conductor.Submit(ctx, text)
+	if err != nil {
+		stream(acp.Update{Kind: "agent_message", Text: "I can't take that yet: " + err.Error()})
+		return end
+	}
+	st.started = true
+	stream(acp.Update{Kind: "agent_thought", Text: conf.Message})
+	st.pending = blockingOpen(conf.OpenDecisions)
+	if len(st.pending) == 0 {
+		ca.presentSpec(ctx, st, stream)
+		return end
+	}
+	ca.askOne(st, stream)
+	return end
+}
+
+// handleAnswer records the answer to the current question and advances.
+func (ca *ConductorAgent) handleAnswer(ctx context.Context, st *convoState, text string, stream func(acp.Update)) acp.PromptResult {
+	end := acp.PromptResult{StopReason: "end_turn"}
 	od := st.pending[0]
 	if strings.TrimSpace(text) == "" {
 		stream(acp.Update{Kind: "agent_message", Text: "That one needs an answer — " + od.Question})
-		return end, nil
+		return end
 	}
 	if err := ca.conductor.RecordAnswer(ctx, od.Key, text); err != nil {
 		stream(acp.Update{Kind: "agent_message", Text: "couldn't record that: " + err.Error()})
-		return end, nil
+		return end
 	}
-	// Recompute remaining blocking questions from the persisted answers.
 	if sv, err := ca.conductor.SpecView(ctx); err == nil {
 		st.pending = blockingOpen(sv.OpenDecisions)
 	} else if len(st.pending) > 0 {
 		st.pending = st.pending[1:]
 	}
 	if len(st.pending) == 0 {
-		return ca.finalize(ctx, stream)
+		ca.presentSpec(ctx, st, stream)
+		return end
 	}
 	ca.askOne(st, stream)
-	return end, nil
+	return end
+}
+
+// handleReview processes the developer's response to the presented spec: ratify,
+// or edit a field and re-review.
+func (ca *ConductorAgent) handleReview(ctx context.Context, st *convoState, text string, stream func(acp.Update)) acp.PromptResult {
+	end := acp.PromptResult{StopReason: "end_turn"}
+	reply := strings.TrimSpace(text)
+	switch strings.ToLower(reply) {
+	case "y", "yes", "ratify", "approve":
+		es, err := ca.conductor.ApproveSpec(ctx)
+		if err != nil {
+			stream(acp.Update{Kind: "agent_message", Text: "I can't finalize the spec yet: " + err.Error()})
+			return end
+		}
+		st.awaitingRatify = false
+		st.ratified = true
+		stream(acp.Update{Kind: "plan", Text: fmt.Sprintf("Spec ratified ✓  route=%s  format=%s  (hash %s) — run `orion run` to build.",
+			es.ResponseContract.Route, es.Decisions["response_format"], shortHash(es.Hash))})
+		return end
+	}
+
+	// Otherwise treat it as an edit: "<field> <value>" or "edit <field> <value>".
+	fields := strings.Fields(reply)
+	if len(fields) > 0 && strings.ToLower(fields[0]) == "edit" {
+		fields = fields[1:]
+	}
+	if len(fields) < 2 {
+		stream(acp.Update{Kind: "agent_message", Text: "Reply 'y' to ratify, or '<field> <value>' to change one (e.g. 'port 9090')."})
+		return end
+	}
+	key, value := fields[0], strings.Join(fields[1:], " ")
+	if !ca.conductor.DecisionKeys()[key] {
+		stream(acp.Update{Kind: "agent_message", Text: fmt.Sprintf("'%s' isn't a spec field. Reply 'y' to ratify, or '<field> <value>' to change one.", key)})
+		return end
+	}
+	if err := ca.conductor.RecordAnswer(ctx, key, value); err != nil {
+		stream(acp.Update{Kind: "agent_message", Text: "couldn't record that: " + err.Error()})
+		return end
+	}
+	st.awaitingRatify = false
+	if sv, err := ca.conductor.SpecView(ctx); err == nil {
+		st.pending = blockingOpen(sv.OpenDecisions)
+	}
+	if len(st.pending) > 0 {
+		ca.askOne(st, stream)
+	} else {
+		ca.presentSpec(ctx, st, stream)
+	}
+	return end
 }
 
 // askOne streams the current question — one at a time, with guidance.
@@ -121,17 +180,40 @@ func (ca *ConductorAgent) askOne(st *convoState, stream func(acp.Update)) {
 	stream(acp.Update{Kind: "agent_message", Text: fmt.Sprintf("[%s] %s   (%d to answer)", od.Dimension, od.Question, len(st.pending))})
 }
 
-// finalize ratifies the spec (fallback-eligible dimensions resolve to presets)
-// and streams the plan/ready signal.
-func (ca *ConductorAgent) finalize(ctx context.Context, stream func(acp.Update)) (acp.PromptResult, error) {
-	es, err := ca.conductor.ApproveSpec(ctx)
+// presentSpec assembles the spec (without accepting it) and streams it for review.
+func (ca *ConductorAgent) presentSpec(ctx context.Context, st *convoState, stream func(acp.Update)) {
+	es, err := ca.conductor.PreviewSpec(ctx)
 	if err != nil {
-		stream(acp.Update{Kind: "agent_message", Text: "I can't finalize the spec yet: " + err.Error()})
-		return acp.PromptResult{StopReason: "end_turn"}, nil
+		stream(acp.Update{Kind: "agent_message", Text: "I can't assemble the spec yet: " + err.Error()})
+		return
 	}
-	stream(acp.Update{Kind: "plan", Text: fmt.Sprintf("Spec ratified ✓  route=%s  format=%s  (hash %s) — run `orion run` to build.",
-		es.ResponseContract.Route, es.Decisions["response_format"], shortHash(es.Hash))})
-	return acp.PromptResult{StopReason: "end_turn"}, nil
+	stream(acp.Update{Kind: "spec", Text: formatSpecCard(es)})
+	stream(acp.Update{Kind: "agent_message", Text: "Review the spec above. Reply 'y' to ratify, or '<field> <value>' to change one (e.g. 'port 9090')."})
+	st.awaitingRatify = true
+}
+
+// formatSpecCard renders the assembled spec for developer review — dimension
+// values with defaults marked, plus the response contract.
+func formatSpecCard(es spec.ExecutableSpec) string {
+	var b strings.Builder
+	for _, d := range es.Dimensions {
+		keys := make([]string, 0, len(d.Values))
+		for k := range d.Values {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, k+"="+d.Values[k])
+		}
+		mark := ""
+		if d.ValueKind == "fallback_preset" {
+			mark = "  (default)"
+		}
+		b.WriteString(fmt.Sprintf("%-13s %s%s\n", string(d.Name), strings.Join(parts, ", "), mark))
+	}
+	b.WriteString(fmt.Sprintf("contract      GET %s → %s", es.ResponseContract.Route, es.Decisions["response_format"]))
+	return b.String()
 }
 
 func shortHash(h string) string {
@@ -141,8 +223,7 @@ func shortHash(h string) string {
 	return h
 }
 
-// blockingOpen keeps only decisions with no safe default (the developer must
-// answer these); fallback-eligible decisions resolve to presets at approve time.
+// blockingOpen keeps only decisions with no safe default.
 func blockingOpen(open []completeness.OpenDecision) []completeness.OpenDecision {
 	var b []completeness.OpenDecision
 	for _, od := range open {

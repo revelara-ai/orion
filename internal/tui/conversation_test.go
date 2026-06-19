@@ -52,6 +52,9 @@ func transcript(m Conversation) string { return strings.Join(m.lines, "\n") }
 func answerFromTranscript(m Conversation) string {
 	for i := len(m.lines) - 1; i >= 0; i-- {
 		l := strings.ToLower(m.lines[i])
+		if strings.Contains(l, "ratify") || strings.Contains(l, "review the spec") {
+			return "y"
+		}
 		switch {
 		case strings.Contains(l, "format"):
 			return "json"

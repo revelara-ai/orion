@@ -62,36 +62,51 @@ func (c *Conductor) loadAnswers(ctx context.Context, specID string) (answers, ki
 	return answers, kinds, nil
 }
 
-// ApproveSpec ratifies the current spec: every blocking (no-fallback) decision
-// must be answered; remaining fallback-eligible decisions are resolved to their
-// presets; then the spec is compiled (ResponseContract + hash), its typed
-// dimensions persisted, and it is marked accepted + anchored.
-func (c *Conductor) ApproveSpec(ctx context.Context) (spec.ExecutableSpec, error) {
+// DecisionKeys returns the set of valid decision keys (the completeness
+// checklist) — used to validate a developer's spec edit before recording it.
+func (c *Conductor) DecisionKeys() map[string]bool {
+	keys := map[string]bool{}
+	for _, rd := range c.gate.Checklist() {
+		keys[rd.Key] = true
+	}
+	return keys
+}
+
+// fallbackKV is a fallback-eligible decision resolved to its preset value.
+type fallbackKV struct{ key, value string }
+
+// assembleSpec resolves the current draft into an ExecutableSpec WITHOUT
+// accepting it: blocking (no-fallback) decisions must be answered; remaining
+// fallback-eligible decisions resolve to their presets; the spec is compiled
+// (ResponseContract + hash). Used by both PreviewSpec (review) and ApproveSpec
+// (ratify) so what the developer reviews is exactly what gets accepted.
+func (c *Conductor) assembleSpec(ctx context.Context) (contextstore.Project, contextstore.Spec, spec.ExecutableSpec, []fallbackKV, error) {
+	var proj contextstore.Project
+	var sp contextstore.Spec
 	if c.store == nil {
-		return spec.ExecutableSpec{}, errNoStore
+		return proj, sp, spec.ExecutableSpec{}, nil, errNoStore
 	}
 	proj, sp, err := c.store.CurrentProjectSpec(ctx)
 	if err != nil {
-		return spec.ExecutableSpec{}, fmt.Errorf("no current spec to approve: %w", err)
+		return proj, sp, spec.ExecutableSpec{}, nil, fmt.Errorf("no current spec: %w", err)
 	}
 	answers, kinds, err := c.loadAnswers(ctx, sp.ID)
 	if err != nil {
-		return spec.ExecutableSpec{}, err
+		return proj, sp, spec.ExecutableSpec{}, nil, err
 	}
 
 	open := c.gate.Analyze(proj.Intent, answers)
 	var blocking []string
-	type fb struct{ key, value string }
-	var fallbacks []fb
+	var fallbacks []fallbackKV
 	for _, od := range open {
 		if od.Fallback == "" {
 			blocking = append(blocking, od.Key)
 			continue
 		}
-		fallbacks = append(fallbacks, fb{od.Key, fallbackValue(od)})
+		fallbacks = append(fallbacks, fallbackKV{od.Key, fallbackValue(od)})
 	}
 	if len(blocking) > 0 {
-		return spec.ExecutableSpec{}, fmt.Errorf("cannot approve: unanswered decision(s) with no fallback: %s", strings.Join(blocking, ", "))
+		return proj, sp, spec.ExecutableSpec{}, nil, fmt.Errorf("unanswered decision(s) with no fallback: %s", strings.Join(blocking, ", "))
 	}
 	for _, f := range fallbacks {
 		answers[f.key] = f.value
@@ -100,13 +115,31 @@ func (c *Conductor) ApproveSpec(ctx context.Context) (spec.ExecutableSpec, error
 
 	es, err := spec.Compile(proj.Intent, answers, kinds, c.gate.Checklist())
 	if err != nil {
+		return proj, sp, spec.ExecutableSpec{}, nil, err
+	}
+	return proj, sp, es, fallbacks, nil
+}
+
+// PreviewSpec returns the assembled ExecutableSpec for developer review WITHOUT
+// accepting it (fallback-eligible dimensions resolved to presets). Nothing is
+// persisted — the spec is shown before it is ratified.
+func (c *Conductor) PreviewSpec(ctx context.Context) (spec.ExecutableSpec, error) {
+	_, _, es, _, err := c.assembleSpec(ctx)
+	return es, err
+}
+
+// ApproveSpec ratifies the current spec: it assembles exactly what PreviewSpec
+// showed, persists the fallback decisions + typed dimensions, and marks the spec
+// accepted + anchored.
+func (c *Conductor) ApproveSpec(ctx context.Context) (spec.ExecutableSpec, error) {
+	proj, sp, es, fallbacks, err := c.assembleSpec(ctx)
+	if err != nil {
 		return spec.ExecutableSpec{}, err
 	}
 	rcJSON, err := json.Marshal(es.ResponseContract)
 	if err != nil {
 		return spec.ExecutableSpec{}, fmt.Errorf("marshal response contract: %w", err)
 	}
-
 	if err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
 		for _, f := range fallbacks {
 			if _, e := tx.Decisions().Create(ctx, proj.ID, sp.ID, f.key, f.value, "fallback_preset", false); e != nil {
