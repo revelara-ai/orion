@@ -13,6 +13,9 @@ import (
 
 func answerFor(q string) string {
 	ql := strings.ToLower(q)
+	if strings.Contains(ql, "ratify") || strings.Contains(ql, "review the spec") {
+		return "y"
+	}
 	switch {
 	case strings.Contains(ql, "format"):
 		return "json"

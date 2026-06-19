@@ -27,6 +27,9 @@ import (
 // human reads + types these in the real TUI).
 func answerForQuestion(q string) string {
 	ql := strings.ToLower(q)
+	if strings.Contains(ql, "ratify") || strings.Contains(ql, "review the spec") {
+		return "y"
+	}
 	switch {
 	case strings.Contains(ql, "format"):
 		return "json"
