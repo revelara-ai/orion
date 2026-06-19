@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"text/template"
 
 	"github.com/revelara-ai/orion/internal/actuation"
@@ -202,4 +203,42 @@ func PrepareArtifact(dir string, files map[string]string, dryRun bool) (actuatio
 		BlastRadius: "task worktree: " + dir,
 		Mutated:     true,
 	}, nil
+}
+
+// ArtifactFromDir builds a GeneratedArtifact from a directory the generator wrote
+// (e.g. a spawned agent authoring via the ACP fs seam): a stable content hash
+// over all files + a representative path. Used when generation is not the
+// deterministic fixture.
+func ArtifactFromDir(dir string) (GeneratedArtifact, error) {
+	var files []string
+	if err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			files = append(files, p)
+		}
+		return nil
+	}); err != nil {
+		return GeneratedArtifact{}, err
+	}
+	if len(files) == 0 {
+		return GeneratedArtifact{}, fmt.Errorf("artifact dir %s is empty", dir)
+	}
+	sort.Strings(files)
+	h := sha256.New()
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return GeneratedArtifact{}, err
+		}
+		rel, _ := filepath.Rel(dir, f)
+		h.Write([]byte(rel))
+		h.Write(b)
+	}
+	path := filepath.Join(dir, "main.go")
+	if _, err := os.Stat(path); err != nil {
+		path = files[0]
+	}
+	return GeneratedArtifact{Path: path, ContentHash: hex.EncodeToString(h.Sum(nil))}, nil
 }

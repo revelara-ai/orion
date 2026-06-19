@@ -6,9 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/revelara-ai/orion/internal/actuation"
+	"github.com/revelara-ai/orion/internal/agentruntime"
 	"github.com/revelara-ai/orion/internal/conductor"
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/delivery"
@@ -65,7 +68,7 @@ func cmdRun(_ []string) int {
 		fmt.Fprintln(os.Stderr, "orion run: build dir:", err)
 		return 1
 	}
-	art, err := sandbox.GenerateFixtureService(buildDir, gs)
+	art, err := generateService(ctx, gs, buildDir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion run: generate:", err)
 		return 1
@@ -207,4 +210,54 @@ func cmdProof(args []string) int {
 	}
 	fmt.Printf("proof %s for %s: verdict=%s detail=%s\n", p.Mode, *task, p.Verdict, p.Detail)
 	return 0
+}
+
+// generateService produces the service for the spec into buildDir. By default it
+// uses the deterministic fixture; with ORION_AGENT=<preset> set (and the agent on
+// PATH) it spawns the developer's own vendor coding-agent to WRITE the code over
+// ACP — the real "Orion writes new code" dogfood path (or-s10).
+func generateService(ctx context.Context, gs sandbox.GenSpec, buildDir string) (sandbox.GeneratedArtifact, error) {
+	preset, ok := configuredAgent()
+	if !ok {
+		return sandbox.GenerateFixtureService(buildDir, gs)
+	}
+	gen := agentruntime.AgentGenerator{Driver: agentruntime.SpawnDriver(preset, generationRole(gs), nil)}
+	req := agentruntime.GenRequest{
+		Description: "implement the ratified service",
+		Module:      "orion-generated/svc",
+		Route:       gs.Route, Port: gs.Port, Format: gs.Format, TimeZone: gs.TimeZone,
+	}
+	if _, err := gen.Generate(ctx, req, buildDir); err != nil {
+		return sandbox.GeneratedArtifact{}, fmt.Errorf("agent generation: %w", err)
+	}
+	return sandbox.ArtifactFromDir(buildDir)
+}
+
+// configuredAgent returns the opt-in vendor agent preset (ORION_AGENT=<name>) when
+// it is set, known, and on PATH; otherwise generation uses the deterministic
+// fixture. Opt-in so `orion run` never silently spawns an agent or uses quota.
+func configuredAgent() (agentruntime.Preset, bool) {
+	return resolveAgent(os.Getenv("ORION_AGENT"), exec.LookPath)
+}
+
+// resolveAgent is configuredAgent with an injectable PATH lookup (for tests).
+func resolveAgent(name string, lookPath func(string) (string, error)) (agentruntime.Preset, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.EqualFold(name, "none") || strings.EqualFold(name, "fixture") {
+		return agentruntime.Preset{}, false
+	}
+	p, ok := agentruntime.DefaultPresetRegistry().Get(name)
+	if !ok {
+		return p, false
+	}
+	if _, err := lookPath(p.Command); err != nil {
+		return p, false
+	}
+	return p, true
+}
+
+// generationRole primes a spawned vendor agent to write the contract-conformant
+// service (exposing handleTime, the proof harness's stable contract symbol).
+func generationRole(gs sandbox.GenSpec) string {
+	return fmt.Sprintf("You are Orion's code generator. Write a complete, compilable Go HTTP service that serves route %s returning %s, timezone %s, honoring a PORT env override. Expose the request handler as a top-level func handleTime(w http.ResponseWriter, r *http.Request). Write go.mod and main.go into the working directory via fs/write_text_file, then end the turn.", gs.Route, gs.Format, gs.TimeZone)
 }
