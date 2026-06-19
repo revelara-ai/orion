@@ -8,13 +8,14 @@ import (
 	"time"
 
 	"github.com/revelara-ai/orion/internal/acp"
+	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/proof"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 )
 
-// TestConductorSpeaksACPAgent: the Conductor exposes the ACP agent interface — an
-// ACP client can initialize, open a session, run a prompt turn, and receive the
-// streamed session/update notifications.
+// TestConductorSpeaksACPAgent: the Conductor exposes the ACP agent interface and,
+// backed by the orchestrator, runs the completeness conversation — the intent
+// turn streams a clarifying question (the agent skill), not a canned echo.
 func TestConductorSpeaksACPAgent(t *testing.T) {
 	clientEnd, agentEnd := net.Pipe()
 	defer clientEnd.Close()
@@ -22,7 +23,7 @@ func TestConductorSpeaksACPAgent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	ca := ConductorAgent{Role: RoleTemplate{Project: "demo", Tier: "standard"}}
+	ca := NewConductorAgent(RoleTemplate{Project: "demo", Tier: "standard"}, orchestrator.NewWithStore(openStore(t)))
 	go ca.Serve(ctx, agentEnd, agentEnd)
 
 	client := acp.NewClient(clientEnd, clientEnd, nil, nil)
@@ -35,9 +36,9 @@ func TestConductorSpeaksACPAgent(t *testing.T) {
 	if err != nil || sid == "" {
 		t.Fatalf("session/new: id=%q err=%v", sid, err)
 	}
-	var kinds []string
+	var texts []string
 	res, err := client.Prompt(ctx, sid, "build a time service", func(u acp.Update) {
-		kinds = append(kinds, u.Kind)
+		texts = append(texts, u.Text)
 	})
 	if err != nil {
 		t.Fatalf("prompt: %v", err)
@@ -45,10 +46,10 @@ func TestConductorSpeaksACPAgent(t *testing.T) {
 	if res.StopReason != "end_turn" {
 		t.Fatalf("stop reason = %q", res.StopReason)
 	}
-	// The turn streamed thought + plan updates.
-	joined := strings.Join(kinds, ",")
-	if !strings.Contains(joined, "agent_thought") || !strings.Contains(joined, "plan") {
-		t.Fatalf("prompt turn did not stream the expected updates: %v", kinds)
+	// The intent turn asks a completeness question (one at a time, with guidance).
+	joined := strings.Join(texts, " | ")
+	if !strings.Contains(joined, "?") || !strings.Contains(joined, "to answer") {
+		t.Fatalf("conductor did not ask a completeness question over ACP: %v", texts)
 	}
 }
 
