@@ -665,16 +665,20 @@ type Delivery struct {
 	ID                string
 	EpicID            string
 	OperatingEnvelope string // JSON
+	Runbook           string // JSON
 	CreatedAt         string
 }
 
 type DeliveryRepo struct{ tx *sql.Tx }
 
-func (r *DeliveryRepo) Create(ctx context.Context, epicID, operatingEnvelope string) (string, error) {
+func (r *DeliveryRepo) Create(ctx context.Context, epicID, operatingEnvelope, runbook string) (string, error) {
+	if runbook == "" {
+		runbook = "{}"
+	}
 	id, now := newID(), nowRFC3339()
 	_, err := r.tx.ExecContext(ctx,
-		`INSERT INTO deliveries (id, epic_id, operating_envelope, created_at) VALUES (?,?,?,?)`,
-		id, epicID, operatingEnvelope, now)
+		`INSERT INTO deliveries (id, epic_id, operating_envelope, runbook, created_at) VALUES (?,?,?,?,?)`,
+		id, epicID, operatingEnvelope, runbook, now)
 	if err != nil {
 		return "", fmt.Errorf("create delivery: %w", err)
 	}
@@ -685,10 +689,10 @@ func (r *DeliveryRepo) Create(ctx context.Context, epicID, operatingEnvelope str
 func (r *DeliveryRepo) LatestForProject(ctx context.Context, projectID string) (Delivery, bool, error) {
 	var d Delivery
 	err := r.tx.QueryRowContext(ctx,
-		`SELECT dl.id, dl.epic_id, dl.operating_envelope, dl.created_at
+		`SELECT dl.id, dl.epic_id, dl.operating_envelope, dl.runbook, dl.created_at
 		 FROM deliveries dl JOIN epics e ON dl.epic_id = e.id
 		 WHERE e.project_id=? ORDER BY dl.created_at DESC LIMIT 1`, projectID).
-		Scan(&d.ID, &d.EpicID, &d.OperatingEnvelope, &d.CreatedAt)
+		Scan(&d.ID, &d.EpicID, &d.OperatingEnvelope, &d.Runbook, &d.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Delivery{}, false, nil
 	}

@@ -105,12 +105,14 @@ func cmdRun(_ []string) int {
 	res := delivery.EvaluateBar(report.Outcome.Verdict, []string{"behavioral", "empirical", "hazard"}, reliabilitytier.PolicyFor(tier), env, securityOK)
 	if res.Decision == delivery.Deliver {
 		envJSON, _ := json.Marshal(res.Envelope)
+		runbook := delivery.GenerateRunbook(es, model, env)
+		rbJSON, _ := json.Marshal(runbook)
 		_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
 			epic, e := tx.Epics().LatestForProject(ctx, proj.ID)
 			if e != nil {
 				return e
 			}
-			_, e = tx.Deliveries().Create(ctx, epic.ID, string(envJSON))
+			_, e = tx.Deliveries().Create(ctx, epic.ID, string(envJSON), string(rbJSON))
 			return e
 		})
 	} else {
