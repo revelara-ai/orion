@@ -27,11 +27,11 @@ type GeneratedArtifact struct {
 	ContentHash string
 }
 
-// GenerateGoTimeService writes a real, compilable Go HTTP time-service into dir
+// GenerateFixtureService writes a real, compilable Go HTTP time-service into dir
 // (the agent's worktree), conforming to the ResponseContract. The generated
 // service carries reliability primitives (server timeouts, graceful shutdown) —
 // Orion eats its own dog food. Returns the main.go artifact descriptor.
-func GenerateGoTimeService(dir string, gs GenSpec) (GeneratedArtifact, error) {
+func GenerateFixtureService(dir string, gs GenSpec) (GeneratedArtifact, error) {
 	if gs.Module == "" {
 		gs.Module = "orion-generated/timeservice"
 	}

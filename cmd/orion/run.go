@@ -64,7 +64,7 @@ func cmdRun(_ []string) int {
 		fmt.Fprintln(os.Stderr, "orion run: build dir:", err)
 		return 1
 	}
-	art, err := sandbox.GenerateGoTimeService(buildDir, gs)
+	art, err := sandbox.GenerateFixtureService(buildDir, gs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion run: generate:", err)
 		return 1

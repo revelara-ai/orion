@@ -15,7 +15,7 @@ import (
 func TestMutationGateRejectsTautology(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	if _, err := sandbox.GenerateGoTimeService(dir, sandbox.GenSpec{Route: "/time", Port: 8080, Format: "json", TimeZone: "UTC"}); err != nil {
+	if _, err := sandbox.GenerateFixtureService(dir, sandbox.GenSpec{Route: "/time", Port: 8080, Format: "json", TimeZone: "UTC"}); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 
