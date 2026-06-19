@@ -1,3 +1,7 @@
+# Built binary (repo-root build artifact) + local data dir
+/orion
+.orion/
+
 # bv (beads viewer) local config and caches
 .bv/
 
