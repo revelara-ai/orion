@@ -19,7 +19,7 @@ func TestControlLoopFeedbackValidated(t *testing.T) {
 	model := stpa.RatifiedTimeServiceModel()
 
 	good := t.TempDir()
-	if _, err := sandbox.GenerateGoTimeService(good, sandbox.GenSpec{Route: "/time", Port: 8080, Format: "json", TimeZone: "UTC"}); err != nil {
+	if _, err := sandbox.GenerateFixtureService(good, sandbox.GenSpec{Route: "/time", Port: 8080, Format: "json", TimeZone: "UTC"}); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 	mr, rep, err := Prove(ctx, good, model)
