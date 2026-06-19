@@ -15,6 +15,20 @@ derived_from:
 >
 > This fits the SRE-derived "decouple the reasoning engine from the execution engine" principle: the Conductor-agent is the **reasoning** plane; the deterministic proof harness, deployment bar, leases, dry-run, and integration gates are the **execution/safety** plane. The Conductor reasons and delegates; it never computes a proof verdict or overrides a deterministic gate.
 
+## 0. Positioning: agentic chat, control plane, pluggable brain
+
+**Lineage.** Orion's *interface* is an **agentic coding chat** in the lineage of **Claude Code / Pi / Hermes** — one developer ⇄ one agent that reasons, calls tools, and acts in a conversational loop. Its *mechanics* (worktree isolation, deterministic gates, spawning/driving vendor agents over ACP) are borrowed from **Gastown's control plane**. Its *differentiator* is the opinionated, **proof-gated** reliability workflow. The Gastown comparison ends at the interface: Orion is **chat-first**, not a fleet dashboard.
+
+**Control plane, not LLM client.** Orion holds no API key and makes no inference calls. The chat "brain" is the developer's **own vendor coding-agent CLI**, spawned as a subprocess and driven over ACP:
+- **Default:** Claude Code (native ACP), using the user's existing **Max/Pro login** (`CLAUDE_CONFIG_DIR` / OAuth keychain).
+- **Pluggable:** any ACP-compliant agent (e.g. Gemini `--acp`) selectable via an **agent preset**.
+- **Optional overrides:** a preset may set `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` (e.g. route to Groq) — Orion only sets the agent's process env; it never makes the call.
+- **Auth answer:** "accept an API key *or* use Max/Pro accounts" is satisfied entirely by the spawned agent's own auth + optional preset env. No Orion-side LLM SDK.
+
+**Agent presets + spawn (the foundation).** An agent-preset registry declares, per vendor agent: launch command, injected env, process detection, and ACP mode (`native` / `--acp` flag / `subcommand`). `agent-runtime` spawns the process (Conductor or specialist), injects env + the role template, and the TUI/Conductor drive it over ACP/A2A. Maps Gastown `config/agents.go` + `agent/provider`, **minus** the MITM proxy (denylist/cert issuance) and the quota/account-rotation subsystems — both deferred control-plane features, out of scope for V2.
+
+**Why this is the right call:** it leverages the intelligence *and* auth the developer already has, keeps Orion model-agnostic by construction (the commodity-model principle), and concentrates Orion's own code on the differentiated part — the proof-gated workflow + deterministic harness. The chat is the vehicle; the proof loop is the moat.
+
 ## 1. What changes vs. the current PRD
 
 - The `tui` module becomes a concrete **ACP client** (bubbletea front end implementing the client half of ACP), not just "talks to the Conductor over an internal event channel."
