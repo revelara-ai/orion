@@ -157,14 +157,20 @@ func probeContract(addr string, c testsynth.Contract) ProbeResult {
 		pr.Detail = "body not JSON"
 		return pr
 	}
-	ts, ok := m["time"]
+	// Generalized response contract (or-cfz): require the spec's key. The default
+	// (empty) is the time contract — key "time" whose value must be RFC3339 — so
+	// the time-service path is unchanged; any other key is asserted present.
+	key, rfc3339 := c.JSONKey()
+	val, ok := m[key]
 	if !ok {
-		pr.Detail = "missing time field"
+		pr.Detail = "missing " + key + " field"
 		return pr
 	}
-	if _, err := time.Parse(time.RFC3339, ts); err != nil {
-		pr.Detail = "time not RFC3339"
-		return pr
+	if rfc3339 {
+		if _, err := time.Parse(time.RFC3339, val); err != nil {
+			pr.Detail = key + " not RFC3339"
+			return pr
+		}
 	}
 	pr.ResponseContractSatisfied = true
 	pr.Detail = "ok"
