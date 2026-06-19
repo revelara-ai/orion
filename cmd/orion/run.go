@@ -101,7 +101,8 @@ func cmdRun(_ []string) int {
 		FaultClassesControlled: faultClasses(model),
 		Assumptions:            assumptions(model),
 	}
-	res := delivery.EvaluateBar(report.Outcome.Verdict, []string{"behavioral", "empirical", "hazard"}, reliabilitytier.PolicyFor(tier), env)
+	securityOK := proof.SecurityClean(buildDir)
+	res := delivery.EvaluateBar(report.Outcome.Verdict, []string{"behavioral", "empirical", "hazard"}, reliabilitytier.PolicyFor(tier), env, securityOK)
 	if res.Decision == delivery.Deliver {
 		envJSON, _ := json.Marshal(res.Envelope)
 		_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {

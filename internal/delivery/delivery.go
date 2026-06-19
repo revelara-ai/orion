@@ -43,7 +43,10 @@ type Result struct {
 // met only when the proof verdict is Accept AND (for tiers that require it) all
 // three modes converged. A met bar yields a human-mergeable delivery with the
 // operating envelope; otherwise it escalates with a named reason.
-func EvaluateBar(verdict truthalign.Verdict, presentModes []string, policy reliabilitytier.Policy, env OperatingEnvelope) Result {
+func EvaluateBar(verdict truthalign.Verdict, presentModes []string, policy reliabilitytier.Policy, env OperatingEnvelope, securityOK bool) Result {
+	if !securityOK {
+		return Result{Decision: Escalate, Reason: "security gate failed (hardcoded secret or unverified dependency)"}
+	}
 	if verdict != truthalign.Accept {
 		return Result{Decision: Escalate, Reason: fmt.Sprintf("proof verdict is %s, not Accept", verdict)}
 	}
