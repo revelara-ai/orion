@@ -162,6 +162,8 @@ func (t *Tx) Artifacts() *ArtifactRepo               { return &ArtifactRepo{t.tx
 func (t *Tx) FailureModes() *FailureModeRepo         { return &FailureModeRepo{t.tx} }
 func (t *Tx) Worktrees() *WorktreeRepo               { return &WorktreeRepo{t.tx} }
 func (t *Tx) PolarisContext() *PolarisContextRepo    { return &PolarisContextRepo{t.tx} }
+func (t *Tx) Deliveries() *DeliveryRepo              { return &DeliveryRepo{t.tx} }
+func (t *Tx) Escalations() *EscalationRepo           { return &EscalationRepo{t.tx} }
 
 // ── Store-level read helpers (read-model over the repositories) ──────────────
 

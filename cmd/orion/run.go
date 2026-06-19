@@ -10,10 +10,15 @@ import (
 
 	"github.com/revelara-ai/orion/internal/conductor"
 	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/delivery"
 	"github.com/revelara-ai/orion/internal/orchestrator"
+	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
+	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/internal/proof"
 	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
+	"github.com/revelara-ai/orion/internal/reliabilityscan"
+	"github.com/revelara-ai/orion/internal/reliabilitytier"
 	"github.com/revelara-ai/orion/internal/sandbox"
 )
 
@@ -87,8 +92,65 @@ func cmdRun(_ []string) int {
 		fmt.Fprintln(os.Stderr, "orion run: gate:", err)
 		return 1
 	}
-	fmt.Printf("run: task %s verdict=%s closed=%v\n", taskID, report.Outcome.Verdict, closed)
+
+	// Reliability scan → tier → deployment bar → deliver (human-mergeable) or escalate.
+	findings, _ := reliabilityscan.ScanAndRecord(ctx, store, proj.ID, buildDir)
+	tier := reliabilitytier.Classify(reliabilityscan.DeriveDimensions(findings))
+	env := delivery.OperatingEnvelope{
+		ProvenLoad:             provenLoad(es),
+		FaultClassesControlled: faultClasses(model),
+		Assumptions:            assumptions(model),
+	}
+	res := delivery.EvaluateBar(report.Outcome.Verdict, []string{"behavioral", "empirical", "hazard"}, reliabilitytier.PolicyFor(tier), env)
+	if res.Decision == delivery.Deliver {
+		envJSON, _ := json.Marshal(res.Envelope)
+		_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
+			epic, e := tx.Epics().LatestForProject(ctx, proj.ID)
+			if e != nil {
+				return e
+			}
+			_, e = tx.Deliveries().Create(ctx, epic.ID, string(envJSON))
+			return e
+		})
+	} else {
+		_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
+			_, e := tx.Escalations().Create(ctx, proj.ID, taskID, res.Reason)
+			return e
+		})
+	}
+	fmt.Printf("run: task %s verdict=%s closed=%v tier=%s delivery=%s\n", taskID, report.Outcome.Verdict, closed, tier, res.Decision)
 	return 0
+}
+
+// provenLoad renders the proven load from the spec's scale dimension.
+func provenLoad(es spec.ExecutableSpec) string {
+	if th, ok := completeness.ResolveScalePreset(es.Decisions["scale_profile"]); ok {
+		return fmt.Sprintf("%d req/%s", th.RequestsPerWindow, th.Window)
+	}
+	return "unspecified"
+}
+
+// faultClasses lists the hazard classes the ratified, controlled UCAs cover.
+func faultClasses(m stpa.Model) []string {
+	var out []string
+	for _, u := range m.UCAs {
+		if u.Disposition == stpa.DispositionControlled {
+			out = append(out, u.Hazard)
+		}
+	}
+	return out
+}
+
+// assumptions records the accepted-gap hazards + fallback-preset use so the
+// operating envelope states what was NOT proven.
+func assumptions(m stpa.Model) []string {
+	out := []string{"non-functional dimensions resolved via tier-default fallback presets"}
+	for _, u := range m.UCAs {
+		if u.Disposition == stpa.DispositionAcceptedGap {
+			out = append(out, "accepted gap: "+u.Hazard)
+		}
+	}
+	return out
 }
 
 // cmdProof implements `orion proof show --task <id> --mode <mode> [--json]`.

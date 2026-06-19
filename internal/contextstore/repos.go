@@ -658,6 +658,72 @@ func (r *FailureModeRepo) Record(ctx context.Context, projectID, category, compo
 	return existing, nil
 }
 
+// ── DeliveryRepo ─────────────────────────────────────────────────────────────
+
+// Delivery is a recorded delivery with its operating envelope.
+type Delivery struct {
+	ID                string
+	EpicID            string
+	OperatingEnvelope string // JSON
+	CreatedAt         string
+}
+
+type DeliveryRepo struct{ tx *sql.Tx }
+
+func (r *DeliveryRepo) Create(ctx context.Context, epicID, operatingEnvelope string) (string, error) {
+	id, now := newID(), nowRFC3339()
+	_, err := r.tx.ExecContext(ctx,
+		`INSERT INTO deliveries (id, epic_id, operating_envelope, created_at) VALUES (?,?,?,?)`,
+		id, epicID, operatingEnvelope, now)
+	if err != nil {
+		return "", fmt.Errorf("create delivery: %w", err)
+	}
+	return id, nil
+}
+
+// LatestForProject returns the most recent delivery for a project (via its epic).
+func (r *DeliveryRepo) LatestForProject(ctx context.Context, projectID string) (Delivery, bool, error) {
+	var d Delivery
+	err := r.tx.QueryRowContext(ctx,
+		`SELECT dl.id, dl.epic_id, dl.operating_envelope, dl.created_at
+		 FROM deliveries dl JOIN epics e ON dl.epic_id = e.id
+		 WHERE e.project_id=? ORDER BY dl.created_at DESC LIMIT 1`, projectID).
+		Scan(&d.ID, &d.EpicID, &d.OperatingEnvelope, &d.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Delivery{}, false, nil
+	}
+	if err != nil {
+		return Delivery{}, false, err
+	}
+	return d, true, nil
+}
+
+// ── EscalationRepo ───────────────────────────────────────────────────────────
+
+type EscalationRepo struct{ tx *sql.Tx }
+
+func (r *EscalationRepo) Create(ctx context.Context, projectID, taskID, reason string) (string, error) {
+	id, now := newID(), nowRFC3339()
+	var taskArg any
+	if taskID != "" {
+		taskArg = taskID
+	}
+	_, err := r.tx.ExecContext(ctx,
+		`INSERT INTO escalations (id, project_id, task_id, reason, resolved, created_at) VALUES (?,?,?,?,0,?)`,
+		id, projectID, taskArg, reason, now)
+	if err != nil {
+		return "", fmt.Errorf("create escalation: %w", err)
+	}
+	return id, nil
+}
+
+// CountForProject returns how many escalations a project has.
+func (r *EscalationRepo) CountForProject(ctx context.Context, projectID string) (int, error) {
+	var n int
+	err := r.tx.QueryRowContext(ctx, `SELECT count(*) FROM escalations WHERE project_id=?`, projectID).Scan(&n)
+	return n, err
+}
+
 // ── PolarisContextRepo ───────────────────────────────────────────────────────
 
 // PolarisCacheEntry is a cached Polaris payload (controls/knowledge/risks) with
