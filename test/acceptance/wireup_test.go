@@ -19,8 +19,8 @@ const modulePath = "github.com/revelara-ai/orion"
 // yet unreachable from cmd/orion. Per-task Done-when proved components, never the
 // wired system. This gate closes that gap.
 var deferredOrphans = map[string]string{
-	"internal/agentruntime":  "generation/spawn path — wired into the run loop + Conductor by or-6ck/or-owz",
-	"internal/a2a":           "agent-to-agent bus — reachable once agentruntime is wired (or-6ck/or-owz)",
+	"internal/agentruntime":  "generation/spawn path — wire orion run to AgentGenerator (or-s10)",
+	"internal/a2a":           "agent-to-agent bus — reachable once agentruntime is wired (or-s10)",
 	"internal/memory":        "tiered memory — wire into Conductor context assembly (or-b73)",
 	"internal/contextengine": "bundle assembler / poisoning defense — wire into Conductor context assembly (or-b73)",
 	"internal/tracker":       "store→beads projection — expose via command / on-demand (or-y0z)",
