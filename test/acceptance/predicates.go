@@ -86,8 +86,12 @@ var predicates = []predicate{
 	// ── Multi-modal proof converges; done-gate is real ───────────────────────
 	{"proof-converge", "state machine requires all three modes", kindGoTest,
 		`go test ./internal/conductor/... -run TestStateMachineRequiresAllThreeModes`},
-	{"proof-converge", "task not done while empirical rejects", kindCLI,
-		`TASK=$(orion plan show --json | jq -r '.tasks[0].id'); test -n "$TASK" && orion task show "$TASK" --json | jq -e '.status!="done"'`},
+	{"proof-converge", "task not done while empirical rejects", kindGoTest,
+		// Deterministic + order-independent: a report where behavioral passes but the
+		// empirical probe rejects converges Reject; the done-gate refuses closure and
+		// the task status stays != done (the CLI form was order-dependent and never
+		// exercised empirical rejection).
+		`go test ./internal/conductor/... -run TestProveAndCloseReportRejectsFailingProbe`},
 	{"proof-converge", "empirical: port open and contract satisfied", kindCLI,
 		// Self-contained: drive the full loop (submit→answer→approve→run) then read
 		// the empirical proof for the lead task. Independent of execution order.
