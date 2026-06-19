@@ -11,6 +11,7 @@ This document serves as the central directory for the Orion project documentatio
 - **[Orion Triad Reconciliation](./SPEC/Orion-Triad-Reconciliation.md)** — bridges the V1 Triad component specs (Rust/HTTP/beads/2-tier) to V2 (Go/local/Context-Store/3-mode). First design task; component specs are written from this + the V2 modules.
 - **[Orion ↔ Polaris API Contract](./SPEC/Orion-Polaris-API-Contract.md)** — audit of the Polaris OpenAPI spec mapping each `polaris-connector` capability to real endpoints (incl. the STPA `control-structure`/`ucas`/`loss-scenarios` family the hazard mode consumes).
 - **[Orion Worktree & Git Handling](./SPEC/Orion-Worktree-Git.md)** — how multi-agent editing is isolated and reconciled: one worktree per task (`worktrees-<repo>/<issue-id>`), git-plumbing wrapper, deletion-safety gates, filesystem-as-source-of-truth reconciliation. Simplified from Gastown (no polecat/rig/name-pool).
+- **[Orion TUI, ACP & the Conductor-as-Agent](./SPEC/Orion-TUI-ACP-Conductor.md)** — the TUI as the central orchestration surface via the Agent Client Protocol (ACP); the Conductor as a spawned, primed ACP agent (à la Gastown's Mayor) + a thin lifecycle manager; ACP↔A2A split; coordination/recovery patterns.
 - **[Archive](./archive/README.md)** — the V1 "reliability-debt remediation" PRD/SPEC, kept as historical artifacts (superseded by the manifesto + V2 PRD).
 
 ## 🏗️ System Architecture

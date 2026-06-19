@@ -92,6 +92,16 @@ Making the Conductor an LLM agent does **not** weaken the manifesto, because:
 | delegates to deacon / polecats | delegates to specialist agents (A2A) |
 | — (Gastown ACP = "Agent Control Protocol" transport) | Orion ACP = **Agent Client Protocol** (the open client↔agent standard) — TUI is a conformant client |
 
+## 6a. Coordination & recovery (from Gastown, simplified)
+
+Gastown's orchestration patterns, kept where they earn their place and folded into existing Orion modules (we deliberately do **not** adopt the Mayor/Deacon/Refinery/Polecat/rig hierarchy as distinct long-lived services):
+
+- **Priming / propulsion.** The Conductor and each specialist *prime* on spawn — resolve identity, load the role template, and pull their hooked task + context (`Recall`) from the Context Store — then run autonomously. No per-step human "go". The Conductor's hook scopes it to orchestration; a specialist's hook is one task.
+- **Pull-based coordination.** The Conductor dispatches but does not micromanage; workers pull task context from the Context Store (the source of truth). Coordination flows through the ledger, not push messages.
+- **Dispatch lock + idempotency.** Dispatch takes a per-task lock and is idempotent (normalize agent id, match an existing target) so a task is never double-assigned — complements path leases. *(Maps Gastown `sling` lock + idempotency.)*
+- **Capacity-bounded scheduling.** Bounded concurrent specialists via admission reservations (the `agent-runtime` worker pool / concurrency caps), with blocker-aware ready-task selection and a retry policy. *(Maps Gastown scheduler/capacity.)*
+- **Recovery / redispatch (Deacon-lite).** A lightweight watcher re-dispatches stranded tasks (hung/timed-out agent, failed integration) after a cooldown, with **model escalation** (retry on a more capable model before giving up) and finally **escalation to the Conductor/human**. Bounded by the iteration budget + degradation guard. → folds into the Conductor + circuit breaker; `integration` is the Refinery-equivalent merge queue; `agent-runtime` is the polecat-equivalent worker lifecycle.
+
 ## 7. Phasing
 
 | Capability | Phase |
