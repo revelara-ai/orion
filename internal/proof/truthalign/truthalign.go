@@ -36,6 +36,28 @@ type Outcome struct {
 	Dissenting []string // modes that did not pass
 }
 
+// RequiredModes are the three proof modes a full V2.0 verdict requires.
+var RequiredModes = []string{"behavioral", "empirical", "hazard"}
+
+// ConvergeFull is Converge with the requirement that ALL three modes are present.
+// A missing mode yields Inconclusive (the loop is not fully proven), never a
+// 2-of-3 Accept.
+func ConvergeFull(modes ...ModeResult) Outcome {
+	present := map[string]bool{}
+	for _, m := range modes {
+		present[m.Mode] = true
+	}
+	for _, r := range RequiredModes {
+		if !present[r] {
+			out := Converge(modes...)
+			out.Verdict = Inconclusive
+			out.Dissenting = append(out.Dissenting, "missing:"+r)
+			return out
+		}
+	}
+	return Converge(modes...)
+}
+
 // Converge aggregates per-mode results into a single Verdict:
 //   - no modes            → Inconclusive (nothing was proven)
 //   - any mode Inconclusive → Inconclusive (flakiness is not a pass)

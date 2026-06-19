@@ -12,6 +12,8 @@ import (
 
 	"github.com/revelara-ai/orion/internal/proof/behavioral"
 	"github.com/revelara-ai/orion/internal/proof/empirical"
+	"github.com/revelara-ai/orion/internal/proof/hazard"
+	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 )
@@ -60,6 +62,42 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (Repor
 				"port_open":                   pr.PortOpen,
 				"response_contract_satisfied": pr.ResponseContractSatisfied,
 				"detail":                      pr.Detail,
+			}},
+		},
+	}, nil
+}
+
+// ProveAll runs all three modes (behavioral + empirical + hazard) against the
+// artifact and the ratified STPA model, and converges requiring all three. This
+// is the full credibility-core verdict.
+func ProveAll(ctx context.Context, artifactDir string, c testsynth.Contract, model stpa.Model) (Report, error) {
+	bmr, err := behavioral.Prove(ctx, artifactDir, c, nil)
+	if err != nil {
+		return Report{}, err
+	}
+	emr, pr, err := empirical.Prove(ctx, artifactDir, c)
+	if err != nil {
+		return Report{}, err
+	}
+	hmr, hr, err := hazard.Prove(ctx, artifactDir, model)
+	if err != nil {
+		return Report{}, err
+	}
+	outcome := truthalign.ConvergeFull(bmr, emr, hmr)
+	return Report{
+		Outcome: outcome,
+		Modes: []ModeReport{
+			{Result: bmr},
+			{Result: emr, Detail: map[string]any{
+				"port_open":                   pr.PortOpen,
+				"response_contract_satisfied": pr.ResponseContractSatisfied,
+				"detail":                      pr.Detail,
+			}},
+			{Result: hmr, Detail: map[string]any{
+				"ucas_considered":   hr.UCAsConsidered,
+				"uncontrolled_ucas": hr.UncontrolledUCAs,
+				"accepted_gaps":     hr.AcceptedGaps,
+				"control_actions":   hr.ControlActions,
 			}},
 		},
 	}, nil
