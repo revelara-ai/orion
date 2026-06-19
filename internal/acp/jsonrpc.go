@@ -105,6 +105,13 @@ func (c *Conn) dispatch(ctx context.Context, m *Message) {
 }
 
 func (c *Conn) serve(ctx context.Context, m *Message) {
+	// A panic in a handler must not silently drop the response — that would block
+	// the caller's Call forever. Recover and answer with an error.
+	defer func() {
+		if r := recover(); r != nil {
+			_ = c.write(&Message{JSONRPC: "2.0", ID: m.ID, Error: &RPCError{Code: -32603, Message: fmt.Sprintf("handler panic: %v", r)}})
+		}
+	}()
 	resp := Message{JSONRPC: "2.0", ID: m.ID}
 	if c.handler == nil {
 		resp.Error = &RPCError{Code: -32601, Message: "method not found: " + m.Method}

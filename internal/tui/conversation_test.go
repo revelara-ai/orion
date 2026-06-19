@@ -1,48 +1,27 @@
 package tui
 
 import (
-	"context"
-	"net"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/revelara-ai/orion/internal/conductor"
-	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 )
 
-// wireConversation builds a Conversation wired to an in-process Conductor agent
-// over ACP (mirrors what Run() sets up), returning the model + a cleanup.
-func wireConversation(t *testing.T) (Conversation, *orchestrator.Conductor, func()) {
+// newTestConvo builds a sized Conversation with no live client (synthetic-message
+// tests drive Update directly; the async prompt path is covered by the conductor
+// + acceptance suites).
+func newTestConvo(t *testing.T) Conversation {
 	t.Helper()
-	store, err := contextstore.Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	oc := orchestrator.NewWithStore(store)
-	ctx, cancel := context.WithCancel(context.Background())
-	clientEnd, agentEnd := net.Pipe()
-	agent := conductor.NewConductorAgent(conductor.RoleTemplate{Project: "t"}, oc)
-	go func() { _ = agent.Serve(ctx, agentEnd, agentEnd) }()
-	client := NewACPClient(clientEnd, clientEnd, &ApprovalGate{}, nil)
-	go func() { _ = client.Run(ctx) }()
-	if err := client.Initialize(ctx); err != nil {
-		t.Fatalf("initialize: %v", err)
-	}
-	sid, err := client.SessionNew(ctx)
-	if err != nil {
-		t.Fatalf("session/new: %v", err)
-	}
-	m := NewConversation(client, sid, oc)
-	cleanup := func() { cancel(); _ = clientEnd.Close(); _ = agentEnd.Close(); _ = store.Close() }
-	return m, oc, cleanup
+	m := NewConversation(nil, "s1", orchestrator.New(), &programGate{})
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	return next.(Conversation)
 }
 
-func sendEnter(m Conversation, text string) Conversation {
-	m.input.SetValue(text)
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+func feed(m Conversation, msg tea.Msg) Conversation {
+	next, _ := m.Update(msg)
 	return next.(Conversation)
 }
 
@@ -55,101 +34,109 @@ func transcript(m Conversation) string {
 	return b.String()
 }
 
-// answerFromTranscript reads the most recent question and returns a valid answer.
-func answerFromTranscript(m Conversation) string {
-	for i := len(m.msgs) - 1; i >= 0; i-- {
-		l := strings.ToLower(m.msgs[i].text)
-		if strings.Contains(l, "ratify") || strings.Contains(l, "review the spec") {
-			return "y"
-		}
-		switch {
-		case strings.Contains(l, "format"):
-			return "json"
-		case strings.Contains(l, "timezone"):
-			return "UTC"
-		case strings.Contains(l, "port"):
-			return "8080"
-		case strings.Contains(l, "route"), strings.Contains(l, "path"):
-			return "/time"
-		}
-	}
-	return "x"
-}
-
 // TestConversationEmptyState: the fresh pane shows the empty-state prompt.
 func TestConversationEmptyState(t *testing.T) {
-	m, _, cleanup := wireConversation(t)
-	defer cleanup()
+	m := newTestConvo(t)
 	if !strings.Contains(m.View(), emptyState) {
 		t.Fatalf("empty-state prompt missing:\n%s", m.View())
 	}
 }
 
-// TestConversationDrivesCompletenessOverACP: typing an intent then answering the
-// streamed questions (one at a time) ratifies the spec — entirely over the ACP
-// seam, with the Conductor agent doing the questioning (or-6ck + or-owz).
-func TestConversationDrivesCompletenessOverACP(t *testing.T) {
-	m, oc, cleanup := wireConversation(t)
-	defer cleanup()
+// TestConversationStreamsUpdates: a streamed session/update is appended to the
+// transcript as it arrives (incremental streaming).
+func TestConversationStreamsUpdates(t *testing.T) {
+	m := newTestConvo(t)
+	m = feed(m, streamMsg{u: acp.Update{Kind: "agent_message", Text: "[functional] Which port?"}})
+	m = feed(m, streamMsg{u: acp.Update{Kind: "spec", Text: "functional port=8080"}})
+	if !strings.Contains(transcript(m), "Which port") {
+		t.Fatalf("streamed question not rendered:\n%s", transcript(m))
+	}
+	if !strings.Contains(transcript(m), "port=8080") {
+		t.Fatalf("streamed spec not rendered:\n%s", transcript(m))
+	}
+}
 
-	m = sendEnter(m, "build an http service that returns the current time")
-	if !strings.Contains(transcript(m), "?") {
-		t.Fatalf("no completeness question rendered after intent:\n%s", transcript(m))
+// TestConversationPermissionGate: a permission request surfaces an approval card
+// and the human's 'y' resolves the gate's reply channel with 'granted' — the
+// blocking ratify gate, driven from the UI without deadlock.
+func TestConversationPermissionGate(t *testing.T) {
+	m := newTestConvo(t)
+	reply := make(chan acp.PermissionResult, 1)
+	m = feed(m, permMsg{req: acp.PermissionRequest{Kind: "spec_ratify", Title: "Ratify the assembled spec?"}, reply: reply})
+
+	if m.pendingPerm == nil {
+		t.Fatal("permission request did not set a pending reply")
+	}
+	if !strings.Contains(m.View(), "ratify") {
+		t.Fatalf("approval card not rendered:\n%s", m.View())
 	}
 
-	guard := 0
-	for !strings.Contains(transcript(m), "ratified") {
-		m = sendEnter(m, answerFromTranscript(m))
-		guard++
-		if guard > 10 {
-			t.Fatalf("did not ratify — answers not advancing over ACP:\n%s", transcript(m))
+	// Human answers 'y' → the gate's reply channel receives 'granted'.
+	m.input.SetValue("y")
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
+	select {
+	case res := <-reply:
+		if res.Outcome != "granted" {
+			t.Fatalf("gate got %q, want granted", res.Outcome)
 		}
+	default:
+		t.Fatal("gate reply channel never received the decision")
 	}
-
-	// The spec really is accepted in the store (answers persisted via the agent).
-	sv, err := oc.SpecView(context.Background())
-	if err != nil {
-		t.Fatalf("spec view: %v", err)
-	}
-	if sv.Status != "accepted" {
-		t.Fatalf("spec status = %q, want accepted", sv.Status)
+	if m.pendingPerm != nil {
+		t.Fatal("pending permission not cleared after answer")
 	}
 }
 
-// TestConversationEmptyInputNotSent: an empty Enter adds no transcript line.
+// TestConversationPermissionDenyOnEdit: any non-'y' answer denies (so the
+// developer can then edit a field).
+func TestConversationPermissionDenyOnEdit(t *testing.T) {
+	m := newTestConvo(t)
+	reply := make(chan acp.PermissionResult, 1)
+	m = feed(m, permMsg{req: acp.PermissionRequest{Kind: "spec_ratify"}, reply: reply})
+	m.input.SetValue("e")
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
+	res := <-reply
+	if res.Outcome != "denied" {
+		t.Fatalf("non-y answer should deny, got %q", res.Outcome)
+	}
+}
+
+// TestConversationEmptyInputNotSent: an empty Enter adds nothing and dispatches
+// no command.
 func TestConversationEmptyInputNotSent(t *testing.T) {
-	m, _, cleanup := wireConversation(t)
-	defer cleanup()
+	m := newTestConvo(t)
 	before := len(m.msgs)
-	m = sendEnter(m, "   ")
-	if len(m.msgs) != before {
-		t.Fatalf("empty input produced transcript messages: %v", m.msgs)
+	m.input.SetValue("   ")
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Conversation)
+	if len(m.msgs) != before || cmd != nil {
+		t.Fatalf("empty input produced output: msgs=%d cmd=%v", len(m.msgs), cmd)
 	}
 }
 
-// TestConversationQuit: Ctrl+C quits.
+// TestConversationQuit: Ctrl+C quits and (if a permission is pending) unblocks the
+// gate goroutine with a denial.
 func TestConversationQuit(t *testing.T) {
-	m, _, cleanup := wireConversation(t)
-	defer cleanup()
+	m := newTestConvo(t)
+	reply := make(chan acp.PermissionResult, 1)
+	m = feed(m, permMsg{req: acp.PermissionRequest{}, reply: reply})
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	if !next.(Conversation).quitting {
-		t.Fatal("ctrl+c did not set quitting")
+	if !next.(Conversation).quitting || cmd == nil {
+		t.Fatal("ctrl+c should quit")
 	}
-	if cmd == nil {
-		t.Fatal("ctrl+c should return a quit command")
+	if res := <-reply; res.Outcome != "denied" {
+		t.Fatal("quit must unblock a pending gate with a denial")
 	}
 }
 
 // TestSpendIsSurfacedLiveInTUI: the always-on budget spend renders live.
 func TestSpendIsSurfacedLiveInTUI(t *testing.T) {
-	m, oc, cleanup := wireConversation(t)
-	defer cleanup()
+	m := newTestConvo(t)
 	if !strings.Contains(m.View(), "spend:") {
 		t.Fatalf("spend line missing:\n%s", m.View())
 	}
-	oc.Budget().Record(1234, 0.56)
-	view := m.View()
-	if !strings.Contains(view, "1234 tok") || !strings.Contains(view, "$0.56") {
-		t.Fatalf("live spend not surfaced:\n%s", view)
+	m.oc.Budget().Record(1234, 0.56)
+	if v := m.View(); !strings.Contains(v, "1234 tok") || !strings.Contains(v, "$0.56") {
+		t.Fatalf("live spend not surfaced:\n%s", v)
 	}
 }

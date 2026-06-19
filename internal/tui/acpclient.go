@@ -85,12 +85,13 @@ func (g *ApprovalGate) RequestPermission(_ context.Context, req acp.PermissionRe
 type ACPClient struct {
 	client *acp.Client
 	Panes  *PaneBuffers
-	Gate   *ApprovalGate
+	Gate   acp.PermissionGate
 }
 
 // NewACPClient builds the TUI ACP client over the agent's stdout (r) / stdin (w),
-// with an approval gate and a worktree-scoped fs.
-func NewACPClient(r io.Reader, w io.Writer, gate *ApprovalGate, fs acp.SandboxFS) *ACPClient {
+// with a permission gate (e.g. the programGate that asks the human, or an
+// ApprovalGate in tests) and a worktree-scoped fs.
+func NewACPClient(r io.Reader, w io.Writer, gate acp.PermissionGate, fs acp.SandboxFS) *ACPClient {
 	if gate == nil {
 		gate = &ApprovalGate{}
 	}
