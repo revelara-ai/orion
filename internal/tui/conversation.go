@@ -2,16 +2,18 @@
 // (bubbletea Model/Update/View, lipgloss styling, bubbles components). It is the
 // authoritative control plane and conversational surface (PRD UI Navigation).
 //
-// The Conversation pane narrows an intent into a ratified spec by asking the
-// blocking completeness questions ONE AT A TIME (or-lut): the developer types an
-// intent, then answers each required decision in turn; each answer is recorded
-// and the next question is shown. State transitions are kept testable so Update
-// can be driven by tea.Msg without a real terminal.
+// The Conversation pane is a thin ACP CLIENT (or-6ck): it sends the developer's
+// input to the spawned/primed Conductor agent as session/prompt and renders the
+// streamed session/update into the transcript. The completeness "agent skill"
+// (narrowing intent → ratified spec, one question at a time) lives server-side in
+// the Conductor agent (or-owz), not here. The Conductor is started automatically
+// in-process when the TUI launches — no separate `orion conductor start`.
 package tui
 
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -19,11 +21,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/revelara-ai/orion/internal/conductor"
 	"github.com/revelara-ai/orion/internal/orchestrator"
-	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 )
 
-const emptyState = "Conductor ready (in-process). Describe what you want to build, or point me at a repo or backlog."
+const emptyState = "Conductor ready (in-process, over ACP). Describe what you want to build."
 
 var (
 	bannerStyle = lipgloss.NewStyle().Bold(true)
@@ -32,47 +34,41 @@ var (
 	dimStyle    = lipgloss.NewStyle().Faint(true)
 )
 
-// convPhase tracks where the conversation is in the intent → spec flow.
-type convPhase int
-
-const (
-	phaseIntent convPhase = iota // awaiting the developer's intent
-	phaseGrill                   // asking the blocking completeness questions, one at a time
-	phaseReady                   // spec ratified; ready to build
-)
-
-// Conversation is the default pane: a conductor-backed chat loop.
+// Conversation is the default pane: a thin ACP client over the Conductor agent.
 type Conversation struct {
-	conductor *orchestrator.Conductor
+	client    *ACPClient
+	sid       string
+	oc        *orchestrator.Conductor // for the live budget line + interrupt
 	input     textinput.Model
-	lines     []string                    // rendered transcript lines
-	pending   []completeness.OpenDecision // blocking questions still to answer
-	phase     convPhase
+	lines     []string
+	shownConv int // pane lines already rendered into the transcript
+	shownPlan int
 	quitting  bool
 }
 
-// NewConversation builds the Conversation pane bound to a Conductor.
-func NewConversation(c *orchestrator.Conductor) Conversation {
+// NewConversation builds the pane bound to a connected ACP client + session.
+func NewConversation(client *ACPClient, sid string, oc *orchestrator.Conductor) Conversation {
 	ti := textinput.New()
 	ti.Placeholder = "your intent…"
 	ti.Prompt = "› "
 	ti.Focus()
 	ti.CharLimit = 0
-	return Conversation{conductor: c, input: ti}
+	return Conversation{client: client, sid: sid, oc: oc, input: ti}
 }
 
 // Init satisfies tea.Model and starts the input cursor blinking.
 func (m Conversation) Init() tea.Cmd { return textinput.Blink }
 
-// Update handles input. Enter advances the intent → grill → ready state machine;
-// Ctrl+C / Esc quit.
+// Update handles input. Enter sends the line to the Conductor over ACP and renders
+// the streamed reply; Ctrl+C / Esc cancel the session and quit.
 func (m Conversation) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			m.quitting = true
-			m.conductor.Interrupt() // cancel any in-flight work before exit
+			m.oc.Interrupt()
+			_ = m.client.Cancel(context.Background(), m.sid)
 			return m, tea.Quit
 		case tea.KeyEnter:
 			m.handleEnter()
@@ -84,118 +80,41 @@ func (m Conversation) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// handleEnter does exactly one thing for the current phase, so answers register
-// and the same question never re-appears.
+// handleEnter sends the current line as a session/prompt and renders the reply.
+// The in-process Conductor turn is fast (deterministic gate), so a synchronous
+// prompt keeps the UI simple; a slow spawned agent would move this to a tea.Cmd.
 func (m *Conversation) handleEnter() {
-	ctx := context.Background()
-	val := strings.TrimSpace(m.input.Value())
-
-	switch m.phase {
-	case phaseIntent:
-		if val == "" {
-			return
-		}
-		m.input.Reset()
-		m.say(youStyle, "you", val)
-		conf, err := m.conductor.Submit(ctx, val)
-		if err != nil {
-			m.say(orionStyle, "orion", "I can't take that yet: "+err.Error())
-			return
-		}
-		m.say(orionStyle, "orion", conf.Message)
-		m.pending = blockingDecisions(conf.OpenDecisions)
-		if len(m.pending) == 0 {
-			m.finalize(ctx)
-			return
-		}
-		m.phase = phaseGrill
-		m.input.Placeholder = "your answer…"
-		m.ask()
-
-	case phaseGrill:
-		od := m.pending[0]
-		if val == "" {
-			m.say(orionStyle, "orion", "That one needs an answer — "+od.Question)
-			return
-		}
-		m.input.Reset()
-		m.say(youStyle, "you", val)
-		if err := m.conductor.RecordAnswer(ctx, od.Key, val); err != nil {
-			m.say(orionStyle, "orion", "couldn't record that: "+err.Error())
-			return
-		}
-		// Recompute the remaining blocking questions from the persisted answers —
-		// the single source of "what's still open".
-		if sv, err := m.conductor.SpecView(ctx); err == nil {
-			m.pending = blockingDecisions(sv.OpenDecisions)
-		} else if len(m.pending) > 0 {
-			m.pending = m.pending[1:]
-		}
-		if len(m.pending) == 0 {
-			m.finalize(ctx)
-			return
-		}
-		m.ask()
-
-	case phaseReady:
-		if val == "" {
-			return
-		}
-		// A fresh line starts a new intent.
-		m.phase = phaseIntent
-		m.input.Placeholder = "your intent…"
-		m.handleEnter()
-	}
-}
-
-// ask shows the current question — one at a time, with its dimension and how many
-// remain — so the developer always knows exactly what to answer.
-func (m *Conversation) ask() {
-	od := m.pending[0]
-	m.say(dimStyle, "orion", fmt.Sprintf("[%s] %s   (%d to answer)", od.Dimension, od.Question, len(m.pending)))
-}
-
-// finalize ratifies the spec; fallback-eligible dimensions resolve to presets.
-func (m *Conversation) finalize(ctx context.Context) {
-	es, err := m.conductor.ApproveSpec(ctx)
-	if err != nil {
-		m.say(orionStyle, "orion", "I can't finalize the spec yet: "+err.Error())
+	text := strings.TrimSpace(m.input.Value())
+	if text == "" {
 		return
 	}
-	m.phase = phaseReady
-	m.pending = nil
-	m.input.Placeholder = "new intent…"
-	m.say(orionStyle, "orion", fmt.Sprintf("Spec ratified ✓  route=%s  format=%s  (hash %s)",
-		es.ResponseContract.Route, es.Decisions["response_format"], shortHash(es.Hash)))
-	m.say(dimStyle, "orion", "Ready to build — run `orion run` to generate + prove, or type a new intent.")
+	m.input.Reset()
+	m.lines = append(m.lines, youStyle.Render("you › ")+text)
+	if _, err := m.client.Prompt(context.Background(), m.sid, text); err != nil {
+		m.lines = append(m.lines, orionStyle.Render("orion › ")+"error: "+err.Error())
+		return
+	}
+	m.input.Placeholder = "your answer…"
+	m.renderNew()
 }
 
-func (m *Conversation) say(style lipgloss.Style, who, text string) {
-	m.lines = append(m.lines, style.Render(who+" › ")+text)
-}
-
-// blockingDecisions keeps only decisions with no safe default — the ones the
-// developer must answer. Fallback-eligible decisions resolve to presets at
-// approve time, so we never make the developer answer what we can default.
-func blockingDecisions(open []completeness.OpenDecision) []completeness.OpenDecision {
-	var b []completeness.OpenDecision
-	for _, od := range open {
-		if od.Fallback == "" {
-			b = append(b, od)
+// renderNew appends the pane updates streamed since the last turn.
+func (m *Conversation) renderNew() {
+	conv, plan, _, _ := m.client.Panes.Snapshot()
+	for _, l := range conv[m.shownConv:] {
+		m.lines = append(m.lines, orionStyle.Render("orion › ")+l)
+	}
+	m.shownConv = len(conv)
+	for _, l := range plan[m.shownPlan:] {
+		m.lines = append(m.lines, dimStyle.Render("plan › ")+l)
+		if strings.Contains(l, "ratified") {
+			m.input.Placeholder = "new intent…"
 		}
 	}
-	return b
+	m.shownPlan = len(plan)
 }
 
-func shortHash(h string) string {
-	if len(h) > 8 {
-		return h[:8]
-	}
-	return h
-}
-
-// View renders the pane: banner, transcript (or empty-state prompt), input,
-// budget, and a phase-aware hint.
+// View renders the pane: banner, transcript (or empty-state), input, budget, hint.
 func (m Conversation) View() string {
 	if m.quitting {
 		return "Goodbye.\n"
@@ -213,26 +132,14 @@ func (m Conversation) View() string {
 	b.WriteString("\n")
 	b.WriteString(dimStyle.Render(m.spendLine()))
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render(m.footerHint()))
+	b.WriteString(dimStyle.Render("enter: send · ctrl+c: quit"))
 	b.WriteString("\n")
 	return b.String()
 }
 
-// footerHint tailors the key hint to the current phase.
-func (m Conversation) footerHint() string {
-	switch m.phase {
-	case phaseGrill:
-		return "answer the question above · enter: submit · ctrl+c: quit"
-	case phaseReady:
-		return "type a new intent · `orion run` to build · ctrl+c: quit"
-	default:
-		return "describe your intent · enter: submit · ctrl+c: quit"
-	}
-}
-
 // spendLine renders the always-on, live budget spend (read fresh each frame).
 func (m Conversation) spendLine() string {
-	s := m.conductor.Budget().Snapshot()
+	s := m.oc.Budget().Snapshot()
 	line := fmt.Sprintf("spend: %d tok · $%.2f · %s", s.Tokens, s.Dollars, s.Wall.Round(time.Second))
 	if s.HasCeiling {
 		line += fmt.Sprintf(" · ceiling:%s", s.State)
@@ -240,11 +147,32 @@ func (m Conversation) spendLine() string {
 	return line
 }
 
-// Run launches the Conversation pane as a full-screen bubbletea program over the
-// real terminal. Used by cmd/orion.
-func Run(c *orchestrator.Conductor) error {
-	p := tea.NewProgram(NewConversation(c))
-	_, err := p.Run()
+// Run launches the Conversation pane. It auto-starts the Conductor agent
+// in-process and drives it over an ACP session — the developer never runs a
+// separate conductor command for the TUI.
+func Run(oc *orchestrator.Conductor) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	clientEnd, agentEnd := net.Pipe()
+	agent := conductor.NewConductorAgent(conductor.RoleTemplate{Project: "orion"}, oc)
+	go func() { _ = agent.Serve(ctx, agentEnd, agentEnd) }()
+
+	client := NewACPClient(clientEnd, clientEnd, &ApprovalGate{}, nil)
+	go func() { _ = client.Run(ctx) }()
+	if err := client.Initialize(ctx); err != nil {
+		return fmt.Errorf("tui: initialize conductor: %w", err)
+	}
+	sid, err := client.SessionNew(ctx)
+	if err != nil {
+		return fmt.Errorf("tui: open session: %w", err)
+	}
+
+	p := tea.NewProgram(NewConversation(client, sid, oc))
+	_, err = p.Run()
+	cancel()
+	_ = clientEnd.Close()
+	_ = agentEnd.Close()
 	if err != nil {
 		return fmt.Errorf("tui: %w", err)
 	}
