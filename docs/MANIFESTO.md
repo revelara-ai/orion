@@ -13,7 +13,7 @@ And Orion's reliability does not come from the model. Microservice architecture 
 
 Orion is the reliability layer of the agentic software development lifecycle.
 
-**In one line:** *Orion is a reliability-first multi-agent orchestration system with a strongly opinionated view of proof and validation — it drives a fleet of specialist agents from intent to working software, and treats output as done only when its correctness has been independently proven, never merely asserted.*
+**In one line:** *Orion is an agentic coding chat — in the lineage of Claude Code, Pi, and Hermes — driven by an opinionated, proof-gated workflow that turns a developer's intent into proven, operable software. It is a control plane for agents, not an LLM client: it spawns and drives the developer's own coding agent (over the Agent Client Protocol) and gates everything it produces with independent, multi-modal proof — done means proven, never merely asserted.*
 
 ---
 
@@ -218,7 +218,9 @@ On every task, Orion reasons with Polaris's controls catalog, knowledge base, an
 
 Orion is not a linter, a code-review tool, or a static analyzer. It does not run after the development loop; it governs the loop itself.
 
-Orion is not another coding agent. It orchestrates generating agents and assumes adversarial behavior from them. Its value is in the governance, the proof, and the operability — not in writing the code.
+Orion is not *just* another coding agent. Its interface is an agentic chat (Claude Code / Pi / Hermes lineage), but it does not write the code itself — it spawns and drives the developer's own coding agent and governs the loop, assuming adversarial behavior from the agents it orchestrates. Its value is the opinionated, proof-gated workflow, the governance, and the operability — not the generation.
+
+Orion is not an LLM client. It holds no API key and makes no inference calls; it spawns the developer's coding agent (which uses that agent's own auth — e.g. a Claude Max/Pro login) and drives it over the Agent Client Protocol. Orion's job is the workflow and the proof, not the model call.
 
 Orion is not a trust boundary wrapped around AI to contain it. It is a development loop designed to remain correct despite adversarial behavior from its own components.
 
