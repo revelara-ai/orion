@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/conductor"
 )
 
@@ -58,6 +60,18 @@ func cmdConductor(args []string) int {
 		}
 		return 0
 	case "stop":
+		// --red-button: trip the global emergency stop (revoke autonomy + block all
+		// mutating actions cross-process) before tearing the conductor down.
+		for _, a := range args[1:] {
+			if a == "--red-button" {
+				rb := actuation.RedButton{Path: filepath.Join(dir, "red_button")}
+				if err := rb.Engage(); err != nil {
+					fmt.Fprintln(os.Stderr, "orion conductor stop: red button:", err)
+					return 1
+				}
+				fmt.Println("RED BUTTON ENGAGED: autonomy revoked, mutating actions blocked")
+			}
+		}
 		if err := m.Stop(); err != nil {
 			fmt.Fprintln(os.Stderr, "orion conductor stop:", err)
 			return 1
