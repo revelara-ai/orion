@@ -94,9 +94,11 @@ var predicates = []predicate{
 		driveAndRun + `TASK=$(orion plan show --json | jq -r '.tasks[0].id') && ` +
 			`orion proof show --task "$TASK" --mode empirical --json | jq -e '.port_open and .response_contract_satisfied'`},
 	{"proof-converge", "hazard: UCAs considered, none uncontrolled", kindCLI,
-		`TASK=$(orion plan show --json | jq -r '.tasks[0].id'); test -n "$TASK" && orion proof show --task "$TASK" --mode hazard --json | jq -e '(.ucas_considered|length>0) and (.uncontrolled_ucas|length==0)'`},
+		driveAndRun + `TASK=$(orion plan show --json | jq -r '.tasks[0].id') && ` +
+			`orion proof show --task "$TASK" --mode hazard --json | jq -e '(.ucas_considered|length>0) and (.uncontrolled_ucas|length==0)'`},
 	{"proof-converge", "hazard: every control action has a test", kindCLI,
-		`TASK=$(orion plan show --json | jq -r '.tasks[0].id'); test -n "$TASK" && orion proof show --task "$TASK" --mode hazard --json | jq -e '(.control_actions|length>0) and ([.control_actions[]|select(.test==null)]|length==0)'`},
+		driveAndRun + `TASK=$(orion plan show --json | jq -r '.tasks[0].id') && ` +
+			`orion proof show --task "$TASK" --mode hazard --json | jq -e '(.control_actions|length>0) and ([.control_actions[]|select(.test==null)]|length==0)'`},
 	{"proof-converge", "control-loop feedback validated", kindGoTest,
 		`go test ./internal/proof/hazard/... -run TestControlLoopFeedbackValidated`},
 

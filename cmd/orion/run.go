@@ -12,6 +12,7 @@ import (
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/proof"
+	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/sandbox"
 )
@@ -68,7 +69,15 @@ func cmdRun(_ []string) int {
 		return 1
 	}
 
-	report, err := proof.Prove(ctx, buildDir, testsynth.Contract{Route: gs.Route, Format: gs.Format, TimeZone: gs.TimeZone})
+	// Load the developer-ratified STPA model for hazard proof; for the canonical
+	// time-service path, fall back to the golden ratified model and persist it.
+	proj, _, _ := store.CurrentProjectSpec(ctx)
+	model, ok, _ := stpa.Load(ctx, store, proj.ID)
+	if !ok {
+		model = stpa.RatifiedTimeServiceModel()
+		_ = stpa.Save(ctx, store, proj.ID, model)
+	}
+	report, err := proof.ProveAll(ctx, buildDir, testsynth.Contract{Route: gs.Route, Format: gs.Format, TimeZone: gs.TimeZone}, model)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion run: proof:", err)
 		return 1

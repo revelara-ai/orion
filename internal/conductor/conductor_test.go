@@ -90,6 +90,39 @@ func TestStateMachineRequiresProofToClose(t *testing.T) {
 	}
 }
 
+// TestStateMachineRequiresAllThreeModes: the state machine closes a task only on
+// a full behavioral+empirical+hazard Accept; a 2-of-3 report (missing hazard)
+// converges Inconclusive and does not close.
+func TestStateMachineRequiresAllThreeModes(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	sm := New(s)
+
+	b := truthalign.ModeResult{Mode: "behavioral", Pass: true, Metrics: map[string]float64{"run_count": 1}}
+	e := truthalign.ModeResult{Mode: "empirical", Pass: true, Metrics: map[string]float64{"run_count": 1}}
+	h := truthalign.ModeResult{Mode: "hazard", Pass: true, Metrics: map[string]float64{"run_count": 1}}
+
+	// Missing hazard → Inconclusive → not closed.
+	twoMode := seedTask(t, s)
+	report2 := proof.Report{Outcome: truthalign.ConvergeFull(b, e), Modes: []proof.ModeReport{{Result: b}, {Result: e}}}
+	if closed, _ := sm.ProveAndCloseReport(ctx, twoMode, report2); closed {
+		t.Fatal("2-of-3 modes must not close the task")
+	}
+	if taskStatus(t, s, twoMode) == "done" {
+		t.Fatal("task done with only 2 modes")
+	}
+
+	// All three → Accept → closed.
+	threeMode := seedTask(t, s)
+	report3 := proof.Report{Outcome: truthalign.ConvergeFull(b, e, h), Modes: []proof.ModeReport{{Result: b}, {Result: e}, {Result: h}}}
+	if closed, err := sm.ProveAndCloseReport(ctx, threeMode, report3); err != nil || !closed {
+		t.Fatalf("all three modes should close: closed=%v err=%v", closed, err)
+	}
+	if taskStatus(t, s, threeMode) != "done" {
+		t.Fatal("task not done after full 3-mode Accept")
+	}
+}
+
 // TestProveAndCloseReportRejectsFailingProbe: an artifact that passes behavioral
 // but fails the empirical probe converges Reject and is NOT closed (the 2-mode
 // gate — passing tests are not enough).
