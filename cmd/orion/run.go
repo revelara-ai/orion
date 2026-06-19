@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/conductor"
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/delivery"
@@ -103,6 +104,10 @@ func cmdRun(_ []string) int {
 	}
 	securityOK := proof.SecurityClean(buildDir)
 	res := delivery.EvaluateBar(report.Outcome.Verdict, []string{"behavioral", "empirical", "hazard"}, reliabilitytier.PolicyFor(tier), env, securityOK)
+	// Red Button (or-utm): while engaged, autonomy is revoked — never auto-deliver.
+	if rb := (actuation.RedButton{Path: filepath.Join(store.Dir(), "red_button")}); res.Decision == delivery.Deliver && rb.AutonomyRevoked() {
+		res = delivery.Result{Decision: delivery.Escalate, Reason: "red button engaged: autonomy revoked, human delivery required"}
+	}
 	if res.Decision == delivery.Deliver {
 		envJSON, _ := json.Marshal(res.Envelope)
 		runbook := delivery.GenerateRunbook(es, model, env)
