@@ -1,13 +1,14 @@
 // Package tui is Orion's terminal UI, built on the charmbracelet stack
-// (bubbletea Model/Update/View, lipgloss styling, bubbles components). It is the
-// authoritative control plane and conversational surface (PRD UI Navigation).
+// (bubbletea Model/Update/View, lipgloss styling, bubbles viewport/textinput). It
+// is the authoritative control plane and conversational surface (PRD UI
+// Navigation; SPEC §0 "chat-first, not a fleet dashboard").
 //
-// The Conversation pane is a thin ACP CLIENT (or-6ck): it sends the developer's
-// input to the spawned/primed Conductor agent as session/prompt and renders the
-// streamed session/update into the transcript. The completeness "agent skill"
-// (narrowing intent → ratified spec, one question at a time) lives server-side in
-// the Conductor agent (or-owz), not here. The Conductor is started automatically
-// in-process when the TUI launches — no separate `orion conductor start`.
+// The Conversation pane is a thin ACP CLIENT: it sends the developer's input to
+// the auto-started, primed Conductor agent as session/prompt and renders the
+// streamed session/update as a real chat — role-aligned message blocks, question
+// cards, and a bordered spec-review card (or-2r8). The completeness "agent skill"
+// (narrowing intent → reviewable spec → ratify) lives server-side in the Conductor
+// agent (or-owz, or-owo).
 package tui
 
 import (
@@ -18,9 +19,11 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/conductor"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 )
@@ -28,22 +31,36 @@ import (
 const emptyState = "Conductor ready (in-process, over ACP). Describe what you want to build."
 
 var (
-	bannerStyle = lipgloss.NewStyle().Bold(true)
-	youStyle    = lipgloss.NewStyle().Faint(true)
-	orionStyle  = lipgloss.NewStyle().Bold(true)
-	dimStyle    = lipgloss.NewStyle().Faint(true)
+	bannerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63"))
+	orionLabel  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
+	orionText   = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	youBlock    = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Align(lipgloss.Right)
+	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	planStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42"))
+	specCard    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1)
+	cardTitle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
 )
 
-// Conversation is the default pane: a thin ACP client over the Conductor agent.
+// msg is one rendered turn in the conversation.
+type msg struct {
+	role string // "you" | "orion"
+	kind string // "" | agent_thought | agent_message | spec | plan
+	text string
+}
+
+// Conversation is the default pane: a chat client over the Conductor agent.
 type Conversation struct {
-	client    *ACPClient
-	sid       string
-	oc        *orchestrator.Conductor // for the live budget line + interrupt
-	input     textinput.Model
-	lines     []string
-	shownConv int // pane lines already rendered into the transcript
-	shownPlan int
-	quitting  bool
+	client *ACPClient
+	sid    string
+	oc     *orchestrator.Conductor
+
+	input    textinput.Model
+	vp       viewport.Model
+	msgs     []msg
+	width    int
+	height   int
+	ready    bool
+	quitting bool
 }
 
 // NewConversation builds the pane bound to a connected ACP client + session.
@@ -59,12 +76,28 @@ func NewConversation(client *ACPClient, sid string, oc *orchestrator.Conductor) 
 // Init satisfies tea.Model and starts the input cursor blinking.
 func (m Conversation) Init() tea.Cmd { return textinput.Blink }
 
-// Update handles input. Enter sends the line to the Conductor over ACP and renders
-// the streamed reply; Ctrl+C / Esc cancel the session and quit.
+// Update handles input + window sizing. Enter sends the line to the Conductor over
+// ACP and renders the streamed reply; Ctrl+C / Esc cancel and quit; other keys go
+// to the input and the viewport (scrollback).
 func (m Conversation) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
+	switch t := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = t.Width, t.Height
+		bodyH := t.Height - 6 // banner + input + status + hint
+		if bodyH < 3 {
+			bodyH = 3
+		}
+		if !m.ready {
+			m.vp = viewport.New(t.Width, bodyH)
+			m.ready = true
+		} else {
+			m.vp.Width, m.vp.Height = t.Width, bodyH
+		}
+		m.vp.SetContent(m.renderTranscript())
+		m.vp.GotoBottom()
+		return m, nil
 	case tea.KeyMsg:
-		switch msg.Type {
+		switch t.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			m.quitting = true
 			m.oc.Interrupt()
@@ -75,64 +108,90 @@ func (m Conversation) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	var cmd tea.Cmd
+	var cmd, vcmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
-	return m, cmd
+	m.vp, vcmd = m.vp.Update(msg)
+	return m, tea.Batch(cmd, vcmd)
 }
 
 // handleEnter sends the current line as a session/prompt and renders the reply.
-// The in-process Conductor turn is fast (deterministic gate), so a synchronous
-// prompt keeps the UI simple; a slow spawned agent would move this to a tea.Cmd.
 func (m *Conversation) handleEnter() {
 	text := strings.TrimSpace(m.input.Value())
 	if text == "" {
 		return
 	}
 	m.input.Reset()
-	m.lines = append(m.lines, youStyle.Render("you › ")+text)
-	if _, err := m.client.Prompt(context.Background(), m.sid, text); err != nil {
-		m.lines = append(m.lines, orionStyle.Render("orion › ")+"error: "+err.Error())
-		return
-	}
-	m.input.Placeholder = "your answer…"
-	m.renderNew()
-}
+	m.msgs = append(m.msgs, msg{role: "you", text: text})
 
-// renderNew appends the pane updates streamed since the last turn.
-func (m *Conversation) renderNew() {
-	conv, plan, _, _ := m.client.Panes.Snapshot()
-	for _, l := range conv[m.shownConv:] {
-		m.lines = append(m.lines, orionStyle.Render("orion › ")+l)
+	var got []acp.Update
+	_, err := m.client.PromptWithUpdates(context.Background(), m.sid, text, func(u acp.Update) {
+		got = append(got, u)
+	})
+	if err != nil {
+		m.msgs = append(m.msgs, msg{role: "orion", text: "error: " + err.Error()})
 	}
-	m.shownConv = len(conv)
-	for _, l := range plan[m.shownPlan:] {
-		m.lines = append(m.lines, dimStyle.Render("plan › ")+l)
-		if strings.Contains(l, "ratified") {
+	for _, u := range got {
+		m.msgs = append(m.msgs, msg{role: "orion", kind: u.Kind, text: u.Text})
+		if u.Kind == "plan" && strings.Contains(u.Text, "ratified") {
 			m.input.Placeholder = "new intent…"
+		} else {
+			m.input.Placeholder = "your reply…"
 		}
 	}
-	m.shownPlan = len(plan)
+	if m.ready {
+		m.vp.SetContent(m.renderTranscript())
+		m.vp.GotoBottom()
+	}
 }
 
-// View renders the pane: banner, transcript (or empty-state), input, budget, hint.
+// renderTranscript styles the whole conversation for the viewport.
+func (m Conversation) renderTranscript() string {
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
+	var b strings.Builder
+	for _, mm := range m.msgs {
+		b.WriteString(m.renderMsg(mm, w))
+		b.WriteString("\n\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func (m Conversation) renderMsg(mm msg, w int) string {
+	if mm.role == "you" {
+		return youBlock.Width(w).Render(mm.text + "  ⟵ you")
+	}
+	switch mm.kind {
+	case "spec":
+		card := cardTitle.Render("spec — review") + "\n" + mm.text
+		return "  " + orionLabel.Render("◇ Orion") + "\n" + specCard.Render(card)
+	case "plan":
+		return "  " + orionLabel.Render("◇ Orion") + "\n  " + planStyle.Render(mm.text)
+	default:
+		return "  " + orionLabel.Render("◇ Orion") + "\n  " + orionText.Render(mm.text)
+	}
+}
+
+// View renders the pane: banner, scrollable transcript, input, budget, hint.
 func (m Conversation) View() string {
 	if m.quitting {
 		return "Goodbye.\n"
 	}
+	body := m.vp.View()
+	if !m.ready || len(m.msgs) == 0 {
+		body = dimStyle.Render(emptyState)
+	}
 	var b strings.Builder
 	b.WriteString(bannerStyle.Render("Orion — Conversation"))
-	b.WriteString("\n\n")
-	if len(m.lines) == 0 {
-		b.WriteString(dimStyle.Render(emptyState))
-	} else {
-		b.WriteString(strings.Join(m.lines, "\n"))
-	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+	b.WriteString(body)
+	b.WriteString("\n")
 	b.WriteString(m.input.View())
 	b.WriteString("\n")
 	b.WriteString(dimStyle.Render(m.spendLine()))
-	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("enter: send · ctrl+c: quit"))
+	b.WriteString("  ·  ")
+	b.WriteString(dimStyle.Render("enter send · ↑/↓ scroll · ctrl+c quit"))
 	b.WriteString("\n")
 	return b.String()
 }
@@ -148,8 +207,7 @@ func (m Conversation) spendLine() string {
 }
 
 // Run launches the Conversation pane. It auto-starts the Conductor agent
-// in-process and drives it over an ACP session — the developer never runs a
-// separate conductor command for the TUI.
+// in-process and drives it over an ACP session — no separate conductor command.
 func Run(oc *orchestrator.Conductor) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -168,7 +226,7 @@ func Run(oc *orchestrator.Conductor) error {
 		return fmt.Errorf("tui: open session: %w", err)
 	}
 
-	p := tea.NewProgram(NewConversation(client, sid, oc))
+	p := tea.NewProgram(NewConversation(client, sid, oc), tea.WithAltScreen())
 	_, err = p.Run()
 	cancel()
 	_ = clientEnd.Close()

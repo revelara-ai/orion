@@ -46,12 +46,19 @@ func sendEnter(m Conversation, text string) Conversation {
 	return next.(Conversation)
 }
 
-func transcript(m Conversation) string { return strings.Join(m.lines, "\n") }
+func transcript(m Conversation) string {
+	var b strings.Builder
+	for _, mm := range m.msgs {
+		b.WriteString(mm.text)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
 
 // answerFromTranscript reads the most recent question and returns a valid answer.
 func answerFromTranscript(m Conversation) string {
-	for i := len(m.lines) - 1; i >= 0; i-- {
-		l := strings.ToLower(m.lines[i])
+	for i := len(m.msgs) - 1; i >= 0; i-- {
+		l := strings.ToLower(m.msgs[i].text)
 		if strings.Contains(l, "ratify") || strings.Contains(l, "review the spec") {
 			return "y"
 		}
@@ -113,10 +120,10 @@ func TestConversationDrivesCompletenessOverACP(t *testing.T) {
 func TestConversationEmptyInputNotSent(t *testing.T) {
 	m, _, cleanup := wireConversation(t)
 	defer cleanup()
-	before := len(m.lines)
+	before := len(m.msgs)
 	m = sendEnter(m, "   ")
-	if len(m.lines) != before {
-		t.Fatalf("empty input produced transcript lines: %v", m.lines)
+	if len(m.msgs) != before {
+		t.Fatalf("empty input produced transcript messages: %v", m.msgs)
 	}
 }
 
