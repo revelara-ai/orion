@@ -140,6 +140,17 @@ type Dispatcher struct {
 	store   *contextstore.Store
 	timeout time.Duration
 	sem     chan struct{} // nil = unbounded
+
+	mu       sync.Mutex
+	inflight map[string]*dispatchCall // per-task dispatch lock (no double-assign)
+}
+
+// dispatchCall is a single in-flight assignment for a task; concurrent dispatches
+// of the same task wait on it and share its result (singleflight).
+type dispatchCall struct {
+	done  chan struct{}
+	claim a2a.EvidenceClaim
+	err   error
 }
 
 // Option configures a Dispatcher.
@@ -160,7 +171,7 @@ func NewDispatcher(reg *Registry, store *contextstore.Store, timeout time.Durati
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
-	d := &Dispatcher{reg: reg, store: store, timeout: timeout}
+	d := &Dispatcher{reg: reg, store: store, timeout: timeout, inflight: map[string]*dispatchCall{}}
 	for _, o := range opts {
 		o(d)
 	}
@@ -171,8 +182,32 @@ func NewDispatcher(reg *Registry, store *contextstore.Store, timeout time.Durati
 // and records a task_attempt carrying the untrusted EvidenceClaim. It does NOT
 // produce a verdict — proof is computed later, independently, by the proof
 // domain.
-func (d *Dispatcher) Dispatch(ctx context.Context, req a2a.Request, idempotencyKey string) (a2a.EvidenceClaim, error) {
+func (d *Dispatcher) Dispatch(ctx context.Context, req a2a.Request, idempotencyKey string) (claim a2a.EvidenceClaim, err error) {
 	taskID := req.Obligation.TaskID
+
+	// Per-task dispatch lock + idempotency: if a dispatch for this task is already
+	// in flight, share its single assignment rather than spawning a second agent
+	// (no double-assign across concurrent dispatch; complements path leases).
+	d.mu.Lock()
+	if c, ok := d.inflight[taskID]; ok {
+		d.mu.Unlock()
+		select {
+		case <-c.done:
+			return c.claim, c.err
+		case <-ctx.Done():
+			return a2a.EvidenceClaim{}, ctx.Err()
+		}
+	}
+	call := &dispatchCall{done: make(chan struct{})}
+	d.inflight[taskID] = call
+	d.mu.Unlock()
+	defer func() {
+		call.claim, call.err = claim, err
+		d.mu.Lock()
+		delete(d.inflight, taskID)
+		d.mu.Unlock()
+		close(call.done)
+	}()
 
 	// Bounded concurrency: acquire a dispatch slot (backpressure when full),
 	// honoring cancellation while waiting.
@@ -201,7 +236,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req a2a.Request, idempotencyK
 		return h.agent.Run(runCtx, r)
 	}))
 
-	claim, err := bus.Send(req)
+	claim, err = bus.Send(req)
 	if err != nil {
 		h.setStatus(StatusFailed)
 		return a2a.EvidenceClaim{}, fmt.Errorf("dispatch %s: %w", req.Role, err)
