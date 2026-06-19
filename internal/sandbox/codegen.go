@@ -92,12 +92,34 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
+
+var requestsServed atomic.Int64
+
+// instrument adds structured logging, latency metrics, and request-id trace
+// propagation around a handler (operability: the 3 a.m. test).
+func instrument(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rid := r.Header.Get("X-Request-ID")
+		if rid == "" {
+			rid = start.Format("20060102T150405.000000000")
+		}
+		w.Header().Set("X-Request-ID", rid)
+		next.ServeHTTP(w, r)
+		slog.Info("request",
+			"method", r.Method, "path", r.URL.Path, "request_id", rid,
+			"latency_ms", time.Since(start).Milliseconds(),
+			"requests_served", requestsServed.Add(1))
+	})
+}
 
 func location() *time.Location {
 	{{if eq .TimeZone "UTC"}}return time.UTC{{else}}loc, err := time.LoadLocation({{printf "%q" .TimeZone}})
@@ -116,8 +138,9 @@ func handleTime(w http.ResponseWriter, r *http.Request) {
 {{end}}}
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	mux := http.NewServeMux()
-	mux.HandleFunc({{printf "%q" .Route}}, handleTime)
+	mux.Handle({{printf "%q" .Route}}, instrument(http.HandlerFunc(handleTime)))
 
 	addr := ":{{.Port}}"
 	if p := os.Getenv("PORT"); p != "" {

@@ -55,6 +55,14 @@ func cmdDeliver(args []string) int {
 		out["decision"] = "deliver"
 		out["human_mergeable"] = true
 		out["operating_envelope"] = json.RawMessage(del.OperatingEnvelope)
+		// The runbook JSON is {"sections": {...}}; surface .sections at top level so
+		// `deliver show --runbook` exposes them.
+		var rb struct {
+			Sections map[string]string `json:"sections"`
+		}
+		if json.Unmarshal([]byte(del.Runbook), &rb) == nil {
+			out["sections"] = rb.Sections
+		}
 	} else {
 		out["decision"] = "escalate"
 		out["human_mergeable"] = false
