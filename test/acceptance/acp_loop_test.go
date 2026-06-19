@@ -6,12 +6,15 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/agentruntime"
 	"github.com/revelara-ai/orion/internal/conductor"
+	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/proof"
 	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
@@ -19,6 +22,24 @@ import (
 	"github.com/revelara-ai/orion/internal/sandbox"
 	"github.com/revelara-ai/orion/internal/tui"
 )
+
+// answerForQuestion maps a streamed completeness question to a valid answer (the
+// human reads + types these in the real TUI).
+func answerForQuestion(q string) string {
+	ql := strings.ToLower(q)
+	switch {
+	case strings.Contains(ql, "format"):
+		return "json"
+	case strings.Contains(ql, "timezone"):
+		return "UTC"
+	case strings.Contains(ql, "port"):
+		return "8080"
+	case strings.Contains(ql, "route"), strings.Contains(ql, "path"):
+		return "/time"
+	default:
+		return "unspecified"
+	}
+}
 
 // fixtureACPDriver returns an ACPDriver whose "agent" authors a real, buildable
 // service for req — written through the ACP fs/write_text_file seam — so the
@@ -88,11 +109,16 @@ func TestV20LoopOverACP(t *testing.T) {
 		return acp.PermissionResult{Outcome: "granted"}
 	}}
 
-	// --- Phase 1: ACP conversation (TUI client ⇄ primed Conductor agent) ---
+	// --- Phase 1: agent-driven completeness conversation over ACP ---
+	store, err := contextstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
 	cEnd, aEnd := net.Pipe()
 	defer cEnd.Close()
 	defer aEnd.Close()
-	ca := conductor.ConductorAgent{Role: conductor.RoleTemplate{Project: "smoke", Tier: "standard"}}
+	ca := conductor.NewConductorAgent(conductor.RoleTemplate{Project: "smoke", Tier: "standard"}, orchestrator.NewWithStore(store))
 	go ca.Serve(ctx, aEnd, aEnd)
 	client := tui.NewACPClient(cEnd, cEnd, gate, nil)
 	go client.Run(ctx)
@@ -103,12 +129,33 @@ func TestV20LoopOverACP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acp session/new: %v", err)
 	}
+	// Intent, then answer each streamed question until the spec ratifies — all
+	// driven through the ACP seam by the Conductor agent (the completeness skill).
 	if _, err := client.Prompt(ctx, sid, "build an http service that returns the current time"); err != nil {
-		t.Fatalf("acp prompt: %v", err)
+		t.Fatalf("acp intent: %v", err)
 	}
-	conv, plan, _, _ := client.Panes.Snapshot()
-	if len(conv) == 0 || len(plan) == 0 {
-		t.Fatalf("ACP conversation did not render panes (conv=%d plan=%d)", len(conv), len(plan))
+	ratified := false
+	for i := 0; i < 8 && !ratified; i++ {
+		_, plan, _, _ := client.Panes.Snapshot()
+		for _, line := range plan {
+			if strings.Contains(line, "ratified") {
+				ratified = true
+			}
+		}
+		if ratified {
+			break
+		}
+		conv, _, _, _ := client.Panes.Snapshot()
+		if len(conv) == 0 {
+			t.Fatal("no question streamed to the Conversation pane")
+		}
+		if _, err := client.Prompt(ctx, sid, answerForQuestion(conv[len(conv)-1])); err != nil {
+			t.Fatalf("acp answer: %v", err)
+		}
+	}
+	if !ratified {
+		conv, plan, _, _ := client.Panes.Snapshot()
+		t.Fatalf("completeness conversation did not ratify over ACP; conv=%v plan=%v", conv, plan)
 	}
 
 	// --- Phase 2: session/request_permission gates honored over ACP ---

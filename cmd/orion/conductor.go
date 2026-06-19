@@ -11,6 +11,8 @@ import (
 
 	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/conductor"
+	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/orchestrator"
 )
 
 func nowStamp() string { return time.Now().UTC().Format(time.RFC3339) }
@@ -36,11 +38,18 @@ func cmdConductor(args []string) int {
 	switch args[0] {
 	case "acp":
 		// Self-hosted headless Conductor daemon: serve the ACP agent over stdio (a
-		// connected client — the TUI — drives it), but stay alive until signalled so
-		// the lifecycle manager can supervise it even before a client attaches.
+		// connected client — the TUI — drives it), backed by the store-aware
+		// orchestrator so the completeness conversation is real. Stays alive until
+		// signalled so the lifecycle manager can supervise it before a client attaches.
+		store, err := contextstore.Open(dir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "orion conductor acp:", err)
+			return 1
+		}
+		defer store.Close()
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		ca := conductor.ConductorAgent{Role: conductor.RoleTemplate{Project: "orion"}}
+		ca := conductor.NewConductorAgent(conductor.RoleTemplate{Project: "orion"}, orchestrator.NewWithStore(store))
 		go func() { _ = ca.Serve(ctx, os.Stdin, os.Stdout) }()
 		<-ctx.Done()
 		return 0
