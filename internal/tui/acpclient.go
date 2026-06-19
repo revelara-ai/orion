@@ -116,6 +116,20 @@ func (a *ACPClient) Prompt(ctx context.Context, sessionID, text string) (acp.Pro
 	return a.client.Prompt(ctx, sessionID, text, a.Panes.Route)
 }
 
+// PromptWithUpdates is Prompt plus a caller sink that receives each streamed
+// update (with its kind) — used by the chat renderer to render spec cards,
+// questions, and plans distinctly. The sink runs in the read loop; because Prompt
+// is synchronous, all updates are delivered before it returns (happens-before via
+// the response), so a caller may safely collect them and read after Prompt.
+func (a *ACPClient) PromptWithUpdates(ctx context.Context, sessionID, text string, onUpdate func(acp.Update)) (acp.PromptResult, error) {
+	return a.client.Prompt(ctx, sessionID, text, func(u acp.Update) {
+		a.Panes.Route(u)
+		if onUpdate != nil {
+			onUpdate(u)
+		}
+	})
+}
+
 // Cancel interrupts the session (the interrupt / Red Button path).
 func (a *ACPClient) Cancel(ctx context.Context, sessionID string) error {
 	return a.client.Cancel(ctx, sessionID)
