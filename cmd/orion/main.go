@@ -55,6 +55,8 @@ func run(args []string) int {
 			return cmdProof(args[1:])
 		case "deliver":
 			return cmdDeliver(args[1:])
+		case "conductor":
+			return cmdConductor(args[1:])
 		case "deps":
 			return cmdDeps(args[1:])
 		case "login":
