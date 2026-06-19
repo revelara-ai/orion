@@ -112,7 +112,7 @@ var predicates = []predicate{
 	{"security", "hallucinated dependency rejected", kindCLI,
 		`orion deps verify github.com/nonexistent-org/nonexistent-pkg-xyzzy-42 ; test $? -ne 0`},
 	{"security", "pre-registered typosquat rejected", kindGoTest,
-		`go test ./dependency-provenance/... -run TestPreRegisteredTyposquatRejected`},
+		`go test ./internal/dependencyprovenance/... -run TestPreRegisteredTyposquatRejected`},
 	{"security", "hardcoded secret blocks delivery bar", kindGoTest,
 		`go test ./internal/proof/... -run TestHardcodedSecretBlocksDeliveryBar`},
 	{"security", "injected instruction rendered inert", kindGoTest,

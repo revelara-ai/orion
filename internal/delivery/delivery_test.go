@@ -16,7 +16,7 @@ func TestDeploymentBarByTier(t *testing.T) {
 	threeModes := []string{"behavioral", "empirical", "hazard"}
 
 	// Throwaway: Accept on 2 modes → delivers.
-	r := EvaluateBar(truthalign.Accept, twoModes, reliabilitytier.PolicyFor(reliabilitytier.Throwaway), env)
+	r := EvaluateBar(truthalign.Accept, twoModes, reliabilitytier.PolicyFor(reliabilitytier.Throwaway), env, true)
 	if r.Decision != Deliver || !r.HumanMergeable || r.Envelope == nil {
 		t.Fatalf("throwaway accept should deliver human-mergeable with envelope; got %+v", r)
 	}
@@ -25,20 +25,26 @@ func TestDeploymentBarByTier(t *testing.T) {
 	}
 
 	// Standard: Accept on only 2 modes → escalate (needs all three).
-	r = EvaluateBar(truthalign.Accept, twoModes, reliabilitytier.PolicyFor(reliabilitytier.Standard), env)
+	r = EvaluateBar(truthalign.Accept, twoModes, reliabilitytier.PolicyFor(reliabilitytier.Standard), env, true)
 	if r.Decision != Escalate || r.Envelope != nil {
 		t.Fatalf("standard accept w/o hazard should escalate; got %+v", r)
 	}
 
 	// Critical: full converge → delivers.
-	r = EvaluateBar(truthalign.Accept, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Critical), env)
+	r = EvaluateBar(truthalign.Accept, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Critical), env, true)
 	if r.Decision != Deliver || r.Envelope == nil {
 		t.Fatalf("critical full converge should deliver; got %+v", r)
 	}
 
 	// Any Reject → escalate, no ship.
-	r = EvaluateBar(truthalign.Reject, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Standard), env)
+	r = EvaluateBar(truthalign.Reject, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Standard), env, true)
 	if r.Decision != Escalate || r.HumanMergeable || r.Envelope != nil {
 		t.Fatalf("reject must escalate and never ship; got %+v", r)
+	}
+
+	// Security gate failure escalates even on a full Accept.
+	r = EvaluateBar(truthalign.Accept, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Standard), env, false)
+	if r.Decision != Escalate || r.Envelope != nil {
+		t.Fatalf("security-gate failure must escalate; got %+v", r)
 	}
 }
