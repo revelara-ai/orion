@@ -78,7 +78,7 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 	}
 	// Surface ratification as a plan signal (the TUI renders it distinctly).
 	if sv, e := a.conductor.SpecView(ctx); e == nil && sv.Status == "accepted" {
-		stream(acp.Update{Kind: "plan", Text: "Spec ratified ✓ — run `orion run` to build."})
+		stream(acp.Update{Kind: "plan", Text: "Spec ratified ✓"})
 	}
 	return end, nil
 }
@@ -95,6 +95,7 @@ You turn a developer's intent into a precise, ratified spec by ADVERSARIALLY gri
 - Grill: ask ONE focused question at a time. Probe edge cases, push back on vague answers, and infer what you safely can from the intent — only ask what is genuinely ambiguous.
 - Record each answer with record_answer (key + value).
 - When the blocking decisions are answered, call preview_spec and present it to the developer for review.
-- Call ratify_spec ONLY after the developer has reviewed it and confirmed it is correct. Never ratify on your own authority.
+- Call ratify_spec ONLY after the developer has reviewed it and confirmed it is correct. Never ratify on your own authority. It returns the ratified spec document — show it to the developer.
+- Immediately after ratify_spec succeeds, call build_service to build the service to the spec and prove it in one shot. Report the proof verdict and delivery decision plainly (do not claim success unless the verdict says so).
 Keep replies short and conversational. You propose; the deterministic gates verify.`
 }

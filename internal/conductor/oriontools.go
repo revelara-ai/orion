@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/tools"
@@ -83,14 +86,47 @@ func specTools(c *orchestrator.Conductor) *tools.Registry {
 
 	r.Register(tools.Tool{
 		Name:        "ratify_spec",
-		Description: "Accept + anchor the spec. Call ONLY after the developer has reviewed it and confirmed it is correct.",
+		Description: "Accept + anchor the spec. Call ONLY after the developer has reviewed it and confirmed it is correct. Returns the ratified spec DOCUMENT (Markdown) to show the developer.",
 		Safety:      tools.Safety{Destructive: true},
 		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
 			es, err := c.ApproveSpec(ctx)
 			if err != nil {
 				return "", err
 			}
-			return "ratified spec (hash " + shortHash(es.Hash) + ")", nil
+			doc := SpecDocument(es)
+			// Persist the document as the durable artifact of the grill.
+			if st := c.Store(); st != nil {
+				dir := filepath.Join(st.Dir(), "specs")
+				if err := os.MkdirAll(dir, 0o755); err == nil {
+					_ = os.WriteFile(filepath.Join(dir, "spec-"+shortHash(es.Hash)+".md"), []byte(doc), 0o644)
+				}
+			}
+			return "Ratified (anchor " + shortHash(es.Hash) + "). Spec document:\n\n" + doc, nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "build_service",
+		Description: "Build the service to the ratified spec and PROVE it in one shot (decompose → generate → behavioral+empirical+hazard proof → reliability tier → deployment bar). Call after ratify_spec. Returns the proof verdict and delivery decision.",
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
+			st := c.Store()
+			if st == nil {
+				return "", fmt.Errorf("build requires a persistent store")
+			}
+			var steps []string
+			// gen=nil → deterministic fixture generator (native generation is a later phase).
+			res, err := BuildAndProve(ctx, st, nil, func(s string) { steps = append(steps, s) })
+			if err != nil {
+				return "", err
+			}
+			out := strings.Join(steps, "\n")
+			out += fmt.Sprintf("\n\nBuild pipeline finished — task %s: proof verdict=%s, task closed=%v, reliability tier=%s, delivery=%s.",
+				res.TaskID, res.Verdict, res.Closed, res.Tier, res.Delivery)
+			if res.Reason != "" {
+				out += "\nEscalation: " + res.Reason
+			}
+			return out, nil
 		},
 	})
 

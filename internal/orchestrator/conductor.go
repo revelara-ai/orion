@@ -72,6 +72,10 @@ func NewWithStore(store *contextstore.Store) *Conductor {
 // Budget returns the always-on resource/cost accountant.
 func (c *Conductor) Budget() *budget.Accountant { return c.budget }
 
+// Store returns the backing Context Store (nil if store-less). Used by the
+// build pipeline, which needs raw store access (artifacts, STPA, deliveries).
+func (c *Conductor) Store() *contextstore.Store { return c.store }
+
 // ProjectID returns the persisted project id for the current intent, if any.
 func (c *Conductor) ProjectID() string {
 	c.mu.RLock()

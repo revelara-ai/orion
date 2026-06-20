@@ -89,6 +89,49 @@ func TestOrionAgentDrivesSpecToRatification(t *testing.T) {
 	}
 }
 
+// TestOrionAgentRatifiesThenBuildsInOneShot: the native agent chains ratify_spec
+// → build_service in a single turn (the developer's "ratify then build in one
+// shot" flow). Asserts the agent invoked the build and the spec is anchored;
+// build correctness itself is proven by TestBuildAndProveFixture.
+func TestOrionAgentRatifiesThenBuildsInOneShot(t *testing.T) {
+	if testing.Short() {
+		t.Skip("build_service compiles + proves a service; skipped in -short")
+	}
+	oc := orchestrator.NewWithStore(openStore(t))
+	prov := &fakeLLM{resp: []*llm.ChatResponse{
+		tuResp("1", "submit_intent", `{"intent":"build a time service"}`),
+		tuResp("2", "record_answer", `{"key":"response_format","value":"json"}`),
+		tuResp("3", "record_answer", `{"key":"timezone","value":"UTC"}`),
+		tuResp("4", "record_answer", `{"key":"port","value":"8080"}`),
+		tuResp("5", "record_answer", `{"key":"route","value":"/time"}`),
+		tuResp("6", "preview_spec", `{}`),
+		tuResp("7", "ratify_spec", `{}`),
+		tuResp("8", "build_service", `{}`),
+		endTurn("Built and proven."),
+	}}
+	agent := NewOrionAgent(prov, oc, RoleTemplate{Project: "demo"})
+
+	var updates []acp.Update
+	_, err := agent.Prompt(context.Background(), "s1", "build a time service",
+		func(u acp.Update) { updates = append(updates, u) },
+		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil })
+	if err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	if sv, _ := oc.SpecView(context.Background()); sv.Status != "accepted" {
+		t.Fatalf("spec not accepted: %q", sv.Status)
+	}
+	var sawBuild bool
+	for _, u := range updates {
+		if u.Kind == "tool_call" && strings.Contains(u.Text, "build_service") {
+			sawBuild = true
+		}
+	}
+	if !sawBuild {
+		t.Fatalf("agent did not chain build_service after ratify: %+v", updates)
+	}
+}
+
 // TestOrionAgentRejectsBadDecisionKey: a hallucinated decision key is rejected by
 // the tool (the gate), not silently written — the model gets an error tool_result
 // it can recover from, and the spec never ratifies.
