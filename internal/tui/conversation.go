@@ -112,6 +112,9 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.vp.Width, m.vp.Height = t.Width, bodyH
 		}
+		if iw := t.Width - 4; iw > 8 { // bound the input to the terminal width
+			m.input.Width = iw
+		}
 		m.render()
 		return m, nil
 
@@ -240,20 +243,30 @@ func (m Conversation) renderTranscript() string {
 }
 
 func (m Conversation) renderMsg(mm msg, w int) string {
+	if w < 8 {
+		w = 8
+	}
+	// Body content wraps to (w - 2) and is indented 2 columns via MarginLeft, so a
+	// rendered line never exceeds w — nothing flows off the terminal edge.
+	cw := w - 2
+	if cw < 6 {
+		cw = 6
+	}
 	if mm.role == "you" {
 		return youBlock.Width(w).Render(mm.text + "  ⟵ you")
 	}
+	label := "  " + orionLabel.Render("◇ Orion") + "\n"
 	switch mm.kind {
 	case "spec":
 		card := cardTitle.Render("spec — review") + "\n" + mm.text
-		return "  " + orionLabel.Render("◇ Orion") + "\n" + specCard.Render(card)
+		return label + specCard.Width(cw-4).MarginLeft(2).Render(card)
 	case "permission":
 		card := cardTitle.Render("ratify") + "\n" + mm.text + "\n[y] ratify   [e] edit a field"
-		return "  " + orionLabel.Render("◇ Orion") + "\n" + permCard.Render(card)
+		return label + permCard.Width(cw-4).MarginLeft(2).Render(card)
 	case "plan":
-		return "  " + orionLabel.Render("◇ Orion") + "\n  " + planStyle.Render(mm.text)
+		return label + planStyle.Width(cw).MarginLeft(2).Render(mm.text)
 	default:
-		return "  " + orionLabel.Render("◇ Orion") + "\n  " + orionText.Render(mm.text)
+		return label + orionText.Width(cw).MarginLeft(2).Render(mm.text)
 	}
 }
 
