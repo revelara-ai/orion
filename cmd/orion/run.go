@@ -7,22 +7,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
-	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/agentruntime"
 	"github.com/revelara-ai/orion/internal/conductor"
 	"github.com/revelara-ai/orion/internal/contextstore"
-	"github.com/revelara-ai/orion/internal/delivery"
-	"github.com/revelara-ai/orion/internal/orchestrator"
-	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
-	"github.com/revelara-ai/orion/internal/orchestrator/spec"
-	"github.com/revelara-ai/orion/internal/proof"
-	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
-	"github.com/revelara-ai/orion/internal/proof/testsynth"
-	"github.com/revelara-ai/orion/internal/reliabilityscan"
-	"github.com/revelara-ai/orion/internal/reliabilitytier"
 	"github.com/revelara-ai/orion/internal/sandbox"
 )
 
@@ -44,126 +33,16 @@ func cmdRun(_ []string) int {
 	defer store.Close()
 	ctx := context.Background()
 
-	c := orchestrator.NewWithStore(store)
-	es, err := c.RecallSpec(ctx)
+	// One-shot build→prove→deliver, shared with the native Orion agent's
+	// build_service tool. generateService injects the (opt-in) vendor-agent
+	// generator; nil would use the fixture.
+	res, err := conductor.BuildAndProve(ctx, store, generateService, func(s string) { fmt.Println("run:", s) })
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "orion run: no accepted spec (submit → answer → spec approve first):", err)
+		fmt.Fprintln(os.Stderr, "orion run:", err)
 		return 1
 	}
-	pv, err := c.PlanView(ctx)
-	if err != nil || len(pv.Tasks) == 0 {
-		fmt.Fprintln(os.Stderr, "orion run: no plan:", err)
-		return 1
-	}
-	taskID := pv.Tasks[0].ID
-
-	gs := sandbox.GenSpec{
-		Route: es.ResponseContract.Route,
-		Port:  es.ResponseContract.Port,
-		// Format from the ANCHORED contract, not the raw decision string — codegen
-		// + proof must build/prove the exact format the ratified contract promises.
-		Format:   es.ResponseContract.Format(),
-		TimeZone: es.ResponseContract.TimeZone,
-	}
-	buildDir := filepath.Join(store.Dir(), "build", taskID)
-	if err := os.MkdirAll(buildDir, 0o755); err != nil {
-		fmt.Fprintln(os.Stderr, "orion run: build dir:", err)
-		return 1
-	}
-	art, err := generateService(ctx, gs, buildDir)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "orion run: generate:", err)
-		return 1
-	}
-	if _, err := sandbox.PersistArtifact(ctx, store, taskID, art); err != nil {
-		fmt.Fprintln(os.Stderr, "orion run: persist artifact:", err)
-		return 1
-	}
-
-	// Load the developer-ratified STPA model for hazard proof; for the canonical
-	// time-service path, fall back to the golden ratified model and persist it.
-	proj, _, _ := store.CurrentProjectSpec(ctx)
-	model, ok, _ := stpa.Load(ctx, store, proj.ID)
-	if !ok {
-		model = stpa.RatifiedTimeServiceModel()
-		_ = stpa.Save(ctx, store, proj.ID, model)
-	}
-	report, err := proof.ProveAll(ctx, buildDir, testsynth.Contract{Route: gs.Route, Format: gs.Format, TimeZone: gs.TimeZone}, model)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "orion run: proof:", err)
-		return 1
-	}
-	closed, err := conductor.New(store).ProveAndCloseReport(ctx, taskID, report)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "orion run: gate:", err)
-		return 1
-	}
-
-	// Reliability scan → tier → deployment bar → deliver (human-mergeable) or escalate.
-	findings, _ := reliabilityscan.ScanAndRecord(ctx, store, proj.ID, buildDir)
-	tier := reliabilitytier.Classify(reliabilityscan.DeriveDimensions(findings))
-	env := delivery.OperatingEnvelope{
-		ProvenLoad:             provenLoad(es),
-		FaultClassesControlled: faultClasses(model),
-		Assumptions:            assumptions(model),
-	}
-	securityOK := proof.SecurityClean(buildDir)
-	res := delivery.EvaluateBar(report.Outcome.Verdict, []string{"behavioral", "empirical", "hazard"}, reliabilitytier.PolicyFor(tier), env, securityOK)
-	// Red Button (or-utm): while engaged, autonomy is revoked — never auto-deliver.
-	if rb := (actuation.RedButton{Path: filepath.Join(store.Dir(), "red_button")}); res.Decision == delivery.Deliver && rb.AutonomyRevoked() {
-		res = delivery.Result{Decision: delivery.Escalate, Reason: "red button engaged: autonomy revoked, human delivery required"}
-	}
-	if res.Decision == delivery.Deliver {
-		envJSON, _ := json.Marshal(res.Envelope)
-		runbook := delivery.GenerateRunbook(es, model, env)
-		rbJSON, _ := json.Marshal(runbook)
-		_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
-			epic, e := tx.Epics().LatestForProject(ctx, proj.ID)
-			if e != nil {
-				return e
-			}
-			_, e = tx.Deliveries().Create(ctx, epic.ID, string(envJSON), string(rbJSON))
-			return e
-		})
-	} else {
-		_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
-			_, e := tx.Escalations().Create(ctx, proj.ID, taskID, res.Reason)
-			return e
-		})
-	}
-	fmt.Printf("run: task %s verdict=%s closed=%v tier=%s delivery=%s\n", taskID, report.Outcome.Verdict, closed, tier, res.Decision)
+	fmt.Printf("run: task %s verdict=%s closed=%v tier=%s delivery=%s\n", res.TaskID, res.Verdict, res.Closed, res.Tier, res.Delivery)
 	return 0
-}
-
-// provenLoad renders the proven load from the spec's scale dimension.
-func provenLoad(es spec.ExecutableSpec) string {
-	if th, ok := completeness.ResolveScalePreset(es.Decisions["scale_profile"]); ok {
-		return fmt.Sprintf("%d req/%s", th.RequestsPerWindow, th.Window)
-	}
-	return "unspecified"
-}
-
-// faultClasses lists the hazard classes the ratified, controlled UCAs cover.
-func faultClasses(m stpa.Model) []string {
-	var out []string
-	for _, u := range m.UCAs {
-		if u.Disposition == stpa.DispositionControlled {
-			out = append(out, u.Hazard)
-		}
-	}
-	return out
-}
-
-// assumptions records the accepted-gap hazards + fallback-preset use so the
-// operating envelope states what was NOT proven.
-func assumptions(m stpa.Model) []string {
-	out := []string{"non-functional dimensions resolved via tier-default fallback presets"}
-	for _, u := range m.UCAs {
-		if u.Disposition == stpa.DispositionAcceptedGap {
-			out = append(out, "accepted gap: "+u.Hazard)
-		}
-	}
-	return out
 }
 
 // cmdProof implements `orion proof show --task <id> --mode <mode> [--json]`.
