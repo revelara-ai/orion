@@ -21,13 +21,18 @@ import (
 )
 
 // ResponseContract is the machine-checkable contract the proof domain validates a
-// running artifact against. Derived from the approved functional decisions.
+// running artifact against. Derived from the approved functional decisions. The
+// scalar fields (ContentType/Route/Port/TimeZone/Schema) describe the default
+// case; Cases is the full behavioral case set the proof executes (>=1, always
+// including the default). Cases is omitted from the anchor for scalar-only specs
+// (see ComputeHash) so legacy specs hash identically.
 type ResponseContract struct {
-	ContentType string         `json:"content_type"`
-	Route       string         `json:"route"`
-	Port        int            `json:"port"`
-	TimeZone    string         `json:"timezone"`
-	Schema      map[string]any `json:"schema"`
+	ContentType string           `json:"content_type"`
+	Route       string           `json:"route"`
+	Port        int              `json:"port"`
+	TimeZone    string           `json:"timezone"`
+	Schema      map[string]any   `json:"schema"`
+	Cases       []BehavioralCase `json:"cases,omitempty"`
 }
 
 // Dimension is a typed, persisted spec dimension (one per spec dimension).
@@ -43,6 +48,7 @@ type ExecutableSpec struct {
 	Decisions        map[string]string `json:"decisions"`
 	Dimensions       []Dimension       `json:"dimensions"`
 	ResponseContract ResponseContract  `json:"response_contract"`
+	Requirements     []Requirement     `json:"requirements,omitempty"`
 	Hash             string            `json:"hash"`
 }
 
@@ -50,10 +56,18 @@ type ExecutableSpec struct {
 // Every checklist decision must be present (callers apply fallback presets before
 // compiling); a missing decision is a programming error, not a silent default.
 // kinds maps a decision key to its value kind (precise|fallback_preset).
-func Compile(intent string, answers map[string]string, kinds map[string]string, checklist []completeness.RequiredDecision) (ExecutableSpec, error) {
+func Compile(intent string, answers map[string]string, kinds map[string]string, checklist []completeness.RequiredDecision, reqs []Requirement) (ExecutableSpec, error) {
 	for _, rd := range checklist {
 		if strings.TrimSpace(answers[rd.Key]) == "" {
 			return ExecutableSpec{}, fmt.Errorf("cannot compile spec: decision %q (%s) is unresolved", rd.Key, rd.Dimension)
+		}
+	}
+	// Every requirement must lower to executable cases, or it can't be proven and
+	// must not be anchored (the or-y9d invariant, enforced at compile).
+	for i := range reqs {
+		reqs[i].SetIDs()
+		if err := ValidateRequirement(reqs[i]); err != nil {
+			return ExecutableSpec{}, fmt.Errorf("cannot compile spec: %w", err)
 		}
 	}
 
@@ -61,6 +75,7 @@ func Compile(intent string, answers map[string]string, kinds map[string]string, 
 	if err != nil {
 		return ExecutableSpec{}, err
 	}
+	rc.Cases = buildCases(rc, reqs)
 
 	dims := buildDimensions(answers, kinds, checklist)
 
@@ -69,9 +84,41 @@ func Compile(intent string, answers map[string]string, kinds map[string]string, 
 		Decisions:        cloneStrMap(answers),
 		Dimensions:       dims,
 		ResponseContract: rc,
+		Requirements:     reqs,
 	}
 	s.Hash = s.ComputeHash()
 	return s, nil
+}
+
+// buildCases returns the behavioral cases the proof executes: the default case
+// derived from the scalar contract, plus every requirement's cases, sorted by ID
+// for determinism.
+func buildCases(rc ResponseContract, reqs []Requirement) []BehavioralCase {
+	cases := []BehavioralCase{defaultCase(rc)}
+	for _, r := range reqs {
+		for _, c := range r.Cases {
+			c.EnsureID()
+			cases = append(cases, c)
+		}
+	}
+	sort.Slice(cases, func(i, j int) bool { return cases[i].ID < cases[j].ID })
+	return cases
+}
+
+// defaultCase is the happy-path case implied by the scalar contract: GET the route
+// returns 200 + the content type, with the body assertion the format implies.
+func defaultCase(rc ResponseContract) BehavioralCase {
+	c := BehavioralCase{
+		Request: RequestShape{Method: "GET", Path: rc.Route},
+		Expect:  ExpectShape{Status: 200, ContentType: rc.ContentType},
+	}
+	if rc.ContentType == "application/json" {
+		c.Expect.Assertions = []BodyAssertion{{Kind: AssertJSONKeyRFC3339, Key: "time"}}
+	} else {
+		c.Expect.Assertions = []BodyAssertion{{Kind: AssertBodyRFC3339}}
+	}
+	c.EnsureID()
+	return c
 }
 
 // ComputeHash is the deterministic anchor over the spec content (excluding the
@@ -80,6 +127,14 @@ func Compile(intent string, answers map[string]string, kinds map[string]string, 
 func (s ExecutableSpec) ComputeHash() string {
 	c := s
 	c.Hash = ""
+	// Scalar-only specs (no explicit Requirements) anchor EXACTLY as before the
+	// case model existed: the derived default case is recomputed on recall, so it
+	// is excluded from the anchor. This keeps every already-anchored legacy spec
+	// hash-stable. Specs WITH requirements anchor their full case set (their
+	// meaning genuinely changed, so a new hash is correct).
+	if len(c.Requirements) == 0 {
+		c.ResponseContract.Cases = nil
+	}
 	b, _ := json.Marshal(c) // map keys marshal sorted; Dimensions pre-sorted
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])

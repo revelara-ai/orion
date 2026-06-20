@@ -113,7 +113,7 @@ func (c *Conductor) assembleSpec(ctx context.Context) (contextstore.Project, con
 		kinds[f.key] = "fallback_preset"
 	}
 
-	es, err := spec.Compile(proj.Intent, answers, kinds, c.gate.Checklist())
+	es, err := spec.Compile(proj.Intent, answers, kinds, c.gate.Checklist(), nil)
 	if err != nil {
 		return proj, sp, spec.ExecutableSpec{}, nil, err
 	}
@@ -209,7 +209,7 @@ func (c *Conductor) RecallSpec(ctx context.Context) (spec.ExecutableSpec, error)
 	if err != nil {
 		return spec.ExecutableSpec{}, err
 	}
-	es, err := spec.Compile(proj.Intent, answers, kinds, c.gate.Checklist())
+	es, err := spec.Compile(proj.Intent, answers, kinds, c.gate.Checklist(), nil)
 	if err != nil {
 		return spec.ExecutableSpec{}, fmt.Errorf("recompile on recall: %w", err)
 	}

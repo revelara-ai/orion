@@ -18,7 +18,7 @@ func TestRunbookCompleteness(t *testing.T) {
 		"data_storage": "none", "slo_targets": "tier-default", "security_model": "untrusted", "dependencies": "none",
 	}
 	es, err := spec.Compile("Build an HTTP service that returns the current time.", answers,
-		map[string]string{"scale_profile": "fallback_preset"}, completeness.NewAnalyzer("http-service").Checklist())
+		map[string]string{"scale_profile": "fallback_preset"}, completeness.NewAnalyzer("http-service").Checklist(), nil)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}

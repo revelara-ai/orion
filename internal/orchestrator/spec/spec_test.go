@@ -26,7 +26,7 @@ func fullAnswers() map[string]string {
 // machine-checkable ResponseContract that reflects the approved decisions.
 func TestCompileResponseContractFromDecisions(t *testing.T) {
 	checklist := completeness.NewAnalyzer("http-service").Checklist()
-	s, err := Compile("Build an HTTP service that returns the current time.", fullAnswers(), nil, checklist)
+	s, err := Compile("Build an HTTP service that returns the current time.", fullAnswers(), nil, checklist, nil)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestCompileRejectsIncompleteDecisions(t *testing.T) {
 	checklist := completeness.NewAnalyzer("http-service").Checklist()
 	a := fullAnswers()
 	delete(a, "port")
-	if _, err := Compile("intent", a, nil, checklist); err == nil {
+	if _, err := Compile("intent", a, nil, checklist, nil); err == nil {
 		t.Fatal("expected error compiling with a missing decision")
 	}
 }
@@ -61,14 +61,14 @@ func TestCompileRejectsIncompleteDecisions(t *testing.T) {
 // content and changes when content changes.
 func TestHashIsDeterministicAndContentSensitive(t *testing.T) {
 	checklist := completeness.NewAnalyzer("http-service").Checklist()
-	s1, _ := Compile("intent", fullAnswers(), nil, checklist)
-	s2, _ := Compile("intent", fullAnswers(), nil, checklist)
+	s1, _ := Compile("intent", fullAnswers(), nil, checklist, nil)
+	s2, _ := Compile("intent", fullAnswers(), nil, checklist, nil)
 	if s1.Hash != s2.Hash {
 		t.Fatalf("hash not deterministic: %s vs %s", s1.Hash, s2.Hash)
 	}
 	a := fullAnswers()
 	a["port"] = "9090"
-	s3, _ := Compile("intent", a, nil, checklist)
+	s3, _ := Compile("intent", a, nil, checklist, nil)
 	if s3.Hash == s1.Hash {
 		t.Fatal("hash did not change when a decision changed")
 	}
@@ -78,7 +78,7 @@ func TestHashIsDeterministicAndContentSensitive(t *testing.T) {
 // hash fails anchor verification.
 func TestVerifyAnchorDetectsTamper(t *testing.T) {
 	checklist := completeness.NewAnalyzer("http-service").Checklist()
-	s, _ := Compile("intent", fullAnswers(), nil, checklist)
+	s, _ := Compile("intent", fullAnswers(), nil, checklist, nil)
 	if !s.VerifyAnchor() {
 		t.Fatal("freshly compiled spec should verify")
 	}
