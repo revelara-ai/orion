@@ -28,6 +28,7 @@ type Spec struct {
 	ParentSpecID     string
 	Hash             string
 	ResponseContract string // JSON
+	Requirements     string // JSON array of spec.Requirement
 	CreatedAt        string
 	UpdatedAt        string
 }
@@ -188,12 +189,22 @@ func (r *SpecRepo) SetAccepted(ctx context.Context, id, hash, responseContract s
 	return mustAffectOne(res, "spec")
 }
 
-const specCols = `id, project_id, status, version, COALESCE(parent_spec_id,''), spec_hash, response_contract, created_at, updated_at`
+const specCols = `id, project_id, status, version, COALESCE(parent_spec_id,''), spec_hash, response_contract, requirements, created_at, updated_at`
 
 func scanSpec(sc interface{ Scan(...any) error }) (Spec, error) {
 	var s Spec
-	err := sc.Scan(&s.ID, &s.ProjectID, &s.Status, &s.Version, &s.ParentSpecID, &s.Hash, &s.ResponseContract, &s.CreatedAt, &s.UpdatedAt)
+	err := sc.Scan(&s.ID, &s.ProjectID, &s.Status, &s.Version, &s.ParentSpecID, &s.Hash, &s.ResponseContract, &s.Requirements, &s.CreatedAt, &s.UpdatedAt)
 	return s, err
+}
+
+// SetRequirements overwrites the persisted requirements JSON on a draft spec.
+func (r *SpecRepo) SetRequirements(ctx context.Context, id, requirementsJSON string) error {
+	res, err := r.tx.ExecContext(ctx,
+		`UPDATE specs SET requirements=?, updated_at=? WHERE id=?`, requirementsJSON, nowRFC3339(), id)
+	if err != nil {
+		return fmt.Errorf("set spec requirements: %w", err)
+	}
+	return mustAffectOne(res, "spec")
 }
 
 func (r *SpecRepo) Get(ctx context.Context, id string) (Spec, error) {

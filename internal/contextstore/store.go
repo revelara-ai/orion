@@ -58,6 +58,7 @@ func Open(dir string) (*Store, error) {
 		{"task_attempts", "evidence_claim", "TEXT NOT NULL DEFAULT '{}'"},
 		{"specs", "spec_hash", "TEXT NOT NULL DEFAULT ''"},
 		{"specs", "response_contract", "TEXT NOT NULL DEFAULT '{}'"},
+		{"specs", "requirements", "TEXT NOT NULL DEFAULT '[]'"},
 		{"decisions", "value_kind", "TEXT NOT NULL DEFAULT 'precise'"},
 		{"proofs", "detail", "TEXT NOT NULL DEFAULT '{}'"},
 		{"deliveries", "runbook", "TEXT NOT NULL DEFAULT '{}'"},

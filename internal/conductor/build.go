@@ -98,6 +98,9 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("proof: %w", err)
 	}
+	// Coverage gate: every requirement the spec declares must have an executed,
+	// passing obligation — else downgrade the verdict (the or-y9d kill).
+	proof.EnforceObligations(es.ResponseContract.RequiredCaseIDs(), &report)
 	closed, err := New(store).ProveAndCloseReport(ctx, taskID, report)
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("gate: %w", err)
