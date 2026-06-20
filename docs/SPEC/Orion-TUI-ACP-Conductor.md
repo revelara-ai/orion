@@ -17,6 +17,15 @@ derived_from:
 
 ## 0. Positioning: agentic chat, control plane, pluggable brain
 
+> **⚠ AMENDMENT (2026-06-19) — NATIVE AGENT HARNESS (supersedes "Control plane, not LLM client" below).**
+> Orion no longer relies on the developer's spawned vendor CLI for its brain. **Orion connects directly to a model API and runs its own proof-gated agentic loop with memory + session persistence.** Two agent roles:
+> - **Orion** — the *human-interface* agent. It converses with the developer, **adversarially grills** the intent, and produces a detailed, ratified spec. It *proposes*; the deterministic gates (completeness, proof, deployment bar) *verify*.
+> - **Conductor** — the *orchestration* agent. It decomposes the ratified spec and launches + supervises an **orchestra** of execution subagents (child-process workers, worktree-isolated), with the proof wall as its guardrail.
+>
+> **Model-agnostic by construction** via a provider interface: **Anthropic** (default), then **Gemini** and **Ollama/OpenAI-compatible**. The Anthropic adapter is hand-rolled over HTTP through `internal/llmclient` (zero vendor SDK). **Credentials** come from the environment (`ANTHROPIC_API_KEY`), are **never persisted by Orion**, and are **never reachable from the bash-tool sandbox** — the new security boundary this opens.
+>
+> The deterministic invariants are **unchanged and enforced by the same gates regardless of model**: no agent grades its own homework; no proof override; human authorization is not proof; generation-tier memory never reaches a proof prompt. The proof loop is still the moat. The ACP transport + the chat TUI survive verbatim (a native loop satisfies `acp.PromptFunc`); the spawned-vendor-CLI path is retired for the brain but `agentruntime` is retained for the execution orchestra.
+
 **Lineage.** Orion's *interface* is an **agentic coding chat** in the lineage of **Claude Code / Pi / Hermes** — one developer ⇄ one agent that reasons, calls tools, and acts in a conversational loop. Its *mechanics* (worktree isolation, deterministic gates, spawning/driving vendor agents over ACP) are borrowed from **Gastown's control plane**. Its *differentiator* is the opinionated, **proof-gated** reliability workflow. The Gastown comparison ends at the interface: Orion is **chat-first**, not a fleet dashboard.
 
 **Control plane, not LLM client.** Orion holds no API key and makes no inference calls. The chat "brain" is the developer's **own vendor coding-agent CLI**, spawned as a subprocess and driven over ACP:

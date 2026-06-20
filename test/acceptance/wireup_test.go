@@ -19,6 +19,7 @@ const modulePath = "github.com/revelara-ai/orion"
 // yet unreachable from cmd/orion. Per-task Done-when proved components, never the
 // wired system. This gate closes that gap.
 var deferredOrphans = map[string]string{
+	"internal/llm":           "native model-provider layer (Anthropic/Gemini/Ollama) — wired into the agent harness + Orion/Conductor by the native-harness epic (or-26w)",
 	"internal/memory":        "tiered memory — wire into Conductor context assembly (or-b73)",
 	"internal/contextengine": "bundle assembler / poisoning defense — wire into Conductor context assembly (or-b73)",
 	"internal/tracker":       "store→beads projection — expose via command / on-demand (or-y0z)",
