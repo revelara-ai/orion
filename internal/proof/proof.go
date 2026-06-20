@@ -25,10 +25,57 @@ type ModeReport struct {
 	Detail map[string]any
 }
 
-// Report is the converged verdict plus per-mode reports.
+// ObligationResult is a behavioral case's aggregated proof outcome across modes:
+// Executed (ran in >=1 mode), Passed (ran and passed in every mode that ran it),
+// and the modes that passed it. The Phase-3 ObligationGate consumes this to
+// require every declared case to have actually run and passed.
+type ObligationResult struct {
+	Executed bool
+	Passed   bool
+	Modes    []string
+}
+
+// Report is the converged verdict plus per-mode reports and per-case obligations.
 type Report struct {
-	Outcome truthalign.Outcome
-	Modes   []ModeReport
+	Outcome           truthalign.Outcome
+	Modes             []ModeReport
+	ObligationResults map[string]ObligationResult
+}
+
+// aggregateObligations merges per-mode case statuses: a case is Executed if any
+// mode ran it, and Passed only if it ran and passed in EVERY mode that ran it (a
+// never-run case stays absent — a coverage hole the gate treats distinctly).
+func aggregateObligations(modes []ModeReport) map[string]ObligationResult {
+	type acc struct {
+		exec, anyFail bool
+		modes         []string
+	}
+	m := map[string]*acc{}
+	for _, mr := range modes {
+		for id, st := range mr.Result.Obligations {
+			a := m[id]
+			if a == nil {
+				a = &acc{}
+				m[id] = a
+			}
+			if st.Executed {
+				a.exec = true
+				if st.Passed {
+					a.modes = append(a.modes, mr.Result.Mode)
+				} else {
+					a.anyFail = true
+				}
+			}
+		}
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]ObligationResult, len(m))
+	for id, a := range m {
+		out[id] = ObligationResult{Executed: a.exec, Passed: a.exec && !a.anyFail, Modes: a.modes}
+	}
+	return out
 }
 
 // ProveBehavioral synthesizes the behavioral corpus from the contract, runs it
@@ -54,17 +101,15 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (Repor
 		return Report{}, err
 	}
 	outcome := truthalign.Converge(bmr, emr)
-	return Report{
-		Outcome: outcome,
-		Modes: []ModeReport{
-			{Result: bmr},
-			{Result: emr, Detail: map[string]any{
-				"port_open":                   pr.PortOpen,
-				"response_contract_satisfied": pr.ResponseContractSatisfied,
-				"detail":                      pr.Detail,
-			}},
-		},
-	}, nil
+	modes := []ModeReport{
+		{Result: bmr},
+		{Result: emr, Detail: map[string]any{
+			"port_open":                   pr.PortOpen,
+			"response_contract_satisfied": pr.ResponseContractSatisfied,
+			"detail":                      pr.Detail,
+		}},
+	}
+	return Report{Outcome: outcome, Modes: modes, ObligationResults: aggregateObligations(modes)}, nil
 }
 
 // ProveAll runs all three modes (behavioral + empirical + hazard) against the
@@ -84,21 +129,19 @@ func ProveAll(ctx context.Context, artifactDir string, c testsynth.Contract, mod
 		return Report{}, err
 	}
 	outcome := truthalign.ConvergeFull(bmr, emr, hmr)
-	return Report{
-		Outcome: outcome,
-		Modes: []ModeReport{
-			{Result: bmr},
-			{Result: emr, Detail: map[string]any{
-				"port_open":                   pr.PortOpen,
-				"response_contract_satisfied": pr.ResponseContractSatisfied,
-				"detail":                      pr.Detail,
-			}},
-			{Result: hmr, Detail: map[string]any{
-				"ucas_considered":   hr.UCAsConsidered,
-				"uncontrolled_ucas": hr.UncontrolledUCAs,
-				"accepted_gaps":     hr.AcceptedGaps,
-				"control_actions":   hr.ControlActions,
-			}},
-		},
-	}, nil
+	modes := []ModeReport{
+		{Result: bmr},
+		{Result: emr, Detail: map[string]any{
+			"port_open":                   pr.PortOpen,
+			"response_contract_satisfied": pr.ResponseContractSatisfied,
+			"detail":                      pr.Detail,
+		}},
+		{Result: hmr, Detail: map[string]any{
+			"ucas_considered":   hr.UCAsConsidered,
+			"uncontrolled_ucas": hr.UncontrolledUCAs,
+			"accepted_gaps":     hr.AcceptedGaps,
+			"control_actions":   hr.ControlActions,
+		}},
+	}
+	return Report{Outcome: outcome, Modes: modes, ObligationResults: aggregateObligations(modes)}, nil
 }
