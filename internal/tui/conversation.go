@@ -16,7 +16,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -29,8 +31,25 @@ import (
 
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/conductor"
+	"github.com/revelara-ai/orion/internal/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 )
+
+// acpServer is the Conductor brain the TUI drives over ACP (native or fallback).
+type acpServer interface {
+	Serve(ctx context.Context, r io.Reader, w io.Writer) error
+}
+
+// conductorBrain selects the native LLM "Orion" agent when ANTHROPIC_API_KEY is
+// set, else the deterministic conductor (offline/CI fallback). Both satisfy
+// acp.PromptFunc, so the TUI is identical for either.
+func conductorBrain(oc *orchestrator.Conductor) acpServer {
+	role := conductor.RoleTemplate{Project: "orion"}
+	if key := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")); key != "" {
+		return conductor.NewOrionAgent(llm.NewAnthropic(key, os.Getenv("ORION_MODEL")), oc, role)
+	}
+	return conductor.NewConductorAgent(role, oc)
+}
 
 const emptyState = "Conductor ready (in-process, over ACP). Describe what you want to build."
 
@@ -347,8 +366,10 @@ func Run(oc *orchestrator.Conductor) error {
 	defer clientEnd.Close()
 	defer agentEnd.Close()
 
-	agent := conductor.NewConductorAgent(conductor.RoleTemplate{Project: "orion"}, oc)
-	go func() { _ = agent.Serve(ctx, agentEnd, agentEnd) }()
+	// Brain selection (SPEC §0 amendment): a native LLM "Orion" agent when an API
+	// key is present, else the deterministic conductor (offline/CI fallback). Both
+	// satisfy acp.PromptFunc — the rest of this function is identical.
+	go func() { _ = conductorBrain(oc).Serve(ctx, agentEnd, agentEnd) }()
 
 	gate := &programGate{}
 	client := NewACPClient(clientEnd, clientEnd, gate, nil)
