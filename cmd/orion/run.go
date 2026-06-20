@@ -58,9 +58,11 @@ func cmdRun(_ []string) int {
 	taskID := pv.Tasks[0].ID
 
 	gs := sandbox.GenSpec{
-		Route:    es.ResponseContract.Route,
-		Port:     es.ResponseContract.Port,
-		Format:   es.Decisions["response_format"],
+		Route: es.ResponseContract.Route,
+		Port:  es.ResponseContract.Port,
+		// Format from the ANCHORED contract, not the raw decision string — codegen
+		// + proof must build/prove the exact format the ratified contract promises.
+		Format:   es.ResponseContract.Format(),
 		TimeZone: es.ResponseContract.TimeZone,
 	}
 	buildDir := filepath.Join(store.Dir(), "build", taskID)

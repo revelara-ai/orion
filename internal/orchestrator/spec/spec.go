@@ -102,7 +102,11 @@ func buildResponseContract(a map[string]string) (ResponseContract, error) {
 		}
 		rc.Port = n
 	}
-	switch strings.ToLower(strings.TrimSpace(a["response_format"])) {
+	tok, err := normalizeResponseFormat(a["response_format"])
+	if err != nil {
+		return ResponseContract{}, err
+	}
+	switch tok {
 	case "json":
 		rc.ContentType = "application/json"
 		rc.Schema = map[string]any{
@@ -114,14 +118,66 @@ func buildResponseContract(a map[string]string) (ResponseContract, error) {
 				"time": map[string]any{"type": "string"},
 			},
 		}
-	case "xml":
-		rc.ContentType = "application/xml"
-		rc.Schema = map[string]any{"type": "string"}
-	default: // plain text and others
+	default: // "text"
 		rc.ContentType = "text/plain"
 		rc.Schema = map[string]any{"type": "string"}
 	}
 	return rc, nil
+}
+
+// Format returns the canonical generation/proof token ("json" | "text") derived
+// from the ANCHORED ContentType. Codegen + proof must read this, never the raw
+// response_format decision string — otherwise the artifact that gets built and
+// proven can disagree with the ratified contract (e.g. raw "plain text" misses an
+// exact `== "text"` check and silently generates JSON). The contract is the
+// single source of format truth.
+func (rc ResponseContract) Format() string {
+	if rc.ContentType == "text/plain" {
+		return "text"
+	}
+	return "json"
+}
+
+// normalizeResponseFormat maps a free-text format answer to a canonical token in
+// the PROVABLE set ("json" | "text"), or returns an error. A human or LLM may
+// phrase the same intent many ways ("json", "JSON", "application/json", "JSON
+// format", "plain text", "text/plain") — these collapse. It NEVER silently
+// defaults: unrecognized, ambiguous (more than one format named — e.g. "no json,
+// xml only"), and not-yet-supported (xml) all fail loud, so a contract that
+// contradicts the stated format can never be assembled. xml is detected only to
+// reject it explicitly — the codegen+proof pipeline cannot yet produce/validate
+// XML, so anchoring an application/xml contract would be an unprovable (worse,
+// falsely-provable-against-JSON) spec.
+func normalizeResponseFormat(raw string) (string, error) {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	if v == "" {
+		return "", fmt.Errorf("response_format is empty")
+	}
+	jsonM := strings.Contains(v, "json")
+	xmlM := strings.Contains(v, "xml")
+	textM := strings.Contains(v, "plain") || v == "text" || v == "text/plain"
+	switch b2i(jsonM) + b2i(xmlM) + b2i(textM) {
+	case 0:
+		return "", fmt.Errorf("response_format %q is not a recognized format (use JSON or plain text)", strings.TrimSpace(raw))
+	case 1:
+		switch {
+		case jsonM:
+			return "json", nil
+		case textM:
+			return "text", nil
+		default: // xml only — detected, explicitly rejected
+			return "", fmt.Errorf("response_format %q (XML) is not yet supported by the proof pipeline; use JSON or plain text", strings.TrimSpace(raw))
+		}
+	default: // names more than one format — ambiguous, never guess
+		return "", fmt.Errorf("response_format %q names more than one format; state exactly one (JSON or plain text)", strings.TrimSpace(raw))
+	}
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func buildDimensions(answers, kinds map[string]string, checklist []completeness.RequiredDecision) []Dimension {
