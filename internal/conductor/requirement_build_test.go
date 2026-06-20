@@ -9,15 +9,10 @@ import (
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 )
 
-// TestBuildEscalatesUnsatisfiedRequirement is the or-y9d regression: a spec that
-// states a tz-param + 400 behavior (as structured requirements) is ratified and
-// built with the fixture generator — which does NOT implement tz. The tz cases
-// execute and fail, so the build must NOT converge to Accept and must NOT close
-// the task. "Proven" reflects the spec, not just the happy path.
-func TestBuildEscalatesUnsatisfiedRequirement(t *testing.T) {
-	if testing.Short() {
-		t.Skip("compiles + runs a service + proof")
-	}
+// ratifiedWithRequirement submits + answers the functional decisions, adds the
+// given requirement, and ratifies — returning the store-backed conductor.
+func ratifiedWithRequirement(t *testing.T, req spec.Requirement) (*orchestrator.Conductor, context.Context) {
+	t.Helper()
 	oc := orchestrator.NewWithStore(openStore(t))
 	ctx := context.Background()
 	if _, err := oc.Submit(ctx, "Build an HTTP service that returns the current time."); err != nil {
@@ -28,33 +23,43 @@ func TestBuildEscalatesUnsatisfiedRequirement(t *testing.T) {
 			t.Fatalf("answer %s: %v", a[0], err)
 		}
 	}
-	// The developer's richer requirement, decomposed into verifiable cases.
-	req := spec.Requirement{
-		Source:      completeness.DimFunctional,
-		DecisionKey: "timezone",
-		Text:        "?tz=zone returns that zone; invalid tz → 400 json error",
-		Cases: []spec.BehavioralCase{
-			{Request: spec.RequestShape{Method: "GET", Path: "/time", Query: map[string]string{"tz": "America/New_York"}}, Expect: spec.ExpectShape{Status: 200, ContentType: "application/json", Assertions: []spec.BodyAssertion{{Kind: spec.AssertJSONKeyInTZ, Key: "time", Value: "America/New_York"}}}},
-			{Request: spec.RequestShape{Method: "GET", Path: "/time", Query: map[string]string{"tz": "Bogus/Zone"}}, Expect: spec.ExpectShape{Status: 400, ContentType: "application/json", Assertions: []spec.BodyAssertion{{Kind: spec.AssertJSONErrorPresent}}}},
-		},
-	}
 	if err := oc.AddRequirement(ctx, req); err != nil {
 		t.Fatalf("add requirement: %v", err)
 	}
-	// Ratification must succeed (the requirement is lowerable) AND the persistence
-	// round-trip must hold (RecallSpec re-derives the same anchor).
 	if _, err := oc.ApproveSpec(ctx); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
+	return oc, ctx
+}
 
-	res, err := BuildAndProve(ctx, oc.Store(), nil, nil) // nil gen = fixture (ignores tz)
+// (The green path for a rich spec is now NATIVE generation — see
+// nativegen_test.go TestNativeGeneratorBuildsArbitraryService — not a fixture that
+// learns time-service tricks. The fixture stays a thin offline fallback.)
+
+// TestBuildEscalatesUnsatisfiedRequirement: the or-y9d invariant still holds for a
+// requirement the fixture CANNOT satisfy — here, a response that must carry a
+// "zone" key the fixture never emits. The case executes and fails → not Accept,
+// escalate, not closed. "Proven" still means meets-the-spec.
+func TestBuildEscalatesUnsatisfiedRequirement(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles + runs a service + proof")
+	}
+	req := spec.Requirement{
+		Source: completeness.DimFunctional,
+		Text:   "the response must include a non-empty \"zone\" field",
+		Cases: []spec.BehavioralCase{
+			{Request: spec.RequestShape{Method: "GET", Path: "/time"}, Expect: spec.ExpectShape{Status: 200, ContentType: "application/json", Assertions: []spec.BodyAssertion{{Kind: spec.AssertJSONKeyPresent, Key: "zone"}}}},
+		},
+	}
+	oc, ctx := ratifiedWithRequirement(t, req)
+	res, err := BuildAndProve(ctx, oc.Store(), nil, nil)
 	if err != nil {
-		t.Fatalf("build (must run, not error — incl. anchor round-trip): %v", err)
+		t.Fatalf("build (must run, not error): %v", err)
 	}
 	if res.Verdict == "Accept" || res.Closed {
-		t.Fatalf("a spec requirement the build does not satisfy must NOT be Accepted/closed: %+v", res)
+		t.Fatalf("a requirement the fixture can't satisfy must NOT be Accepted/closed: %+v", res)
 	}
 	if res.Delivery != "escalate" {
-		t.Fatalf("delivery = %q, want escalate (unproven requirement)", res.Delivery)
+		t.Fatalf("delivery = %q, want escalate", res.Delivery)
 	}
 }

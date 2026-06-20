@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/revelara-ai/orion/internal/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/tools"
 )
@@ -17,7 +18,7 @@ import (
 // tools are the only way it touches the store, and the completeness/compile/
 // accept gates stay the deterministic truth source — the agent proposes, the
 // gates verify (no agent grades its own homework).
-func specTools(c *orchestrator.Conductor) *tools.Registry {
+func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry {
 	r := tools.NewRegistry()
 
 	r.Register(tools.Tool{
@@ -115,8 +116,13 @@ func specTools(c *orchestrator.Conductor) *tools.Registry {
 				return "", fmt.Errorf("build requires a persistent store")
 			}
 			var steps []string
-			// gen=nil → deterministic fixture generator (native generation is a later phase).
-			res, err := BuildAndProve(ctx, st, nil, func(s string) { steps = append(steps, s) })
+			// With a model provider, generate ARBITRARY code to the spec (general);
+			// without one (offline/CI) fall back to the deterministic fixture.
+			var gen Generator
+			if provider != nil {
+				gen = NativeGenerator(provider)
+			}
+			res, err := BuildAndProve(ctx, st, gen, func(s string) { steps = append(steps, s) })
 			if err != nil {
 				return "", err
 			}

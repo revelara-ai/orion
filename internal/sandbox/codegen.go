@@ -12,6 +12,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 )
 
 // GenSpec is the slice of the executable spec the Go-service generator needs.
@@ -21,6 +22,10 @@ type GenSpec struct {
 	Port     int    // e.g. 8080
 	Format   string // "json" | "text"
 	TimeZone string // "UTC" | IANA name
+	// Cases are the behavioral cases the generated program must satisfy (the
+	// contract). The native LLM generator builds arbitrary code to these; the
+	// deterministic fixture ignores them (it only knows the canonical time service).
+	Cases []spec.BehavioralCase
 }
 
 // GeneratedArtifact describes a written file.

@@ -52,7 +52,7 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 
 	loop := harness.Loop{
 		Provider:   a.provider,
-		Tools:      specTools(a.conductor),
+		Tools:      specTools(a.conductor, a.provider),
 		System:     a.systemPrompt(),
 		Supervisor: harness.Supervisor{MaxIterations: 16, Budget: a.conductor.Budget()},
 	}
