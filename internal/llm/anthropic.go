@@ -39,8 +39,22 @@ func NewAnthropic(apiKey, model string) *Anthropic {
 		apiKey:  apiKey,
 		model:   model,
 		baseURL: "https://api.anthropic.com",
-		http:    &http.Client{Timeout: 120 * time.Second},
-		rc:      llmclient.New(llmclient.Config{}),
+		// No client-level Timeout: the per-attempt deadline is governed by llmclient
+		// (propagated via NewRequestWithContext), so the two never fight.
+		http: &http.Client{},
+		// A zero Config disabled retries (MaxRetries 0) and capped each attempt at
+		// 30s — far too short for a model turn, so a slow completion surfaced as
+		// "context deadline exceeded" with no retry. Configure real policy: a
+		// generous per-attempt timeout + exponential backoff on transient failures
+		// (timeouts, 5xx, 429/529 Retry-After), with the breaker as a backstop.
+		// MaxRetries 3 (4 attempts) stays under the breaker's 5-failure threshold, so
+		// a single fully-failed turn doesn't trip the circuit for the next one.
+		rc: llmclient.New(llmclient.Config{
+			Timeout:     3 * time.Minute,
+			MaxRetries:  3,
+			BaseBackoff: 500 * time.Millisecond,
+			MaxBackoff:  10 * time.Second,
+		}),
 	}
 }
 
