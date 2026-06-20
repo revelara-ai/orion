@@ -17,7 +17,7 @@ func acceptedSpec(t *testing.T) spec.ExecutableSpec {
 	}
 	kinds := map[string]string{"scale_profile": "fallback_preset"}
 	es, err := spec.Compile("Build an HTTP service that returns the current time.", answers, kinds,
-		completeness.NewAnalyzer("http-service").Checklist())
+		completeness.NewAnalyzer("http-service").Checklist(), nil)
 	if err != nil {
 		t.Fatalf("compile spec: %v", err)
 	}
