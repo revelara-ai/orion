@@ -29,6 +29,16 @@ func (f *fakeLLM) Chat(context.Context, llm.ChatRequest) (*llm.ChatResponse, err
 	}
 	return r, nil
 }
+func (f *fakeLLM) ChatStream(ctx context.Context, req llm.ChatRequest, onText func(string)) (*llm.ChatResponse, error) {
+	r, err := f.Chat(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if t := r.Text(); t != "" {
+		onText(t)
+	}
+	return r, nil
+}
 
 func tuResp(id, name, input string) *llm.ChatResponse {
 	return &llm.ChatResponse{StopReason: llm.StopToolUse, Content: []llm.ContentBlock{

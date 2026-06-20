@@ -139,6 +139,12 @@ type ModelInfo struct {
 type Provider interface {
 	Name() string
 	Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error)
+	// ChatStream issues a streaming request: onText is called with incremental
+	// text as it arrives (for a live UI), and the fully assembled response (same
+	// shape as Chat — content blocks incl. tool_use, stop reason, usage) is
+	// returned so the agent loop dispatches tools unchanged. onText receives only
+	// text deltas; whitespace deltas matter, so callers must not trim them.
+	ChatStream(ctx context.Context, req ChatRequest, onText func(string)) (*ChatResponse, error)
 	Models(ctx context.Context) ([]ModelInfo, error)
 	Ping(ctx context.Context) error
 }
