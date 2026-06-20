@@ -130,7 +130,7 @@ func assertionsSrc(as []spec.BodyAssertion, bodyBytes, bodyStr string) string {
 		case spec.AssertJSONErrorPresent:
 			b.WriteString("\tif strings.TrimSpace(body[\"error\"]) == \"\" {\n\t\tt.Fatal(\"response missing non-empty \\\"error\\\" key\")\n\t}\n")
 		case spec.AssertJSONKeyPresent:
-			fmt.Fprintf(&b, "\tif strings.TrimSpace(body[%q]) == \"\" {\n\t\tt.Fatal(\"response missing non-empty %q key\")\n\t}\n", a.Key, a.Key)
+			fmt.Fprintf(&b, "\tif strings.TrimSpace(body[%q]) == \"\" {\n\t\tt.Fatalf(\"missing non-empty key %%q\", %q)\n\t}\n", a.Key, a.Key)
 		case spec.AssertJSONKeyRFC3339:
 			fmt.Fprintf(&b, "\tif _, err := time.Parse(time.RFC3339, body[%q]); err != nil {\n\t\tt.Fatalf(%q+\" not RFC3339: %%q\", body[%q])\n\t}\n", a.Key, a.Key, a.Key)
 		case spec.AssertJSONKeyInTZ:

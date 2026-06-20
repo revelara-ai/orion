@@ -5,11 +5,25 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 )
+
+// conditionalRe matches behavioral prose that belongs in a Requirement (with
+// explicit cases), not a scalar decision value. It deliberately matches clear
+// behavioral markers only, so plain scalar answers (UTC, json, 8080, /time,
+// America/New_York, "single owner, log-only alert") never trip it.
+var conditionalRe = regexp.MustCompile(`(?i)\b(if|when|unless|otherwise|invalid|return|param|parameter|http\s*[45]\d\d)\b`)
+
+// IsConditionalValue reports whether a scalar decision value smuggles multi-clause
+// behavior (which must instead be stated as a Requirement with verifiable cases —
+// the elicitation seam that closes the or-y9d leak at its source).
+func IsConditionalValue(v string) bool {
+	return conditionalRe.MatchString(v)
+}
 
 // AssertionKind is a checkable property of a response body (the proof domain knows
 // how to execute each). The set is closed: an unknown kind cannot be proven, so it

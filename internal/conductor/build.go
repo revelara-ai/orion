@@ -71,6 +71,7 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 		Port:     es.ResponseContract.Port,
 		Format:   es.ResponseContract.Format(), // anchored contract is the source of truth
 		TimeZone: es.ResponseContract.TimeZone,
+		Cases:    es.ResponseContract.Cases, // the behavioral contract the generator builds to
 	}
 	buildDir := filepath.Join(store.Dir(), "build", taskID)
 	if err := os.MkdirAll(buildDir, 0o755); err != nil {

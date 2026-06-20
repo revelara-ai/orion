@@ -1,11 +1,30 @@
 package testsynth
 
 import (
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
 
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 )
+
+// TestPerCaseCorpusCompiles: the generated corpus must be syntactically valid Go
+// for EVERY assertion kind (a codegen bug would otherwise only surface at proof
+// time as a corpus build failure).
+func TestPerCaseCorpusCompiles(t *testing.T) {
+	cases := []spec.BehavioralCase{
+		{ID: "present", Request: spec.RequestShape{Method: "GET", Path: "/x"}, Expect: spec.ExpectShape{Status: 200, ContentType: "application/json", Assertions: []spec.BodyAssertion{{Kind: spec.AssertJSONKeyPresent, Key: "message"}}}},
+		{ID: "rfc", Request: spec.RequestShape{Method: "GET", Path: "/x"}, Expect: spec.ExpectShape{Status: 200, ContentType: "application/json", Assertions: []spec.BodyAssertion{{Kind: spec.AssertJSONKeyRFC3339, Key: "time"}}}},
+		{ID: "tz", Request: spec.RequestShape{Method: "GET", Path: "/x", Query: map[string]string{"tz": "America/New_York"}}, Expect: spec.ExpectShape{Status: 200, ContentType: "application/json", Assertions: []spec.BodyAssertion{{Kind: spec.AssertJSONKeyInTZ, Key: "time", Value: "America/New_York"}}}},
+		{ID: "err", Request: spec.RequestShape{Method: "POST", Path: "/x", Body: "{}"}, Expect: spec.ExpectShape{Status: 400, ContentType: "application/json", Assertions: []spec.BodyAssertion{{Kind: spec.AssertJSONErrorPresent}}}},
+		{ID: "text", Request: spec.RequestShape{Method: "GET", Path: "/x"}, Expect: spec.ExpectShape{Status: 200, ContentType: "text/plain", Assertions: []spec.BodyAssertion{{Kind: spec.AssertBodyRFC3339}}}},
+	}
+	corpus := SynthesizeBehavioral(Contract{Route: "/x", Cases: cases})
+	if _, err := parser.ParseFile(token.NewFileSet(), "orion_behavioral_test.go", corpus, parser.AllErrors); err != nil {
+		t.Fatalf("generated corpus is not valid Go: %v\n---\n%s", err, corpus)
+	}
+}
 
 func threeCaseContract() Contract {
 	return Contract{Route: "/time", Format: "json", Cases: []spec.BehavioralCase{

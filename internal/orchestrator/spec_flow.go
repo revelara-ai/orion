@@ -83,6 +83,12 @@ func (c *Conductor) RecordAnswer(ctx context.Context, key, value string) error {
 	if strings.TrimSpace(key) == "" {
 		return fmt.Errorf("decision key is empty")
 	}
+	// A scalar decision must not smuggle multi-clause behavior — that belongs in a
+	// Requirement with verifiable cases (or-y9d: a behavioral paragraph in the
+	// timezone slot was never proven). Reject it loudly with a redirect.
+	if spec.IsConditionalValue(value) {
+		return fmt.Errorf("%q reads as conditional behavior, not a single value — capture it with add_requirement (explicit request→expected cases) so it can be proven", key)
+	}
 	proj, sp, err := c.store.CurrentProjectSpec(ctx)
 	if err != nil {
 		return fmt.Errorf("no current spec to answer: %w", err)
