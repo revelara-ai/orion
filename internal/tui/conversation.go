@@ -138,6 +138,17 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case streamMsg:
+		// Streamed text deltas (agent_message) accumulate into the current Orion
+		// bubble so a turn renders as one growing message, not one bubble per token.
+		// Other kinds (tool_call, plan, spec, permission) are discrete bubbles, and
+		// any of them ends the current text run.
+		if t.u.Kind == "agent_message" && len(m.msgs) > 0 {
+			if last := &m.msgs[len(m.msgs)-1]; last.role == "orion" && last.kind == "agent_message" {
+				last.text += t.u.Text
+				m.render()
+				return m, nil
+			}
+		}
 		m.msgs = append(m.msgs, msg{role: "orion", kind: t.u.Kind, text: t.u.Text})
 		if t.u.Kind == "plan" && strings.Contains(t.u.Text, "ratified") {
 			m.input.Placeholder = "new intent…"

@@ -3,7 +3,6 @@ package conductor
 import (
 	"context"
 	"io"
-	"strings"
 	"sync"
 
 	"github.com/revelara-ai/orion/internal/acp"
@@ -60,7 +59,9 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 	convo, _, err := loop.Run(ctx, convo, func(e harness.Event) {
 		switch e.Kind {
 		case harness.EventThought:
-			if strings.TrimSpace(e.Text) != "" {
+			// Stream every non-empty delta verbatim — whitespace deltas (spaces,
+			// newlines between tokens) must survive or the streamed text runs together.
+			if e.Text != "" {
 				stream(acp.Update{Kind: "agent_message", Text: e.Text})
 			}
 		case harness.EventToolCall:

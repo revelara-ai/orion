@@ -101,6 +101,7 @@ type wireRequest struct {
 	System    string        `json:"system,omitempty"`
 	Messages  []wireMessage `json:"messages"`
 	Tools     []wireTool    `json:"tools,omitempty"`
+	Stream    bool          `json:"stream,omitempty"`
 }
 type wireMessage struct {
 	Role    string      `json:"role"`

@@ -90,16 +90,17 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 			return convo, nil, ErrBudgetHalt
 		}
 
-		resp, err := l.Provider.Chat(ctx, llm.ChatRequest{System: l.System, Messages: convo, Tools: toolSpecs})
+		// Stream the turn: text deltas surface live as EventThought; the assembled
+		// response (incl. tool_use) comes back so tool dispatch is unchanged. The
+		// deltas ARE the thought stream, so we don't re-emit resp.Text() afterward.
+		resp, err := l.Provider.ChatStream(ctx, llm.ChatRequest{System: l.System, Messages: convo, Tools: toolSpecs},
+			func(delta string) { emit(Event{Kind: EventThought, Text: delta}) })
 		if err != nil {
 			return convo, nil, fmt.Errorf("harness: provider: %w", err)
 		}
 		if l.Supervisor.Budget != nil {
 			tok := resp.Usage.InputTokens + resp.Usage.OutputTokens
 			l.Supervisor.Budget.Record(tok, float64(tok)*l.CostPerToken)
-		}
-		if txt := resp.Text(); txt != "" {
-			emit(Event{Kind: EventThought, Text: txt})
 		}
 		// Record the assistant turn (full content, including any tool_use blocks).
 		convo = append(convo, llm.Message{Role: llm.RoleAssistant, Content: resp.Content})

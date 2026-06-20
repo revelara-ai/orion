@@ -33,6 +33,16 @@ func (p *scriptedProvider) Chat(_ context.Context, req llm.ChatRequest) (*llm.Ch
 	}
 	return r, nil
 }
+func (p *scriptedProvider) ChatStream(ctx context.Context, req llm.ChatRequest, onText func(string)) (*llm.ChatResponse, error) {
+	r, err := p.Chat(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if t := r.Text(); t != "" {
+		onText(t)
+	}
+	return r, nil
+}
 
 func toolUseResp(id, name, input string) *llm.ChatResponse {
 	return &llm.ChatResponse{
