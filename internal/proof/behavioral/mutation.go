@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/revelara-ai/orion/internal/proof/safeenv"
 )
 
 // mutant is a deliberate behavior-changing edit to the artifact. A fault-catching
@@ -54,6 +56,7 @@ func MutationScore(ctx context.Context, artifactDir, corpusSource string) (kille
 		_ = os.WriteFile(filepath.Join(dir, "orion_behavioral_test.go"), []byte(corpusSource), 0o644)
 		cmd := exec.CommandContext(ctx, "go", "test", "./...")
 		cmd.Dir = dir
+		cmd.Env = safeenv.Build() // scrubbed: mutated generated code never sees host secrets
 		runErr := cmd.Run()
 		os.RemoveAll(dir)
 		if runErr != nil {

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/revelara-ai/orion/internal/proof/safeenv"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 	"github.com/revelara-ai/orion/internal/reliabilitytier"
@@ -51,7 +52,7 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract, corpus
 	// Run the tests independently (the baseline).
 	cmd := exec.CommandContext(ctx, "go", "test", "./...")
 	cmd.Dir = proofDir
-	cmd.Env = append(os.Environ(), "GOFLAGS=") // inherit toolchain/cache
+	cmd.Env = safeenv.Build() // scrubbed: toolchain/cache vars only, no host secrets
 	out, err := cmd.CombinedOutput()
 	pass := err == nil
 
