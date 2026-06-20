@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,10 @@ import (
 
 	"github.com/revelara-ai/orion/internal/llmclient"
 )
+
+// errTruncatedStream marks a stream that ended without a terminal event — a
+// truncated turn must never be treated as complete.
+var errTruncatedStream = errors.New("stream truncated before completion")
 
 // ChatStream issues a streaming Messages request. Text deltas are delivered to
 // onText as they arrive; the fully assembled response (content blocks incl.
@@ -111,14 +116,16 @@ func (a *Anthropic) doStream(ctx context.Context, body []byte, onText func(strin
 	blocks := map[int]*streamBlock{}
 	var order []int
 	var emitted bool
+	var sawStop bool // a terminal event (message_delta stop_reason / message_stop) was observed
 	// Once text is on screen, a retry would duplicate it. After emit, return
 	// errors with %v (not %w) so the chain doesn't match context.DeadlineExceeded /
 	// *Retryable — i.e. terminal, never retried.
 	terminal := func(format string, err error) error {
+		wrapped := fmt.Errorf("%s: %v", format, err) // %v severs the chain (no DeadlineExceeded match)
 		if emitted {
-			return fmt.Errorf(format+": %v", err)
+			return wrapped // already showed output → non-retryable, never duplicate
 		}
-		return &llmclient.Retryable{Err: err}
+		return &llmclient.Retryable{Err: wrapped}
 	}
 
 	sc := bufio.NewScanner(resp.Body)
@@ -171,10 +178,13 @@ func (a *Anthropic) doStream(ctx context.Context, body []byte, onText func(strin
 		case "message_delta":
 			if ev.Delta != nil && ev.Delta.StopReason != "" {
 				out.StopReason = normalizeStop(ev.Delta.StopReason)
+				sawStop = true
 			}
 			if ev.Usage != nil {
 				out.Usage.OutputTokens = ev.Usage.OutputTokens
 			}
+		case "message_stop":
+			sawStop = true
 		case "error":
 			msg := "stream error"
 			if ev.Error != nil && ev.Error.Message != "" {
@@ -184,7 +194,17 @@ func (a *Anthropic) doStream(ctx context.Context, body []byte, onText func(strin
 		}
 	}
 	if err := sc.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			// Retrying re-streams the same oversized line — terminal, never retry.
+			return nil, fmt.Errorf("anthropic: stream line exceeds buffer: %v", err)
+		}
 		return nil, terminal("anthropic: stream read", err)
+	}
+	// A clean EOF with no terminal event means the stream was cut short. Never treat
+	// a truncated turn as complete: it would silently drop a tool call, or dispatch
+	// a tool with half-streamed input.
+	if !sawStop {
+		return nil, terminal("anthropic: stream", errTruncatedStream)
 	}
 
 	for _, idx := range order {
@@ -197,11 +217,16 @@ func (a *Anthropic) doStream(ctx context.Context, body []byte, onText func(strin
 			if strings.TrimSpace(input) == "" {
 				input = "{}"
 			}
+			if !json.Valid([]byte(input)) {
+				// Truncated/garbled tool arguments — fail the turn rather than dispatch
+				// a tool with half-formed input.
+				return nil, terminal("anthropic: incomplete tool_use input for "+b.name, errTruncatedStream)
+			}
 			out.Content = append(out.Content, ContentBlock{Type: BlockToolUse, ToolUse: &ToolUse{ID: b.id, Name: b.name, Input: json.RawMessage(input)}})
 		}
 	}
 	if out.StopReason == StopUnknown {
-		out.StopReason = StopEndTurn // a clean stream that omitted stop_reason ended the turn
+		out.StopReason = StopEndTurn // a terminal event was seen but carried no stop_reason
 	}
 	return out, nil
 }
