@@ -78,6 +78,36 @@ func aggregateObligations(modes []ModeReport) map[string]ObligationResult {
 	return out
 }
 
+// EnforceObligations is the proof-time coverage gate (the or-y9d kill). Given the
+// case IDs the spec REQUIRES, it downgrades the report's verdict so that a
+// requirement which never ran → Inconclusive (a coverage hole; escalate, don't
+// silently pass), and one that ran but failed → Reject. "Proven" can only mean
+// every declared requirement was executed AND passed.
+func EnforceObligations(required []string, r *Report) {
+	var unexecuted, failed []string
+	for _, id := range required {
+		o, ok := r.ObligationResults[id]
+		switch {
+		case !ok || !o.Executed:
+			unexecuted = append(unexecuted, id)
+		case !o.Passed:
+			failed = append(failed, id)
+		}
+	}
+	if len(unexecuted) > 0 {
+		r.Outcome.Verdict = truthalign.Inconclusive
+		for _, id := range unexecuted {
+			r.Outcome.Dissenting = append(r.Outcome.Dissenting, "unexecuted:"+id)
+		}
+	}
+	if len(failed) > 0 && r.Outcome.Verdict == truthalign.Accept {
+		r.Outcome.Verdict = truthalign.Reject
+	}
+	for _, id := range failed {
+		r.Outcome.Dissenting = append(r.Outcome.Dissenting, "failed:"+id)
+	}
+}
+
 // ProveBehavioral synthesizes the behavioral corpus from the contract, runs it
 // against the artifact, and converges a (single-mode) Verdict.
 func ProveBehavioral(ctx context.Context, artifactDir string, c testsynth.Contract) (truthalign.Outcome, error) {

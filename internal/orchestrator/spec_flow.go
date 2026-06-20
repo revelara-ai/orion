@@ -25,6 +25,55 @@ type SpecView struct {
 // errNoStore guards the spec-flow methods, which require persistence.
 var errNoStore = fmt.Errorf("no context store: spec flow requires a persistent store")
 
+// loadRequirements decodes the persisted requirements JSON (empty → nil).
+func loadRequirements(jsonStr string) []spec.Requirement {
+	jsonStr = strings.TrimSpace(jsonStr)
+	if jsonStr == "" || jsonStr == "[]" {
+		return nil
+	}
+	var reqs []spec.Requirement
+	if json.Unmarshal([]byte(jsonStr), &reqs) != nil {
+		return nil
+	}
+	return reqs
+}
+
+// AddRequirement records a structured behavioral requirement on the current draft
+// spec. The requirement must lower to executable cases (validated here — fail-loud
+// at intake, the or-y9d invariant at the elicitation seam). Re-adding the same
+// requirement (by content-addressed id) is idempotent.
+func (c *Conductor) AddRequirement(ctx context.Context, req spec.Requirement) error {
+	if c.store == nil {
+		return errNoStore
+	}
+	if err := spec.ValidateRequirement(req); err != nil {
+		return err
+	}
+	req.SetIDs()
+	_, sp, err := c.store.CurrentProjectSpec(ctx)
+	if err != nil {
+		return fmt.Errorf("no current spec to add a requirement: %w", err)
+	}
+	reqs := loadRequirements(sp.Requirements)
+	for _, r := range reqs {
+		if r.ID == req.ID {
+			return nil // already recorded
+		}
+	}
+	reqs = append(reqs, req)
+	b, err := json.Marshal(reqs)
+	if err != nil {
+		return err
+	}
+	if err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+		return tx.Specs().SetRequirements(ctx, sp.ID, string(b))
+	}); err != nil {
+		return err
+	}
+	c.log.InfoContext(ctx, "requirement added", "id", req.ID, "cases", len(req.Cases))
+	return nil
+}
+
 // RecordAnswer persists a developer's answer to a required decision on the
 // current draft spec.
 func (c *Conductor) RecordAnswer(ctx context.Context, key, value string) error {
@@ -113,7 +162,7 @@ func (c *Conductor) assembleSpec(ctx context.Context) (contextstore.Project, con
 		kinds[f.key] = "fallback_preset"
 	}
 
-	es, err := spec.Compile(proj.Intent, answers, kinds, c.gate.Checklist(), nil)
+	es, err := spec.Compile(proj.Intent, answers, kinds, c.gate.Checklist(), loadRequirements(sp.Requirements))
 	if err != nil {
 		return proj, sp, spec.ExecutableSpec{}, nil, err
 	}
@@ -209,7 +258,7 @@ func (c *Conductor) RecallSpec(ctx context.Context) (spec.ExecutableSpec, error)
 	if err != nil {
 		return spec.ExecutableSpec{}, err
 	}
-	es, err := spec.Compile(proj.Intent, answers, kinds, c.gate.Checklist(), nil)
+	es, err := spec.Compile(proj.Intent, answers, kinds, c.gate.Checklist(), loadRequirements(sp.Requirements))
 	if err != nil {
 		return spec.ExecutableSpec{}, fmt.Errorf("recompile on recall: %w", err)
 	}
