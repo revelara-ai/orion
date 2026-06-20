@@ -255,8 +255,13 @@ func (m *Conversation) render() {
 	if !m.ready {
 		return
 	}
+	// Auto-follow the tail only when already pinned there — so a user scrolled up
+	// to re-read context isn't yanked back to the bottom by every streamed token.
+	wasAtBottom := m.vp.AtBottom()
 	m.vp.SetContent(m.renderTranscript())
-	m.vp.GotoBottom()
+	if wasAtBottom {
+		m.vp.GotoBottom()
+	}
 }
 
 func (m Conversation) renderTranscript() string {

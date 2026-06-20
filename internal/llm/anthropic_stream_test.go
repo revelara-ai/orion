@@ -117,6 +117,67 @@ func TestAnthropicChatStreamRetriesBeforeEmit(t *testing.T) {
 	}
 }
 
+// TestAnthropicChatStreamTruncatedFails: a stream that ends cleanly (EOF) with no
+// terminal event must be an error — never a silently-complete partial turn.
+func TestAnthropicChatStreamTruncatedFails(t *testing.T) {
+	var hits int32
+	a := sseServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("content-type", "text/event-stream")
+		_, _ = io.WriteString(w, `event: message_start
+data: {"type":"message_start","message":{"model":"m","usage":{}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"thinking"}}
+
+`) // no content_block_stop, no message_delta, no message_stop — truncated
+	})
+	var got string
+	_, err := a.ChatStream(context.Background(), ChatRequest{Messages: []Message{TextMessage(RoleUser, "hi")}},
+		func(s string) { got += s })
+	if err == nil {
+		t.Fatal("truncated stream must return an error, not a silent partial turn")
+	}
+	if got != "thinking" {
+		t.Fatalf("emitted = %q", got)
+	}
+	if n := atomic.LoadInt32(&hits); n != 1 {
+		t.Fatalf("hits = %d, want 1 (terminal after emit, no retry)", n)
+	}
+}
+
+// TestAnthropicChatStreamTruncatedToolUseFails: a tool_use whose input JSON was cut
+// off (even with a stop_reason) must fail — never dispatch a tool with half-formed
+// arguments (the verifier reproduced `{"command":"sudo rm` reaching a tool).
+func TestAnthropicChatStreamTruncatedToolUseFails(t *testing.T) {
+	a := sseServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		_, _ = io.WriteString(w, `event: message_start
+data: {"type":"message_start","message":{"model":"m","usage":{}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"bash"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"sudo rm"}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`)
+	})
+	res, err := a.ChatStream(context.Background(), ChatRequest{Messages: []Message{TextMessage(RoleUser, "hi")}}, func(string) {})
+	if err == nil {
+		t.Fatalf("incomplete tool_use input must fail, got %d tool uses", len(res.ToolUses()))
+	}
+}
+
 // TestAnthropicChatStreamNoRetryAfterEmit: an error AFTER text has been emitted is
 // terminal — never retried, so already-shown output is not duplicated.
 func TestAnthropicChatStreamNoRetryAfterEmit(t *testing.T) {
