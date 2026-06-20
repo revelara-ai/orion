@@ -116,8 +116,12 @@ func checklistFor(projectType string) []RequiredDecision {
 // Deterministic intent matchers: only resolve a decision when the intent states
 // it explicitly. Narrow by design so the gate never guesses.
 var (
-	portRe  = regexp.MustCompile(`(?i)\bport\s+\d{2,5}\b`)
-	jsonRe  = regexp.MustCompile(`(?i)\b(json|xml|plain ?text|protobuf)\b`)
+	portRe = regexp.MustCompile(`(?i)\bport\s+\d{2,5}\b`)
+	// Only formats the contract + proof pipeline actually support, so the two
+	// gates share one vocabulary. An intent naming an unsupported format (xml,
+	// protobuf) does NOT auto-resolve — it stays open and is asked, then rejected
+	// loudly at contract assembly rather than silently mishandled.
+	jsonRe  = regexp.MustCompile(`(?i)\b(json|plain ?text)\b`)
 	tzRe    = regexp.MustCompile(`(?i)\b(utc|gmt|local time|[a-z]+/[a-z_]+)\b`)
 	routeRe = regexp.MustCompile(`(?i)(\broute\b|\bpath\b|\bendpoint\b)\s+\S+|\s/[a-z0-9_\-/]+`)
 )

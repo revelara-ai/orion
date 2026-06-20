@@ -50,7 +50,7 @@ func specTools(c *orchestrator.Conductor) *tools.Registry {
 
 	r.Register(tools.Tool{
 		Name:        "record_answer",
-		Description: "Record the developer's answer to a spec decision (key from check_completeness + the value).",
+		Description: "Record the developer's answer to a spec decision (key from check_completeness + the value). For response_format, use a canonical value — \"json\" or \"plain text\" (the only formats the build+proof pipeline supports). If a tool returns an \"unrecognized/ambiguous format\" error, re-ask and record one of those.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]}`),
 		Safety:      tools.Safety{Destructive: true},
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
