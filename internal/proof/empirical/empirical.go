@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/revelara-ai/orion/internal/proof/safeenv"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 )
@@ -48,6 +49,7 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truth
 
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, ".")
 	build.Dir = artifactDir
+	build.Env = safeenv.Build() // scrubbed: building generated code never sees host secrets
 	if out, err := build.CombinedOutput(); err != nil {
 		return failMode("build failed: " + strings.TrimSpace(string(out))), ProbeResult{Detail: "build failed"}, nil
 	}
