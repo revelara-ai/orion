@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/revelara-ai/orion/internal/proof/safeenv"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
@@ -49,8 +50,9 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract, corpus
 		return truthalign.ModeResult{}, fmt.Errorf("write corpus: %w", err)
 	}
 
-	// Run the tests independently (the baseline).
-	cmd := exec.CommandContext(ctx, "go", "test", "./...")
+	// Run the tests independently (the baseline). -v so passing per-case obligation
+	// markers (RUN/PASS) are not suppressed by `go test`.
+	cmd := exec.CommandContext(ctx, "go", "test", "-v", "./...")
 	cmd.Dir = proofDir
 	cmd.Env = safeenv.Build() // scrubbed: toolchain/cache vars only, no host secrets
 	out, err := cmd.CombinedOutput()
@@ -58,6 +60,7 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract, corpus
 
 	metrics := map[string]float64{"run_count": 1, "mutation_score": 0}
 	output := string(out)
+	obligations := parseObligations(output) // per-case executed/passed from markers
 	if pass {
 		// Behavioral quality gate: the corpus must KILL behavior-changing mutants
 		// (green coverage is a vanity metric; mutation score is the signal).
@@ -72,9 +75,31 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract, corpus
 		}
 	}
 	return truthalign.ModeResult{
-		Mode:    "behavioral",
-		Pass:    pass,
-		Output:  output,
-		Metrics: metrics,
+		Mode:        "behavioral",
+		Pass:        pass,
+		Output:      output,
+		Metrics:     metrics,
+		Obligations: obligations,
 	}, nil
+}
+
+// parseObligations reads ORION_OBLIGATION_RUN/PASS:<caseID> markers from the
+// `go test -v` output. RUN seen → executed; PASS seen → passed. A case test that
+// panicked or whose build failed prints no markers → never executed (a coverage
+// hole, not a silent pass).
+func parseObligations(output string) map[string]truthalign.ObligationStatus {
+	obs := map[string]truthalign.ObligationStatus{}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if id, ok := strings.CutPrefix(line, "ORION_OBLIGATION_RUN:"); ok {
+			st := obs[id]
+			st.Executed = true
+			obs[id] = st
+		} else if id, ok := strings.CutPrefix(line, "ORION_OBLIGATION_PASS:"); ok {
+			st := obs[id]
+			st.Executed, st.Passed = true, true
+			obs[id] = st
+		}
+	}
+	return obs
 }

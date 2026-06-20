@@ -94,7 +94,7 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 	}
 
 	step("Proving (behavioral + empirical + hazard)…")
-	report, err := proof.ProveAll(ctx, buildDir, testsynth.Contract{Route: gs.Route, Format: gs.Format, TimeZone: gs.TimeZone}, model)
+	report, err := proof.ProveAll(ctx, buildDir, testsynth.Contract{Route: gs.Route, Format: gs.Format, TimeZone: gs.TimeZone, Cases: es.ResponseContract.Cases}, model)
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("proof: %w", err)
 	}

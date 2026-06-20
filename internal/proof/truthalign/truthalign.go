@@ -19,6 +19,14 @@ const (
 	Inconclusive Verdict = "Inconclusive"
 )
 
+// ObligationStatus is one behavioral case's per-mode execution record. Executed
+// distinguishes "ran and failed" from "never ran" (a coverage hole) — the
+// distinction the Phase-3 ObligationGate needs to escalate vs reject.
+type ObligationStatus struct {
+	Executed bool
+	Passed   bool
+}
+
 // ModeResult is one proof mode's outcome (behavioral | empirical | hazard), with
 // the quantitative metrics that make degradation computable.
 type ModeResult struct {
@@ -27,6 +35,9 @@ type ModeResult struct {
 	Inconclusive bool // e.g. high-variance / flaky → not a coin-flip Accept/Reject
 	Output       string
 	Metrics      map[string]float64
+	// Obligations is per-case (caseID → status) for modes that execute behavioral
+	// cases (behavioral, empirical). Nil for modes that don't (hazard).
+	Obligations map[string]ObligationStatus
 }
 
 // Outcome is the converged verdict plus per-mode provenance and dissent.
