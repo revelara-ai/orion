@@ -1,10 +1,41 @@
 package stpa
 
-// DefaultModel returns the Polaris-seeded *reasonable defaults* for a Go HTTP
-// service — the starting point the developer reviews and CHANGES during the
-// questionnaire. It is never the final word; the developer ratifies/amends each
-// phase. (In production these come from Polaris control-structure/loss-scenario
-// defaults; V2.0 seeds them locally for the http-service path.)
+// SkeletonModel is the DOMAIN-NEUTRAL STPA fallback for a project that has not
+// ratified a hazard model: one abstract loss (the system fails to deliver its
+// specified behavior), one controller + control action with a closed feedback loop,
+// and one controlled UCA that declares NO source tokens — so its control is verified
+// by the behavioral + empirical obligations (the Cases), not a domain-specific code
+// grep. It contains no HTTP/time strings, so it never imposes the time domain on an
+// arbitrary build. It is honest: with no ratified hazard analysis, the hazard mode
+// leans entirely on the executed behavioral contract rather than pretending to do
+// domain hazard analysis it was never given.
+func SkeletonModel() Model {
+	return Model{
+		Losses: []Loss{{ID: "L1", Description: "the system fails to deliver its specified behavior"}},
+		Structure: ControlStructure{
+			Controllers: []string{"Service"},
+			Actions: []ControlAction{{
+				ID: "CA1", Controller: "Service", Action: "produce the specified output for each input",
+				Feedback: FeedbackPath{From: "Service", To: "caller", Signal: "response/result"},
+			}},
+		},
+		UCAs: []UCA{{
+			ID: "UCA1", ControlAction: "CA1", Type: NotProvided,
+			Hazard: "the specified behavior is not produced", LossRefs: []string{"L1"},
+			Disposition: DispositionControlled,
+			Rationale:   "verified by the behavioral + empirical proof obligations (no domain control declared)",
+			// no Verify tokens → control presence is asserted by the Cases proof, not a grep
+		}},
+	}
+}
+
+// DefaultModel returns the seeded STPA defaults for the canonical Go HTTP
+// time-service EXAMPLE — the starting point a developer reviews and CHANGES during
+// the questionnaire. It is NOT a generic default: its losses, controllers, and UCAs
+// are HTTP/time-specific, and each controlled UCA declares the HTTP/time source
+// tokens (Verify) that prove its control. It must NOT be used as the silent fallback
+// for an arbitrary project (that imposes the time domain on every build); use
+// SkeletonModel for that. This is the time-service example only.
 func DefaultModel() Model {
 	return Model{
 		Losses: []Loss{
@@ -26,10 +57,10 @@ func DefaultModel() Model {
 			},
 		},
 		UCAs: []UCA{
-			{ID: "UCA1", ControlAction: "CA1", Type: NotProvided, Hazard: "handler never responds (hang)", LossRefs: []string{"L1"}},
-			{ID: "UCA2", ControlAction: "CA1", Type: ProvidedIncorrectly, Hazard: "wrong/stale time or wrong format returned", LossRefs: []string{"L2"}},
-			{ID: "UCA3", ControlAction: "CA1", Type: WrongTiming, Hazard: "response exceeds acceptable latency / request timeout", LossRefs: []string{"L1"}},
-			{ID: "UCA4", ControlAction: "CA2", Type: WrongDuration, Hazard: "connection held open indefinitely (slowloris)", LossRefs: []string{"L3"}},
+			{ID: "UCA1", ControlAction: "CA1", Type: NotProvided, Hazard: "handler never responds (hang)", LossRefs: []string{"L1"}, Verify: []string{"handleTime", "ListenAndServe"}},
+			{ID: "UCA2", ControlAction: "CA1", Type: ProvidedIncorrectly, Hazard: "wrong/stale time or wrong format returned", LossRefs: []string{"L2"}, Verify: []string{"UTC"}},
+			{ID: "UCA3", ControlAction: "CA1", Type: WrongTiming, Hazard: "response exceeds acceptable latency / request timeout", LossRefs: []string{"L1"}, Verify: []string{"ReadTimeout", "WriteTimeout"}},
+			{ID: "UCA4", ControlAction: "CA2", Type: WrongDuration, Hazard: "connection held open indefinitely (slowloris)", LossRefs: []string{"L3"}, Verify: []string{"ReadHeaderTimeout"}},
 		},
 		Scenarios: []LossScenario{
 			{ID: "S1", Trigger: "burst of requests", SustainingCondition: "no request timeouts or concurrency limits", Loss: "L3", Controls: []string{"server read/write timeouts", "bounded concurrency"}},

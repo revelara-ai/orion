@@ -98,6 +98,12 @@ type UCA struct {
 	Disposition   Disposition `json:"disposition"`
 	Rationale     string      `json:"rationale,omitempty"` // why controlled, or why the gap is accepted
 	DecidedBy     string      `json:"decided_by,omitempty"`
+	// Verify lists source tokens that must ALL appear in the artifact for a controlled
+	// UCA's control to count as present. It is DECLARED in the model (per-domain), not
+	// hardcoded in the proof — so the hazard check generalizes: a UCA that declares no
+	// tokens is verified by its disposition + the behavioral/empirical obligations, not
+	// a code grep. The time-service example declares its HTTP/time tokens here.
+	Verify []string `json:"verify,omitempty"`
 }
 
 // LossScenario traces trigger → sustaining condition → loss, with mitigating controls.

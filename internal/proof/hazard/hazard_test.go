@@ -10,6 +10,53 @@ import (
 	"github.com/revelara-ai/orion/internal/sandbox"
 )
 
+// TestControlPresentIsModelDriven: the control check reads the tokens a UCA DECLARES
+// (model-driven), not a hardcoded time-service switch. Declared tokens are enforced
+// (rigor); a UCA with no declared tokens is verified by its disposition + the
+// behavioral/empirical obligations, so a non-time program is not rejected for lacking
+// handleTime/UTC.
+func TestControlPresentIsModelDriven(t *testing.T) {
+	if !controlPresent("x := emitMetric()", stpa.UCA{Verify: []string{"emitMetric"}}) {
+		t.Fatal("declared token present → control should read present")
+	}
+	if controlPresent("x := 1", stpa.UCA{Verify: []string{"emitMetric"}}) {
+		t.Fatal("declared token absent → control should read absent (rigor preserved)")
+	}
+	if !controlPresent("anything at all", stpa.UCA{}) {
+		t.Fatal("no declared tokens → not a domain grep → must read present (no false rejection)")
+	}
+}
+
+// TestHazardCheckIsGeneralNotTimeHardcoded: the hazard mode no longer imposes the
+// time domain. The domain-neutral skeleton PASSES an arbitrary non-time program; the
+// time-service model, applied to the SAME non-time code, FAILS because its declared
+// HTTP/time control tokens are absent (rigor is preserved, just declared in the model
+// instead of hardcoded in the proof).
+func TestHazardCheckIsGeneralNotTimeHardcoded(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	nonTime := "package main\n\nfunc Reduce(xs []int) int {\n\ts := 0\n\tfor _, x := range xs {\n\t\ts += x\n\t}\n\treturn s\n}\n\nfunc main() { _ = Reduce(nil) }\n"
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(nonTime), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mr, _, err := Prove(ctx, dir, stpa.SkeletonModel())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mr.Pass {
+		t.Fatalf("the domain-neutral skeleton must NOT reject a correct non-time program:\n%s", mr.Output)
+	}
+
+	mr2, _, err := Prove(ctx, dir, stpa.RatifiedTimeServiceModel())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mr2.Pass {
+		t.Fatal("the time-service model claims HTTP/time controls; non-time code lacking those tokens must fail the hazard mode")
+	}
+}
+
 // TestControlLoopFeedbackValidated: against the ratified model and a conforming
 // artifact, every control action has a test and a closed feedback loop, no UCA is
 // uncontrolled (open), and the accepted gaps are reported; removing a control

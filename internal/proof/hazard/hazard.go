@@ -54,7 +54,7 @@ func Prove(ctx context.Context, artifactDir string, model stpa.Model) (truthalig
 		rep.UCAsConsidered = append(rep.UCAsConsidered, u.ID)
 		switch u.Disposition {
 		case stpa.DispositionControlled:
-			if controlPresent(src, u.ID) {
+			if controlPresent(src, u) {
 				controlledOK++
 			} else {
 				// Claimed controlled but the control is absent in the artifact → it
@@ -96,21 +96,20 @@ func Prove(ctx context.Context, artifactDir string, model stpa.Model) (truthalig
 	return mr, rep, nil
 }
 
-// controlPresent verifies the artifact contains the control for a controlled UCA
-// (V2.0 token check for the Go time-service path).
-func controlPresent(src, ucaID string) bool {
-	switch ucaID {
-	case "UCA1": // handler must exist / serve
-		return strings.Contains(src, "handleTime") && strings.Contains(src, "ListenAndServe")
-	case "UCA2": // correctness: UTC
-		return strings.Contains(src, "UTC")
-	case "UCA3": // latency bounds: read/write timeouts
-		return strings.Contains(src, "ReadTimeout") && strings.Contains(src, "WriteTimeout")
-	case "UCA4": // slowloris: read-header timeout
-		return strings.Contains(src, "ReadHeaderTimeout")
-	default:
-		return false
+// controlPresent verifies a controlled UCA's control is present in the artifact by
+// evaluating the tokens the UCA DECLARES (model-driven, not domain-hardcoded): every
+// token in u.Verify must appear in the source. A UCA that declares no tokens is taken
+// as present — its control is asserted by its disposition + the behavioral/empirical
+// obligations, not a code grep. This is what makes the hazard check general: the
+// time-service example declares its HTTP/time tokens in the model; an arbitrary
+// project's skeleton declares none and is verified by the executed contract.
+func controlPresent(src string, u stpa.UCA) bool {
+	for _, tok := range u.Verify {
+		if !strings.Contains(src, tok) {
+			return false
+		}
 	}
+	return true
 }
 
 // testForAction returns the test/decision covering a control action's UCAs:
