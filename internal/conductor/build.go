@@ -92,7 +92,13 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 	proj, _, _ := store.CurrentProjectSpec(ctx)
 	model, ok, _ := stpa.Load(ctx, store, proj.ID)
 	if !ok {
-		model = stpa.RatifiedTimeServiceModel()
+		// No ratified hazard model for this project → a DOMAIN-NEUTRAL skeleton, never
+		// the time-service model. Imposing time-service hazards (and their HTTP/time
+		// token checks) on an arbitrary build silently rejected correct non-time
+		// programs. The skeleton's control is verified by the behavioral + empirical
+		// obligations; a real hazard model is ratified per project (future: wired into
+		// the spec flow). The time-service example ratifies stpa.DefaultModel explicitly.
+		model = stpa.SkeletonModel()
 		_ = stpa.Save(ctx, store, proj.ID, model)
 	}
 	contract := testsynth.Contract{Route: gs.Route, Format: gs.Format, TimeZone: gs.TimeZone, Cases: es.ResponseContract.Cases}
