@@ -62,7 +62,12 @@ var (
 	planStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42"))
 	specCard    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1)
 	permCard    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("214")).Padding(0, 1)
+	buildCard   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("42")).Padding(0, 1)
 	cardTitle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
+	buildTitle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42"))
+	okGlyph     = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	warnGlyph   = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	failGlyph   = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
 )
 
 // ── async message types ──────────────────────────────────────────────────────
@@ -300,9 +305,34 @@ func (m Conversation) renderMsg(mm msg, w int) string {
 		return label + permCard.Width(cw-4).MarginLeft(2).Render(card)
 	case "plan":
 		return label + planStyle.Width(cw).MarginLeft(2).Render(mm.text)
+	case "build_report":
+		card := buildTitle.Render("build — proof") + "\n" + colorizeReport(mm.text)
+		return label + buildCard.Width(cw-4).MarginLeft(2).Render(card)
 	default:
 		return label + orionText.Width(cw).MarginLeft(2).Render(mm.text)
 	}
+}
+
+// colorizeReport tints the status glyph at the start of each phase line (✓ green,
+// ⚠ amber, ✗ red) so the build card reads at a glance.
+func colorizeReport(s string) string {
+	var b strings.Builder
+	for i, line := range strings.Split(s, "\n") {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		switch {
+		case strings.HasPrefix(line, "✓"):
+			b.WriteString(okGlyph.Render("✓") + line[len("✓"):])
+		case strings.HasPrefix(line, "⚠"):
+			b.WriteString(warnGlyph.Render("⚠") + line[len("⚠"):])
+		case strings.HasPrefix(line, "✗"):
+			b.WriteString(failGlyph.Render("✗") + line[len("✗"):])
+		default:
+			b.WriteString(line)
+		}
+	}
+	return b.String()
 }
 
 // View renders banner, scrollable transcript, input, budget, hint.

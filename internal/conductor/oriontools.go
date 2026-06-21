@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/revelara-ai/orion/internal/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
@@ -115,7 +114,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 			if st == nil {
 				return "", fmt.Errorf("build requires a persistent store")
 			}
-			var steps []string
+			var phases []PhaseEvent
 			// With a model provider, generate ARBITRARY code to the spec (general)
 			// and audit alignment to intent; without one (offline/CI) fall back to
 			// the deterministic fixture and skip alignment.
@@ -125,18 +124,17 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 				gen = NativeGenerator(provider)
 				aligner = NativeAligner(provider)
 			}
-			res, err := BuildAndProve(ctx, st, gen, aligner, func(s string) { steps = append(steps, s) })
+			res, err := BuildAndProve(ctx, st, gen, aligner, func(e PhaseEvent) { phases = append(phases, e) })
 			if err != nil {
 				return "", err
 			}
-			out := strings.Join(steps, "\n")
-			out += fmt.Sprintf("\n\nBuild pipeline finished — task %s: proof verdict=%s, task closed=%v, reliability tier=%s, delivery=%s.",
-				res.TaskID, res.Verdict, res.Closed, res.Tier, res.Delivery)
+			out := "Build pipeline:\n" + RenderPhaseReport(phases)
+			out += fmt.Sprintf("\n\nVerdict %s · task closed=%v · tier %s · delivery %s.", res.Verdict, res.Closed, res.Tier, res.Delivery)
 			if res.Reason != "" {
 				out += "\nEscalation: " + res.Reason
 			}
 			if res.Alignment.Ran && !res.Alignment.Aligned {
-				out += fmt.Sprintf("\nAlignment audit (advisory, %s): %s", res.Alignment.Severity, res.Alignment.Concern)
+				out += fmt.Sprintf("\nAlignment (advisory, %s): %s", res.Alignment.Severity, res.Alignment.Concern)
 			}
 			return out, nil
 		},

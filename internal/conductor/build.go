@@ -44,12 +44,7 @@ type BuildResult struct {
 // the one-shot "build to the spec" pipeline shared by `orion run` and the native
 // Orion agent's build_service tool. gen==nil uses the deterministic fixture;
 // onStep (may be nil) streams progress lines to the conversation.
-func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onStep func(string)) (BuildResult, error) {
-	step := func(s string) {
-		if onStep != nil {
-			onStep(s)
-		}
-	}
+func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink) (BuildResult, error) {
 	if gen == nil {
 		gen = func(_ context.Context, gs sandbox.GenSpec, dir string) (sandbox.GeneratedArtifact, error) {
 			return sandbox.GenerateFixtureService(dir, gs)
@@ -61,11 +56,14 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("no accepted spec (ratify first): %w", err)
 	}
+	onPhase.emit("Decompose", PhaseRunning, "")
 	pv, err := c.PlanView(ctx) // decomposes + persists on demand
 	if err != nil || len(pv.Tasks) == 0 {
+		onPhase.emit("Decompose", PhaseFailed, "no plan")
 		return BuildResult{}, fmt.Errorf("no plan: %w", err)
 	}
 	taskID := pv.Tasks[0].ID
+	onPhase.emit("Decompose", PhaseDone, fmt.Sprintf("%d task(s)", len(pv.Tasks)))
 
 	gs := sandbox.GenSpec{
 		Route:    es.ResponseContract.Route,
@@ -79,14 +77,16 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 		return BuildResult{}, fmt.Errorf("build dir: %w", err)
 	}
 
-	step("Generating the service…")
+	onPhase.emit("Generate", PhaseRunning, "")
 	art, err := gen(ctx, gs, buildDir)
 	if err != nil {
+		onPhase.emit("Generate", PhaseFailed, err.Error())
 		return BuildResult{}, fmt.Errorf("generate: %w", err)
 	}
 	if _, err := sandbox.PersistArtifact(ctx, store, taskID, art); err != nil {
 		return BuildResult{}, fmt.Errorf("persist artifact: %w", err)
 	}
+	onPhase.emit("Generate", PhaseDone, "")
 
 	proj, _, _ := store.CurrentProjectSpec(ctx)
 	model, ok, _ := stpa.Load(ctx, store, proj.ID)
@@ -95,14 +95,20 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 		_ = stpa.Save(ctx, store, proj.ID, model)
 	}
 
-	step("Proving (behavioral + empirical + hazard)…")
+	onPhase.emit("Prove", PhaseRunning, "behavioral + empirical + hazard")
 	report, err := proof.ProveAll(ctx, buildDir, testsynth.Contract{Route: gs.Route, Format: gs.Format, TimeZone: gs.TimeZone, Cases: es.ResponseContract.Cases}, model)
 	if err != nil {
+		onPhase.emit("Prove", PhaseFailed, err.Error())
 		return BuildResult{}, fmt.Errorf("proof: %w", err)
 	}
 	// Coverage gate: every requirement the spec declares must have an executed,
 	// passing obligation — else downgrade the verdict (the or-y9d kill).
 	proof.EnforceObligations(es.ResponseContract.RequiredCaseIDs(), &report)
+	proveStatus := PhaseDone
+	if string(report.Outcome.Verdict) != "Accept" {
+		proveStatus = PhaseWarn
+	}
+	onPhase.emit("Prove", proveStatus, string(report.Outcome.Verdict))
 
 	// AlignmentGate (V3 Step 1, LOG-ONLY): an advisory audit of whether the built
 	// code serves the INTENT, not just the cases. It records + surfaces a concern
@@ -111,14 +117,16 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 	// right-to-ship).
 	var alignment AlignmentRecord
 	if aligner != nil {
-		step("Auditing alignment to intent…")
+		onPhase.emit("Align", PhaseRunning, "")
 		if v, aerr := aligner(ctx, es.Intent, buildDir, es.ResponseContract.Cases); aerr == nil {
 			alignment = AlignmentRecord{Ran: true, Aligned: v.Aligned, Severity: v.Severity, Concern: v.Concern}
-			if !v.Aligned {
-				step(fmt.Sprintf("⚠ alignment concern (%s): %s", v.Severity, v.Concern))
+			if v.Aligned {
+				onPhase.emit("Align", PhaseDone, "serves the intent")
+			} else {
+				onPhase.emit("Align", PhaseWarn, v.Concern)
 			}
 		} else {
-			step("alignment audit skipped: " + aerr.Error())
+			onPhase.emit("Align", PhaseWarn, "skipped: "+aerr.Error())
 		}
 	}
 
@@ -159,6 +167,13 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 			return e
 		})
 	}
+	deliverStatus := PhaseDone
+	deliverDetail := "tier " + string(tier)
+	if res.Decision != delivery.Deliver {
+		deliverStatus = PhaseWarn
+		deliverDetail = "escalate: " + res.Reason
+	}
+	onPhase.emit("Deliver", deliverStatus, deliverDetail)
 
 	return BuildResult{
 		TaskID: taskID, Verdict: string(report.Outcome.Verdict), Closed: closed,
