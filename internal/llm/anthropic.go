@@ -161,7 +161,13 @@ func (a *Anthropic) toWire(req ChatRequest, model string, maxTok int) wireReques
 				}
 			}
 		}
-		w.Messages = append(w.Messages, wm)
+		// Never send a message with empty content — a nil slice marshals to
+		// `content: null`, which the API rejects ("should be a valid array"), and a
+		// single empty message poisons every subsequent request. Dropping it is safe
+		// (the API permits consecutive same-role messages).
+		if len(wm.Content) > 0 {
+			w.Messages = append(w.Messages, wm)
+		}
 	}
 	for _, t := range req.Tools {
 		w.Tools = append(w.Tools, wireTool{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema})
