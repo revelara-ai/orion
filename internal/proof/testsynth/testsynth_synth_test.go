@@ -35,7 +35,9 @@ func TestSynthesizesTestsFromSpec(t *testing.T) {
 	if testing.Short() {
 		t.Skip("compiles + runs go test; skipped in -short")
 	}
-	corpus := SynthesizeBehavioral(Contract{Route: "/time", Format: "json"})
+	// DECLARE the key (RequiredJSONKey) — the legacy corpus no longer defaults to a
+	// "time" assertion, so the contract must state the key it requires.
+	corpus := SynthesizeBehavioral(Contract{Route: "/time", Format: "json", RequiredJSONKey: "time"})
 
 	correct := `package main
 
