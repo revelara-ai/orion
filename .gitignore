@@ -11,3 +11,6 @@
 .beads-credential-key
 .beads/proxieddb/
 .beads/issues.jsonl
+
+# Generated build output (orion exports proven code here in USER repos; noise in this one)
+orion-build/
