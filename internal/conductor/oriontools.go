@@ -116,13 +116,16 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 				return "", fmt.Errorf("build requires a persistent store")
 			}
 			var steps []string
-			// With a model provider, generate ARBITRARY code to the spec (general);
-			// without one (offline/CI) fall back to the deterministic fixture.
+			// With a model provider, generate ARBITRARY code to the spec (general)
+			// and audit alignment to intent; without one (offline/CI) fall back to
+			// the deterministic fixture and skip alignment.
 			var gen Generator
+			var aligner Aligner
 			if provider != nil {
 				gen = NativeGenerator(provider)
+				aligner = NativeAligner(provider)
 			}
-			res, err := BuildAndProve(ctx, st, gen, func(s string) { steps = append(steps, s) })
+			res, err := BuildAndProve(ctx, st, gen, aligner, func(s string) { steps = append(steps, s) })
 			if err != nil {
 				return "", err
 			}
@@ -131,6 +134,9 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 				res.TaskID, res.Verdict, res.Closed, res.Tier, res.Delivery)
 			if res.Reason != "" {
 				out += "\nEscalation: " + res.Reason
+			}
+			if res.Alignment.Ran && !res.Alignment.Aligned {
+				out += fmt.Sprintf("\nAlignment audit (advisory, %s): %s", res.Alignment.Severity, res.Alignment.Concern)
 			}
 			return out, nil
 		},

@@ -37,7 +37,7 @@ func TestBuildAndProveFixture(t *testing.T) {
 	}
 	oc, ctx := ratifiedTimeService(t)
 
-	res, err := BuildAndProve(ctx, oc.Store(), nil, nil)
+	res, err := BuildAndProve(ctx, oc.Store(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
