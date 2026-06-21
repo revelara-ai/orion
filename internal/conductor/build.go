@@ -27,13 +27,14 @@ type Generator func(ctx context.Context, gs sandbox.GenSpec, buildDir string) (s
 
 // BuildResult is the outcome of building + proving a ratified spec.
 type BuildResult struct {
-	TaskID   string
-	Verdict  string // converged proof verdict (Accept/Reject)
-	Closed   bool   // task closed (verification-gated done)
-	Tier     string
-	Delivery string // "deliver" | "escalate"
-	Reason   string // escalation reason, if any
-	BuildDir string
+	TaskID    string
+	Verdict   string // converged proof verdict (Accept/Reject)
+	Closed    bool   // task closed (verification-gated done)
+	Tier      string
+	Delivery  string // "deliver" | "escalate"
+	Reason    string // escalation reason, if any
+	BuildDir  string
+	Alignment AlignmentRecord // advisory intent-alignment audit (log-only in V3 Step 1)
 }
 
 // BuildAndProve builds the current accepted spec's lead task and proves it: it
@@ -43,7 +44,7 @@ type BuildResult struct {
 // the one-shot "build to the spec" pipeline shared by `orion run` and the native
 // Orion agent's build_service tool. gen==nil uses the deterministic fixture;
 // onStep (may be nil) streams progress lines to the conversation.
-func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator, onStep func(string)) (BuildResult, error) {
+func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onStep func(string)) (BuildResult, error) {
 	step := func(s string) {
 		if onStep != nil {
 			onStep(s)
@@ -102,6 +103,25 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 	// Coverage gate: every requirement the spec declares must have an executed,
 	// passing obligation — else downgrade the verdict (the or-y9d kill).
 	proof.EnforceObligations(es.ResponseContract.RequiredCaseIDs(), &report)
+
+	// AlignmentGate (V3 Step 1, LOG-ONLY): an advisory audit of whether the built
+	// code serves the INTENT, not just the cases. It records + surfaces a concern
+	// but does NOT change the verdict or block delivery yet — this step validates
+	// the judge before it is allowed to gate (proof.Accept stays the sole
+	// right-to-ship).
+	var alignment AlignmentRecord
+	if aligner != nil {
+		step("Auditing alignment to intent…")
+		if v, aerr := aligner(ctx, es.Intent, buildDir, es.ResponseContract.Cases); aerr == nil {
+			alignment = AlignmentRecord{Ran: true, Aligned: v.Aligned, Severity: v.Severity, Concern: v.Concern}
+			if !v.Aligned {
+				step(fmt.Sprintf("⚠ alignment concern (%s): %s", v.Severity, v.Concern))
+			}
+		} else {
+			step("alignment audit skipped: " + aerr.Error())
+		}
+	}
+
 	closed, err := New(store).ProveAndCloseReport(ctx, taskID, report)
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("gate: %w", err)
@@ -143,6 +163,7 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 	return BuildResult{
 		TaskID: taskID, Verdict: string(report.Outcome.Verdict), Closed: closed,
 		Tier: string(tier), Delivery: string(res.Decision), Reason: res.Reason, BuildDir: buildDir,
+		Alignment: alignment,
 	}, nil
 }
 
