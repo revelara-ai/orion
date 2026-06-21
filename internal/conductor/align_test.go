@@ -18,6 +18,52 @@ func alignResp(aligned bool, sev, concern string) *llm.ChatResponse {
 	}}
 }
 
+// A service that PASSES the cases (returns JSON with a "time" key that is valid
+// RFC3339) but VIOLATES the intent — the timestamp is hardcoded, not the current
+// time. This is the misalignment proof cannot catch.
+const hardcodedTimeService = `package main
+
+import (
+	"encoding/json"
+	"net/http"
+)
+
+func handleTime(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"time": "2020-01-01T00:00:00Z"})
+}
+
+func main() { http.HandleFunc("/time", handleTime); _ = http.ListenAndServe(":8080", nil) }
+`
+
+// TestNativeAlignerCatchesHardcodedTime is the V3 Step 1 LIVE EXPERIMENT (set
+// ANTHROPIC_API_KEY to run it): does the alignment judge flag a hardcoded
+// timestamp that passes every "time" case? This is the single validation of the
+// most novel + risky part of V3 — the align-judge quality. Run:
+//
+//	ANTHROPIC_API_KEY=... go test ./internal/conductor/ -run TestNativeAlignerCatchesHardcodedTime -v
+func TestNativeAlignerCatchesHardcodedTime(t *testing.T) {
+	key := os.Getenv("ANTHROPIC_API_KEY")
+	if key == "" {
+		t.Skip("set ANTHROPIC_API_KEY to run the live alignment demonstration")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(hardcodedTimeService), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []spec.BehavioralCase{{ID: "t", Request: spec.RequestShape{Method: "GET", Path: "/time"}, Expect: spec.ExpectShape{Status: 200, ContentType: "application/json", Assertions: []spec.BodyAssertion{{Kind: spec.AssertJSONKeyRFC3339, Key: "time"}}}}}
+
+	v, err := NativeAligner(llm.NewAnthropic(key, os.Getenv("ORION_MODEL")))(
+		context.Background(), `Return the CURRENT time as JSON under a "time" key.`, dir, cases)
+	if err != nil {
+		t.Fatalf("align: %v", err)
+	}
+	t.Logf("alignment verdict: aligned=%v severity=%q concern=%q", v.Aligned, v.Severity, v.Concern)
+	if v.Aligned {
+		t.Errorf("the judge MISSED a hardcoded timestamp masquerading as the current time — the align-judge is the hard problem")
+	}
+}
+
 // TestNativeAlignerParsesVerdict: the LLM judge's report_alignment tool call is
 // decoded into an AlignVerdict.
 func TestNativeAlignerParsesVerdict(t *testing.T) {
