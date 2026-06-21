@@ -84,6 +84,10 @@ var (
 	okGlyph     = lipgloss.NewStyle().Foreground(cSuccess)
 	warnGlyph   = lipgloss.NewStyle().Foreground(cWarning)
 	failGlyph   = lipgloss.NewStyle().Foreground(cDanger)
+
+	cBorder   = lipgloss.Color("#362D50")                                                                    // divider on the void
+	transPane = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cBorder)               // top: transcript
+	inputPane = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cIndigo).Padding(0, 1) // bottom: input + status
 )
 
 // ── async message types ──────────────────────────────────────────────────────
@@ -146,17 +150,23 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch t := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = t.Width, t.Height
-		bodyH := t.Height - 6
+		// Two panes inside borders: header(1) + top border(2) + input pane(4) +
+		// hint(1) = 8 rows of chrome; the transcript fills the rest.
+		bodyH := t.Height - 8
 		if bodyH < 3 {
 			bodyH = 3
 		}
+		bodyW := t.Width - 2 // inside the transcript pane's border
+		if bodyW < 10 {
+			bodyW = 10
+		}
 		if !m.ready {
-			m.vp = viewport.New(t.Width, bodyH)
+			m.vp = viewport.New(bodyW, bodyH)
 			m.ready = true
 		} else {
-			m.vp.Width, m.vp.Height = t.Width, bodyH
+			m.vp.Width, m.vp.Height = bodyW, bodyH
 		}
-		if iw := t.Width - 4; iw > 8 { // bound the input to the terminal width
+		if iw := t.Width - 6; iw > 8 { // inside the input pane border + padding + prompt
 			m.input.Width = iw
 		}
 		m.render()
@@ -290,7 +300,10 @@ func (m *Conversation) render() {
 }
 
 func (m Conversation) renderTranscript() string {
-	w := m.width
+	w := m.vp.Width // wrap to the transcript pane's inner width
+	if w <= 0 {
+		w = m.width // fall back to the terminal width before the viewport is sized
+	}
 	if w <= 0 {
 		w = 80
 	}
@@ -367,23 +380,27 @@ func (m Conversation) View() string {
 	if !m.ready || len(m.msgs) == 0 {
 		body = dimStyle.Render(emptyState)
 	}
-	status := m.spendLine()
-	if m.inFlight {
-		status = m.sp.View() + " working · " + status
+	paneW := m.width - 2
+	if paneW < 10 {
+		paneW = 10
 	}
-	var b strings.Builder
-	b.WriteString(bannerStyle.Render("✦ Orion"))
-	b.WriteString(dimStyle.Render("  — proof-gated build harness"))
-	b.WriteString("\n")
-	b.WriteString(body)
-	b.WriteString("\n")
-	b.WriteString(m.input.View())
-	b.WriteString("\n")
-	b.WriteString(dimStyle.Render(status))
-	b.WriteString("  ·  ")
-	b.WriteString(dimStyle.Render("enter send · ↑/↓ scroll · ctrl+c quit"))
-	b.WriteString("\n")
-	return b.String()
+
+	// Header: the Polaris identity line.
+	header := bannerStyle.Render("✦ Orion") + dimStyle.Render("  — proof-gated build harness")
+
+	// Top pane: the conversation transcript (scrollable viewport).
+	top := transPane.Width(paneW).Render(body)
+
+	// Bottom pane: agent status (working / spend) above the input.
+	status := dimStyle.Render(m.spendLine())
+	if m.inFlight {
+		status = m.sp.View() + " " + lipgloss.NewStyle().Foreground(cLavender).Render("working") + dimStyle.Render(" · "+m.spendLine())
+	}
+	bottom := inputPane.Width(paneW).Render(status + "\n" + m.input.View())
+
+	hint := dimStyle.Render("  enter send · ↑/↓ scroll · ctrl+c quit")
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, top, bottom, hint)
 }
 
 func (m Conversation) spendLine() string {
