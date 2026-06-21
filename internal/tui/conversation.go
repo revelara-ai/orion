@@ -53,21 +53,37 @@ func conductorBrain(oc *orchestrator.Conductor) acpServer {
 
 const emptyState = "Conductor ready (in-process, over ACP). Describe what you want to build."
 
+// Revelara / Polaris palette — revelara-ai/design/colors_and_type.css. A deep
+// indigo "void" night sky with electric-indigo, the lavender star-glow, and a
+// warm-rose accent.
 var (
-	bannerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63"))
-	orionLabel  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
-	orionText   = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	youBlock    = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Align(lipgloss.Right)
-	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	planStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42"))
-	specCard    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1)
-	permCard    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("214")).Padding(0, 1)
-	buildCard   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("42")).Padding(0, 1)
-	cardTitle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
-	buildTitle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42"))
-	okGlyph     = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	warnGlyph   = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	failGlyph   = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+	cIndigo   = lipgloss.Color("#6D3CC8") // electric indigo — primary accent
+	cLavender = lipgloss.Color("#B99DE5") // star glow / links
+	cRose     = lipgloss.Color("#D4818D") // warm rose — secondary accent
+	cText     = lipgloss.Color("#F0ECF7") // primary text on dark
+	cMuted    = lipgloss.Color("#A8A0BA") // secondary text
+	cFaint    = lipgloss.Color("#8E859C") // metadata / disabled
+	cSuccess  = lipgloss.Color("#5FB39A")
+	cWarning  = lipgloss.Color("#E6B260")
+	cDanger   = lipgloss.Color("#D4656D")
+
+	bannerStyle = lipgloss.NewStyle().Bold(true).Foreground(cLavender)
+	starStyle   = lipgloss.NewStyle().Foreground(cLavender)
+	orionLabel  = lipgloss.NewStyle().Bold(true).Foreground(cIndigo)
+	orionText   = lipgloss.NewStyle().Foreground(cText)
+	youBlock    = lipgloss.NewStyle().Foreground(cMuted).Align(lipgloss.Right)
+	youTag      = lipgloss.NewStyle().Foreground(cRose)
+	dimStyle    = lipgloss.NewStyle().Foreground(cFaint)
+	toolStyle   = lipgloss.NewStyle().Foreground(cFaint).Italic(true)
+	planStyle   = lipgloss.NewStyle().Bold(true).Foreground(cSuccess)
+	specCard    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cIndigo).Padding(0, 1)
+	permCard    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cWarning).Padding(0, 1)
+	buildCard   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cSuccess).Padding(0, 1)
+	cardTitle   = lipgloss.NewStyle().Bold(true).Foreground(cIndigo)
+	buildTitle  = lipgloss.NewStyle().Bold(true).Foreground(cSuccess)
+	okGlyph     = lipgloss.NewStyle().Foreground(cSuccess)
+	warnGlyph   = lipgloss.NewStyle().Foreground(cWarning)
+	failGlyph   = lipgloss.NewStyle().Foreground(cDanger)
 )
 
 // ── async message types ──────────────────────────────────────────────────────
@@ -110,10 +126,14 @@ func NewConversation(client *ACPClient, sid string, oc *orchestrator.Conductor, 
 	ti := textinput.New()
 	ti.Placeholder = "your intent…"
 	ti.Prompt = "› "
+	ti.PromptStyle = lipgloss.NewStyle().Foreground(cIndigo)
+	ti.Cursor.Style = lipgloss.NewStyle().Foreground(cLavender)
+	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(cFaint)
 	ti.Focus()
 	ti.CharLimit = 0
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(cLavender) // the star-glow accent
 	return Conversation{client: client, sid: sid, oc: oc, gate: gate, input: ti, sp: sp}
 }
 
@@ -293,9 +313,12 @@ func (m Conversation) renderMsg(mm msg, w int) string {
 		cw = 6
 	}
 	if mm.role == "you" {
-		return youBlock.Width(w).Render(mm.text + "  ⟵ you")
+		return youBlock.Width(w).Render(mm.text + youTag.Render("  ⟵ you"))
 	}
-	label := "  " + orionLabel.Render("◇ Orion") + "\n"
+	if mm.kind == "tool_call" {
+		return toolStyle.Render("    " + mm.text) // a dim activity line under Orion, no label
+	}
+	label := "  " + starStyle.Render("✦ ") + orionLabel.Render("Orion") + "\n"
 	switch mm.kind {
 	case "spec":
 		card := cardTitle.Render("spec — review") + "\n" + mm.text
@@ -349,7 +372,8 @@ func (m Conversation) View() string {
 		status = m.sp.View() + " working · " + status
 	}
 	var b strings.Builder
-	b.WriteString(bannerStyle.Render("Orion — Conversation"))
+	b.WriteString(bannerStyle.Render("✦ Orion"))
+	b.WriteString(dimStyle.Render("  — proof-gated build harness"))
 	b.WriteString("\n")
 	b.WriteString(body)
 	b.WriteString("\n")
