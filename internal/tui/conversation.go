@@ -162,8 +162,8 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			bodyH = 3
 		}
 		bodyW := t.Width - 2 // inside the transcript pane's border
-		if bodyW < 10 {
-			bodyW = 10
+		if bodyW < 1 {
+			bodyW = 1 // never floor ABOVE the terminal width — that overflows a tiny term
 		}
 		if !m.ready {
 			m.vp = viewport.New(bodyW, bodyH)
@@ -201,6 +201,12 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.msgs = append(m.msgs, msg{role: "orion", kind: "permission", text: t.req.Title})
 		m.input.Placeholder = "y to ratify · e to edit"
 		m.render()
+		// A permission request BLOCKS the conversation and asks the developer to act
+		// (press y/e). Force the card into view even if they had scrolled up to read
+		// history — otherwise they're prompted to respond with no visible prompt.
+		if m.ready {
+			m.vp.GotoBottom()
+		}
 		return m, nil
 
 	case turnDoneMsg:
@@ -392,8 +398,8 @@ func (m Conversation) View() string {
 		body = dimStyle.Render(es)
 	}
 	paneW := m.width - 2
-	if paneW < 10 {
-		paneW = 10
+	if paneW < 1 {
+		paneW = 1 // tiny terminal: degrade narrow rather than overflow the width
 	}
 
 	// Header: the Polaris identity line + the active brain (amber when offline).
