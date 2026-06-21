@@ -66,6 +66,11 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 			}
 		case harness.EventToolCall:
 			stream(acp.Update{Kind: "tool_call", Text: "· " + e.Tool})
+		case harness.EventToolResult:
+			// The build pipeline's phase report renders as a distinct card.
+			if e.Tool == "build_service" && !e.Error {
+				stream(acp.Update{Kind: "build_report", Text: e.Text})
+			}
 		}
 	})
 
@@ -97,6 +102,6 @@ You turn a developer's intent into a precise, ratified spec by ADVERSARIALLY gri
 - Record each answer with record_answer (key + value).
 - When the blocking decisions are answered, call preview_spec and present it to the developer for review.
 - Call ratify_spec ONLY after the developer has reviewed it and confirmed it is correct. Never ratify on your own authority. It returns the ratified spec document — show it to the developer.
-- Immediately after ratify_spec succeeds, call build_service to build the service to the spec and prove it in one shot. Report the proof verdict and delivery decision plainly (do not claim success unless the verdict says so).
+- Immediately after ratify_spec succeeds, call build_service to build the service to the spec and prove it in one shot. The build's phase report is shown to the developer as a card — do NOT repeat it; just briefly confirm the outcome in one line (and never claim success unless the verdict says Accept).
 Keep replies short and conversational. You propose; the deterministic gates verify.`
 }

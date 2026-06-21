@@ -36,7 +36,7 @@ func cmdRun(_ []string) int {
 	// One-shot build→prove→deliver, shared with the native Orion agent's
 	// build_service tool. generateService injects the (opt-in) vendor-agent
 	// generator; nil would use the fixture.
-	res, err := conductor.BuildAndProve(ctx, store, generateService, nil, func(s string) { fmt.Println("run:", s) })
+	res, err := conductor.BuildAndProve(ctx, store, generateService, nil, func(e conductor.PhaseEvent) { fmt.Printf("run: %s %s %s\n", e.Status, e.Phase, e.Detail) })
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion run:", err)
 		return 1
