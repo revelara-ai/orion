@@ -9,6 +9,8 @@ import (
 
 	"github.com/revelara-ai/orion/internal/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
+	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
+	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/internal/tools"
 )
 
@@ -68,6 +70,58 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 				return "", err
 			}
 			return "recorded " + p.Key + "=" + p.Value, nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "add_requirement",
+		Description: "Record a behavioral requirement the developer stated, as STRUCTURED CASES (request → expected response). Use this for ANY conditional or multi-case behavior — query parameters, error responses, status codes, alternate inputs — that record_answer cannot hold (it is only for a single scalar value). Each case becomes a proof obligation, so the build is held to it.",
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"text":{"type":"string","description":"the behavior in one sentence"},
+				"decision_key":{"type":"string","description":"the related decision key if any (e.g. timezone)"},
+				"cases":{"type":"array","minItems":1,"items":{
+					"type":"object",
+					"properties":{
+						"request":{"type":"object","properties":{"method":{"type":"string"},"path":{"type":"string"},"query":{"type":"object","additionalProperties":{"type":"string"}},"body":{"type":"string"}},"required":["method","path"]},
+						"expect":{"type":"object","properties":{
+							"status":{"type":"integer"},
+							"content_type":{"type":"string","enum":["application/json","text/plain"]},
+							"assertions":{"type":"array","items":{"type":"object","properties":{
+								"kind":{"type":"string","enum":["json_key_present","json_key_rfc3339","json_key_in_tz","json_error_present","body_rfc3339"]},
+								"key":{"type":"string"},"value":{"type":"string","description":"e.g. an IANA timezone for json_key_in_tz"}},"required":["kind"]}}
+						},"required":["status","content_type"]}
+					},"required":["request","expect"]}}
+			},"required":["text","cases"]}`),
+		Safety: tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct {
+				Text        string                `json:"text"`
+				DecisionKey string                `json:"decision_key"`
+				Cases       []spec.BehavioralCase `json:"cases"`
+			}
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			req := spec.Requirement{Source: completeness.DimFunctional, DecisionKey: p.DecisionKey, Text: p.Text, Cases: p.Cases}
+			if err := c.AddRequirement(ctx, req); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("recorded requirement %q (%d case(s)) — it will be proven", p.Text, len(p.Cases)), nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "list_requirements",
+		Description: "List the structured behavioral requirements recorded so far, to review with the developer before ratifying.",
+		Safety:      tools.Safety{ReadOnly: true},
+		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
+			reqs, err := c.Requirements(ctx)
+			if err != nil {
+				return "", err
+			}
+			return asJSON(reqs), nil
 		},
 	})
 
