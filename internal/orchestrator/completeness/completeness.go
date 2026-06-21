@@ -54,10 +54,19 @@ type Analyzer struct {
 	checklist   []RequiredDecision
 }
 
-// NewAnalyzer returns an analyzer for a project type. Unknown types fall back to
-// the http-service checklist (the V2.0 greenfield path).
+// NewAnalyzer returns an analyzer for a project type. A registered type contributes
+// its FUNCTIONAL decisions (what it does + how it is invoked); EVERY type also gets
+// the universal reliability dimensions. An UNREGISTERED type gets only the universal
+// dimensions — it is never grilled on HTTP specifics (route/port/timezone) it may not
+// have. (Registering more types — gRPC, worker, CLI — is how the harness generalizes
+// the front door; the type is currently passed by the conductor.)
 func NewAnalyzer(projectType string) *Analyzer {
 	return &Analyzer{projectType: projectType, checklist: checklistFor(projectType)}
+}
+
+// RegisteredProjectType reports whether a project type has a functional checklist.
+func RegisteredProjectType(projectType string) bool {
+	return len(functionalDecisions(projectType)) > 0
 }
 
 // Checklist returns a copy of the required-decisions checklist (deterministic).
@@ -90,20 +99,37 @@ func (a *Analyzer) Analyze(intent string, answers map[string]string) []OpenDecis
 	return open
 }
 
-// checklistFor is the rules-based required-decisions checklist per project type.
+// checklistFor is the required-decisions checklist for a project type: its
+// type-specific FUNCTIONAL decisions followed by the universal reliability
+// dimensions every project must resolve.
 func checklistFor(projectType string) []RequiredDecision {
-	// V2.0 ships the http-service (Go greenfield) checklist; other types fall back
-	// to it until their checklists are added.
+	return append(functionalDecisions(projectType), universalDecisions()...)
+}
+
+// functionalDecisions are the per-TYPE decisions about what the software does and
+// how it is invoked. Only registered types contribute them; an unregistered type
+// returns none (it gets only the universal dimensions, never HTTP route/port/timezone
+// questions it may not have). This is the registry that generalizes the front door —
+// add a case (gRPC, worker, CLI, library) to elicit that type's functional spec.
+func functionalDecisions(projectType string) []RequiredDecision {
 	switch projectType {
+	case "http-service", "": // "" defaults to http-service (the V2.0 greenfield path)
+		return []RequiredDecision{
+			{"response_format", DimFunctional, "What response format should the service return (e.g. JSON, plain text)?", ""},
+			{"timezone", DimFunctional, "Which timezone should times be reported in (e.g. UTC, local)?", ""},
+			{"port", DimFunctional, "Which port should the service listen on?", ""},
+			{"route", DimFunctional, "Which route/path serves the response (e.g. /time)?", ""},
+		}
 	default:
-		_ = projectType // http-service and all unknown types use the V2.0 checklist
+		return nil
 	}
+}
+
+// universalDecisions are the cross-cutting reliability dimensions EVERY project must
+// resolve regardless of type. They are domain-neutral (no HTTP/time assumptions).
+func universalDecisions() []RequiredDecision {
 	return []RequiredDecision{
-		{"response_format", DimFunctional, "What response format should the service return (e.g. JSON, plain text)?", ""},
-		{"timezone", DimFunctional, "Which timezone should times be reported in (e.g. UTC, local)?", ""},
-		{"port", DimFunctional, "Which port should the service listen on?", ""},
-		{"route", DimFunctional, "Which route/path serves the response (e.g. /time)?", ""},
-		{"scale_profile", DimScale, "What is the expected traffic (requests over a window + request weight)?", "fallback preset: low | medium | high"},
+		{"scale_profile", DimScale, "What is the expected traffic/throughput (work over a window + per-unit weight)?", "fallback preset: low | medium | high"},
 		{"observability_signals", DimObservability, "Which signals are required (traces/metrics/logs) and where are they exported?", "tier-default signal set"},
 		{"oncall_escalation", DimOnCall, "Who is contacted when it breaks, and what is the escalation path?", "single owner, log-only alert"},
 		{"data_storage", DimData, "What persists, where, with what durability/retention and PII sensitivity?", "no persistence"},
