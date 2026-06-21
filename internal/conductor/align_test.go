@@ -166,7 +166,7 @@ func TestAlignmentGateIsLogOnly(t *testing.T) {
 	misaligned := func(context.Context, string, string, []spec.BehavioralCase) (AlignVerdict, error) {
 		return AlignVerdict{Aligned: false, Severity: "high", Concern: "returns a constant"}, nil
 	}
-	res, err := BuildAndProve(ctx, oc.Store(), nil, misaligned, nil)
+	res, err := BuildAndProve(ctx, oc.Store(), nil, misaligned, nil, "")
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

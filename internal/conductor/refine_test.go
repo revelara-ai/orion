@@ -104,7 +104,7 @@ func TestBuildAndProveRefinesUntilAccept(t *testing.T) {
 		return sandbox.GenerateFixtureService(dir, gs) // correct service → Accept
 	}
 
-	res, err := BuildAndProve(ctx, oc.Store(), gen, nil, nil)
+	res, err := BuildAndProve(ctx, oc.Store(), gen, nil, nil, "")
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestBuildAndProveStopsWhenGeneratorCannotRefine(t *testing.T) {
 		return writeBrokenTimeService(dir, gs) // same broken artifact every attempt
 	}
 
-	res, err := BuildAndProve(ctx, oc.Store(), gen, nil, nil)
+	res, err := BuildAndProve(ctx, oc.Store(), gen, nil, nil, "")
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

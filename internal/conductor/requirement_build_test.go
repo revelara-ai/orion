@@ -52,7 +52,7 @@ func TestBuildEscalatesUnsatisfiedRequirement(t *testing.T) {
 		},
 	}
 	oc, ctx := ratifiedWithRequirement(t, req)
-	res, err := BuildAndProve(ctx, oc.Store(), nil, nil, nil)
+	res, err := BuildAndProve(ctx, oc.Store(), nil, nil, nil, "")
 	if err != nil {
 		t.Fatalf("build (must run, not error): %v", err)
 	}
