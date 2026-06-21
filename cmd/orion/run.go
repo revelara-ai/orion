@@ -97,14 +97,18 @@ func cmdProof(args []string) int {
 // uses the deterministic fixture; with ORION_AGENT=<preset> set (and the agent on
 // PATH) it spawns the developer's own vendor coding-agent to WRITE the code over
 // ACP — the real "Orion writes new code" dogfood path (or-s10).
-func generateService(ctx context.Context, gs sandbox.GenSpec, buildDir string) (sandbox.GeneratedArtifact, error) {
+func generateService(ctx context.Context, gs sandbox.GenSpec, buildDir, feedback string) (sandbox.GeneratedArtifact, error) {
 	preset, ok := configuredAgent()
 	if !ok {
 		return sandbox.GenerateFixtureService(buildDir, gs)
 	}
 	gen := agentruntime.AgentGenerator{Driver: agentruntime.SpawnDriver(preset, generationRole(gs), nil)}
+	desc := "implement the ratified service"
+	if feedback != "" { // refinement attempt — give the agent the proof's causal analysis
+		desc = "fix the prior implementation; the independent proof rejected it.\n\n" + feedback
+	}
 	req := agentruntime.GenRequest{
-		Description: "implement the ratified service",
+		Description: desc,
 		Module:      "orion-generated/svc",
 		Route:       gs.Route, Port: gs.Port, Format: gs.Format, TimeZone: gs.TimeZone,
 	}
