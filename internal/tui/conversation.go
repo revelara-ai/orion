@@ -43,12 +43,16 @@ type acpServer interface {
 // conductorBrain selects the native LLM "Orion" agent when ANTHROPIC_API_KEY is
 // set, else the deterministic conductor (offline/CI fallback). Both satisfy
 // acp.PromptFunc, so the TUI is identical for either.
-func conductorBrain(oc *orchestrator.Conductor) acpServer {
+func conductorBrain(oc *orchestrator.Conductor) (acpServer, string) {
 	role := conductor.RoleTemplate{Project: "orion"}
 	if key := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")); key != "" {
-		return conductor.NewOrionAgent(llm.NewAnthropic(key, os.Getenv("ORION_MODEL")), oc, role)
+		model := os.Getenv("ORION_MODEL")
+		if model == "" {
+			model = llm.DefaultAnthropicModel
+		}
+		return conductor.NewOrionAgent(llm.NewAnthropic(key, model), oc, role), "native · " + model
 	}
-	return conductor.NewConductorAgent(role, oc)
+	return conductor.NewConductorAgent(role, oc), "offline — set ANTHROPIC_API_KEY for the full grill"
 }
 
 const emptyState = "Conductor ready (in-process, over ACP). Describe what you want to build."
@@ -123,6 +127,7 @@ type Conversation struct {
 	inFlight      bool
 	pendingPerm   chan acp.PermissionResult
 	quitting      bool
+	brain         string // active brain label (native · model / offline …)
 }
 
 // NewConversation builds the pane bound to a connected ACP client + session.
@@ -376,17 +381,27 @@ func (m Conversation) View() string {
 	if m.quitting {
 		return "Goodbye.\n"
 	}
+	offline := strings.HasPrefix(m.brain, "offline")
 	body := m.vp.View()
 	if !m.ready || len(m.msgs) == 0 {
-		body = dimStyle.Render(emptyState)
+		es := emptyState
+		if offline {
+			es = warnGlyph.Render("⚠ Offline mode (deterministic)") +
+				dimStyle.Render(" — records single values only; it cannot grill or capture conditional behavior.\n   Set ANTHROPIC_API_KEY and restart for the full conversational spec build.\n\n"+emptyState)
+		}
+		body = dimStyle.Render(es)
 	}
 	paneW := m.width - 2
 	if paneW < 10 {
 		paneW = 10
 	}
 
-	// Header: the Polaris identity line.
-	header := bannerStyle.Render("✦ Orion") + dimStyle.Render("  — proof-gated build harness")
+	// Header: the Polaris identity line + the active brain (amber when offline).
+	brainTint := lipgloss.NewStyle().Foreground(cLavender)
+	if offline {
+		brainTint = lipgloss.NewStyle().Foreground(cWarning)
+	}
+	header := bannerStyle.Render("✦ Orion") + dimStyle.Render("  ·  ") + brainTint.Render(m.brain)
 
 	// Top pane: the conversation transcript (scrollable viewport).
 	top := transPane.Width(paneW).Render(body)
@@ -456,7 +471,8 @@ func Run(oc *orchestrator.Conductor) error {
 	// Brain selection (SPEC §0 amendment): a native LLM "Orion" agent when an API
 	// key is present, else the deterministic conductor (offline/CI fallback). Both
 	// satisfy acp.PromptFunc — the rest of this function is identical.
-	go func() { _ = conductorBrain(oc).Serve(ctx, agentEnd, agentEnd) }()
+	brain, brainLabel := conductorBrain(oc)
+	go func() { _ = brain.Serve(ctx, agentEnd, agentEnd) }()
 
 	gate := &programGate{}
 	client := NewACPClient(clientEnd, clientEnd, gate, nil)
@@ -469,7 +485,9 @@ func Run(oc *orchestrator.Conductor) error {
 		return fmt.Errorf("tui: open session: %w", err)
 	}
 
-	p := tea.NewProgram(NewConversation(client, sid, oc, gate), tea.WithAltScreen())
+	conv := NewConversation(client, sid, oc, gate)
+	conv.brain = brainLabel
+	p := tea.NewProgram(conv, tea.WithAltScreen())
 	gate.setProgram(p)
 	_, err = p.Run()
 	if err != nil {
