@@ -51,6 +51,8 @@ func run(args []string) int {
 			return cmdPlan(args[1:])
 		case "run":
 			return cmdRun(args[1:])
+		case "baseline":
+			return cmdBaseline(args[1:])
 		case "proof":
 			return cmdProof(args[1:])
 		case "deliver":
