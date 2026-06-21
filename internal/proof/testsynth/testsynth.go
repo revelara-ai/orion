@@ -29,13 +29,14 @@ type Contract struct {
 	Route    string
 	Format   string // "json" | "text"
 	TimeZone string
-	// RequiredJSONKey generalizes the proof beyond the time-service (or-cfz): the
-	// JSON response must contain this key. The empty default ("") means the V2.0
-	// time contract — key "time" whose value must be an RFC3339 timestamp — so
-	// every existing caller is unchanged. Any other key is asserted present only.
+	// RequiredJSONKey is the empirical/legacy single-key seam: the JSON response must
+	// contain this key. The empty default still means the time contract here — the
+	// empirical/legacy de-timing is tracked under item #10 (this increment is the spec
+	// contract only).
 	RequiredJSONKey string
 	// Cases, when present, drives per-case obligation generation (the requirements
-	// model). Empty → the legacy single-assertion corpus.
+	// model). Empty → the legacy single-assertion corpus (behavioral always has the
+	// default case, so this fires only for direct callers).
 	Cases []spec.BehavioralCase
 }
 

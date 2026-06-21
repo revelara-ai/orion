@@ -37,12 +37,39 @@ func TestCompileResponseContractFromDecisions(t *testing.T) {
 	if rc.Route != "/time" || rc.Port != 8080 || rc.TimeZone != "UTC" {
 		t.Fatalf("contract did not reflect decisions: %+v", rc)
 	}
-	props, ok := rc.Schema["properties"].(map[string]any)
-	if !ok || props["time"] == nil {
-		t.Fatalf("JSON schema missing 'time' property: %+v", rc.Schema)
+	// The JSON contract schema is a GENERIC object — it must NOT hardcode a "time"
+	// property (that imposed the time domain on every JSON service). Specific shape is
+	// declared via requirements/cases.
+	if rc.Schema["type"] != "object" {
+		t.Fatalf("JSON contract schema should be a generic object: %+v", rc.Schema)
+	}
+	if _, hasProps := rc.Schema["properties"]; hasProps {
+		t.Fatalf("JSON contract schema must not hardcode properties like 'time': %+v", rc.Schema)
 	}
 	if s.Hash == "" || !s.VerifyAnchor() {
 		t.Fatalf("spec hash not anchored/verifiable: %q", s.Hash)
+	}
+}
+
+// TestDefaultCaseHasNoTimeAssumption: a compiled spec's default happy-path case
+// asserts only status + content-type — it must NOT assume a "time" key or an RFC3339
+// body. Body shape is declared via requirements, never imposed by the harness (the
+// general-harness fix: a non-time service is not held to return a timestamp).
+func TestDefaultCaseHasNoTimeAssumption(t *testing.T) {
+	checklist := completeness.NewAnalyzer("http-service").Checklist()
+	s, err := Compile("Build an HTTP service.", fullAnswers(), nil, checklist, nil)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if len(s.ResponseContract.Cases) == 0 {
+		t.Fatal("expected a default case")
+	}
+	for _, c := range s.ResponseContract.Cases {
+		for _, a := range c.Expect.Assertions {
+			if a.Key == "time" || a.Kind == AssertJSONKeyRFC3339 || a.Kind == AssertBodyRFC3339 {
+				t.Fatalf("default case still assumes a time/RFC3339 body: %+v", a)
+			}
+		}
 	}
 }
 

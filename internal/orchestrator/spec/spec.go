@@ -106,16 +106,16 @@ func buildCases(rc ResponseContract, reqs []Requirement) []BehavioralCase {
 }
 
 // defaultCase is the happy-path case implied by the scalar contract: GET the route
-// returns 200 + the content type, with the body assertion the format implies.
+// returns 200 + the content type. It carries NO body assertion: a scalar contract
+// declares the response STATUS and CONTENT-TYPE but not the body's SHAPE. Body
+// behavior must be DECLARED via requirements/cases (e.g. the time service declares
+// its "time" key) — the happy path is never assumed to be a timestamp. (This is the
+// general-harness fix: a non-time service is no longer held to return an RFC3339
+// "time" it never promised.)
 func defaultCase(rc ResponseContract) BehavioralCase {
 	c := BehavioralCase{
 		Request: RequestShape{Method: "GET", Path: rc.Route},
 		Expect:  ExpectShape{Status: 200, ContentType: rc.ContentType},
-	}
-	if rc.ContentType == "application/json" {
-		c.Expect.Assertions = []BodyAssertion{{Kind: AssertJSONKeyRFC3339, Key: "time"}}
-	} else {
-		c.Expect.Assertions = []BodyAssertion{{Kind: AssertBodyRFC3339}}
 	}
 	c.EnsureID()
 	return c
@@ -164,14 +164,13 @@ func buildResponseContract(a map[string]string) (ResponseContract, error) {
 	switch tok {
 	case "json":
 		rc.ContentType = "application/json"
+		// A generic JSON-object schema. The specific shape (which keys, which types) is
+		// NOT assumed here — it is declared by the developer's requirements/cases. The
+		// old schema hardcoded a required "time" string, which silently imposed the
+		// time domain on every JSON service.
 		rc.Schema = map[string]any{
-			"$schema":              "https://json-schema.org/draft/2020-12/schema",
-			"type":                 "object",
-			"required":             []any{"time"},
-			"additionalProperties": false,
-			"properties": map[string]any{
-				"time": map[string]any{"type": "string"},
-			},
+			"$schema": "https://json-schema.org/draft/2020-12/schema",
+			"type":    "object",
 		}
 	default: // "text"
 		rc.ContentType = "text/plain"
