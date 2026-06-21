@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/revelara-ai/orion/internal/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
@@ -178,12 +179,15 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 				gen = NativeGenerator(provider)
 				aligner = NativeAligner(provider)
 			}
-			res, err := BuildAndProve(ctx, st, gen, aligner, func(e PhaseEvent) { phases = append(phases, e) })
+			res, err := BuildAndProve(ctx, st, gen, aligner, func(e PhaseEvent) { phases = append(phases, e) }, OutputRoot())
 			if err != nil {
 				return "", err
 			}
 			out := "Build pipeline:\n" + RenderPhaseReport(phases)
 			out += fmt.Sprintf("\n\nVerdict %s · attempts %d · task closed=%v · tier %s · delivery %s.", res.Verdict, res.Attempts, res.Closed, res.Tier, res.Delivery)
+			if res.OutputDir != "" {
+				out += "\nCode written to: " + res.OutputDir + " (proven; visible in your working repo)"
+			}
 			if res.Reason != "" {
 				out += "\nEscalation: " + res.Reason
 			}
@@ -196,6 +200,41 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 				out += fmt.Sprintf("\n\nCausal analysis (after %d refinement attempt(s)):\n%s", res.Attempts, res.FailureAnalysis)
 			}
 			return out, nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "show_code",
+		Description: "Report WHERE the proven code for the current spec lives in the developer's working repo and return its contents. Use this whenever the developer asks where the code is, to see it, or to answer questions about what was produced. Read-only.",
+		Safety:      tools.Safety{ReadOnly: true},
+		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
+			es, err := c.RecallSpec(ctx)
+			if err != nil {
+				return "There is no accepted, proven spec yet — ratify a spec and build it (build_service); on Accept the code is written into your working repo.", nil
+			}
+			dir, files, lerr := locateProvenCode(es)
+			if lerr != nil || len(files) == 0 {
+				return fmt.Sprintf("No proven code on disk yet. When the ratified spec builds and proves Accept, the code is written to %s.", dir), nil
+			}
+			var b strings.Builder
+			fmt.Fprintf(&b, "Proven code location: %s\n(%d files: %s)\n", dir, len(files), strings.Join(files, ", "))
+			const perFileCap, totalCap = 6000, 24000
+			for _, f := range files {
+				if b.Len() > totalCap {
+					b.WriteString("\n… (remaining files omitted; open the directory above to see them all)\n")
+					break
+				}
+				data, rerr := os.ReadFile(filepath.Join(dir, f))
+				if rerr != nil {
+					continue
+				}
+				body := string(data)
+				if len(body) > perFileCap {
+					body = body[:perFileCap] + "\n… (truncated)"
+				}
+				fmt.Fprintf(&b, "\n===== %s =====\n%s\n", f, body)
+			}
+			return b.String(), nil
 		},
 	})
 

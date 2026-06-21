@@ -43,6 +43,7 @@ type BuildResult struct {
 	Delivery        string // "deliver" | "escalate"
 	Reason          string // escalation reason, if any
 	BuildDir        string
+	OutputDir       string          // where the proven code was written in the dev's repo (Accept only)
 	Alignment       AlignmentRecord // advisory intent-alignment audit (log-only in V3 Step 1)
 	Attempts        int             // build+prove attempts spent (>=1)
 	FailureAnalysis string          // causal analysis of the final non-Accept verdict, if any
@@ -55,7 +56,7 @@ type BuildResult struct {
 // the one-shot "build to the spec" pipeline shared by `orion run` and the native
 // Orion agent's build_service tool. gen==nil uses the deterministic fixture;
 // onStep (may be nil) streams progress lines to the conversation.
-func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink) (BuildResult, error) {
+func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink, outRoot string) (BuildResult, error) {
 	if gen == nil {
 		gen = func(_ context.Context, gs sandbox.GenSpec, dir, _ string) (sandbox.GeneratedArtifact, error) {
 			return sandbox.GenerateFixtureService(dir, gs)
@@ -231,9 +232,25 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 	}
 	onPhase.emit("Deliver", deliverStatus, deliverDetail)
 
+	// Export: when the code is ACCEPTED (proven), write it into the developer's
+	// working repo so they can see + use it — not just leave it in the store's build
+	// dir. Export failure is non-fatal: the proven code still lives in buildDir + the
+	// store, so we warn and carry on rather than fail an otherwise-green build.
+	var outputDir string
+	if string(report.Outcome.Verdict) == "Accept" && outRoot != "" {
+		dest := ServiceOutputDir(outRoot, es)
+		if files, eerr := ExportProvenCode(buildDir, dest, es); eerr != nil {
+			onPhase.emit("Deliver", PhaseWarn, "code proven but export failed: "+eerr.Error())
+		} else {
+			outputDir = dest
+			onPhase.emit("Deliver", PhaseDone, fmt.Sprintf("code written to %s (%d files)", dest, len(files)))
+		}
+	}
+
 	return BuildResult{
 		TaskID: taskID, Verdict: string(report.Outcome.Verdict), Closed: closed,
-		Tier: string(tier), Delivery: string(res.Decision), Reason: res.Reason, BuildDir: buildDir,
+		OutputDir: outputDir,
+		Tier:      string(tier), Delivery: string(res.Decision), Reason: res.Reason, BuildDir: buildDir,
 		Alignment: alignment, Attempts: attempts, FailureAnalysis: failureAnalysis,
 	}, nil
 }

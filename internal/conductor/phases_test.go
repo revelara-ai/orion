@@ -39,7 +39,7 @@ func TestBuildEmitsPhaseSequence(t *testing.T) {
 	aligner := func(context.Context, string, string, []spec.BehavioralCase) (AlignVerdict, error) {
 		return AlignVerdict{Aligned: false, Severity: "high", Concern: "x"}, nil
 	}
-	res, err := BuildAndProve(ctx, oc.Store(), nil, aligner, func(e PhaseEvent) { phases = append(phases, e) })
+	res, err := BuildAndProve(ctx, oc.Store(), nil, aligner, func(e PhaseEvent) { phases = append(phases, e) }, "")
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
