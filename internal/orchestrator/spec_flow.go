@@ -74,6 +74,19 @@ func (c *Conductor) AddRequirement(ctx context.Context, req spec.Requirement) er
 	return nil
 }
 
+// Requirements returns the structured behavioral requirements recorded on the
+// current draft spec (for review before ratifying).
+func (c *Conductor) Requirements(ctx context.Context) ([]spec.Requirement, error) {
+	if c.store == nil {
+		return nil, errNoStore
+	}
+	_, sp, err := c.store.CurrentProjectSpec(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("no current spec: %w", err)
+	}
+	return loadRequirements(sp.Requirements), nil
+}
+
 // RecordAnswer persists a developer's answer to a required decision on the
 // current draft spec.
 func (c *Conductor) RecordAnswer(ctx context.Context, key, value string) error {

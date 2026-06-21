@@ -142,6 +142,43 @@ func TestOrionAgentRatifiesThenBuildsInOneShot(t *testing.T) {
 	}
 }
 
+// TestOrionAgentCapturesRequirementThenRatifies: the dead-end is gone — the agent
+// records conditional tz behavior via add_requirement (record_answer can't hold it),
+// so the spec is COMPLETE and ratifies with all the cases the developer asked for.
+func TestOrionAgentCapturesRequirementThenRatifies(t *testing.T) {
+	oc := orchestrator.NewWithStore(openStore(t))
+	tzReq := `{"text":"tz query param","cases":[` +
+		`{"request":{"method":"GET","path":"/time","query":{"tz":"America/New_York"}},"expect":{"status":200,"content_type":"application/json","assertions":[{"kind":"json_key_in_tz","key":"time","value":"America/New_York"}]}},` +
+		`{"request":{"method":"GET","path":"/time","query":{"tz":"Bogus"}},"expect":{"status":400,"content_type":"application/json","assertions":[{"kind":"json_error_present"}]}}` +
+		`]}`
+	prov := &fakeLLM{resp: []*llm.ChatResponse{
+		tuResp("1", "submit_intent", `{"intent":"build a time service with tz support"}`),
+		tuResp("2", "record_answer", `{"key":"response_format","value":"json"}`),
+		tuResp("3", "record_answer", `{"key":"timezone","value":"UTC"}`),
+		tuResp("4", "record_answer", `{"key":"port","value":"8080"}`),
+		tuResp("5", "record_answer", `{"key":"route","value":"/time"}`),
+		tuResp("6", "add_requirement", tzReq),
+		tuResp("7", "preview_spec", `{}`),
+		tuResp("8", "ratify_spec", `{}`),
+		endTurn("Ratified with the tz cases ✓"),
+	}}
+	agent := NewOrionAgent(prov, oc, RoleTemplate{Project: "demo"})
+
+	_, err := agent.Prompt(context.Background(), "s1", "time service with tz",
+		func(acp.Update) {}, func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil })
+	if err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	es, err := oc.RecallSpec(context.Background()) // accepted + anchor-verified
+	if err != nil {
+		t.Fatalf("recall (spec should be ratified): %v", err)
+	}
+	// default case + the 2 tz cases = 3 — the feature is IN the contract.
+	if len(es.ResponseContract.Cases) != 3 {
+		t.Fatalf("contract has %d cases, want 3 (default + 2 tz) — the requirement was dropped", len(es.ResponseContract.Cases))
+	}
+}
+
 // TestOrionAgentRejectsBadDecisionKey: a hallucinated decision key is rejected by
 // the tool (the gate), not silently written — the model gets an error tool_result
 // it can recover from, and the spec never ratifies.
