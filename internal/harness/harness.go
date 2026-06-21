@@ -103,7 +103,11 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 			l.Supervisor.Budget.Record(tok, float64(tok)*l.CostPerToken)
 		}
 		// Record the assistant turn (full content, including any tool_use blocks).
-		convo = append(convo, llm.Message{Role: llm.RoleAssistant, Content: resp.Content})
+		// Skip a degenerate empty turn — an empty content array can't be re-sent to
+		// the provider (it serializes to null) and carries no information.
+		if len(resp.Content) > 0 {
+			convo = append(convo, llm.Message{Role: llm.RoleAssistant, Content: resp.Content})
+		}
 
 		if resp.StopReason != llm.StopToolUse {
 			emit(Event{Kind: EventDone})
@@ -120,6 +124,11 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 				Type:       llm.BlockToolResult,
 				ToolResult: &llm.ToolResult{ToolUseID: tu.ID, Content: content, IsError: isErr},
 			})
+		}
+		if len(results) == 0 {
+			// stop_reason=tool_use but no dispatchable tool call — don't emit an empty
+			// user turn; surface it instead of silently corrupting the conversation.
+			return convo, resp, fmt.Errorf("harness: provider signaled tool_use but produced no tool calls")
 		}
 		convo = append(convo, llm.Message{Role: llm.RoleUser, Content: results})
 	}

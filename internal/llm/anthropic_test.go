@@ -138,3 +138,29 @@ func TestAnthropicRetryClassification(t *testing.T) {
 		t.Fatalf("error should mention status: %v", err)
 	}
 }
+
+// TestToWireDropsEmptyMessages: an empty-content message must never reach the wire
+// (it serializes to content:null and the API rejects the whole request — the live
+// "messages.N.content: Input should be a valid array" 400).
+func TestToWireDropsEmptyMessages(t *testing.T) {
+	a := NewAnthropic("k", "m")
+	req := ChatRequest{Messages: []Message{
+		TextMessage(RoleUser, "hi"),
+		{Role: RoleAssistant, Content: nil},              // empty assistant turn (the bug)
+		{Role: RoleAssistant, Content: []ContentBlock{}}, // also empty
+		TextMessage(RoleUser, "again"),
+	}}
+	w := a.toWire(req, "m", 100)
+	if len(w.Messages) != 2 {
+		t.Fatalf("empty messages not dropped: got %d wire messages", len(w.Messages))
+	}
+	for _, m := range w.Messages {
+		if len(m.Content) == 0 {
+			t.Fatal("a wire message has empty content (would marshal to null)")
+		}
+	}
+	b, _ := json.Marshal(w)
+	if strings.Contains(string(b), `"content":null`) {
+		t.Fatalf("request contains null content: %s", b)
+	}
+}
