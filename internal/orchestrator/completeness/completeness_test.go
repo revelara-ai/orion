@@ -7,6 +7,40 @@ import (
 
 const canonicalIntent = "Build an HTTP service that returns the current time."
 
+// TestProjectTypeGatesFunctionalDecisions: projectType is LIVE, not a dead parameter.
+// An http-service is grilled on its HTTP functional decisions PLUS the universal
+// reliability dimensions; an UNREGISTERED type (a worker) is grilled ONLY on the
+// universal dimensions — it is never asked route/port/timezone it has no concept of.
+func TestProjectTypeGatesFunctionalDecisions(t *testing.T) {
+	keysOf := func(ds []RequiredDecision) map[string]bool {
+		m := map[string]bool{}
+		for _, d := range ds {
+			m[d.Key] = true
+		}
+		return m
+	}
+	http := keysOf(NewAnalyzer("http-service").Checklist())
+	for _, k := range []string{"response_format", "route", "port", "timezone", "scale_profile", "security_model"} {
+		if !http[k] {
+			t.Fatalf("http-service checklist missing %q", k)
+		}
+	}
+	if RegisteredProjectType("worker") {
+		t.Fatal("worker is not a registered type")
+	}
+	worker := keysOf(NewAnalyzer("worker").Checklist())
+	for _, h := range []string{"response_format", "route", "port", "timezone"} {
+		if worker[h] {
+			t.Fatalf("a non-HTTP (worker) project must NOT be grilled on the HTTP decision %q", h)
+		}
+	}
+	for _, u := range []string{"scale_profile", "security_model", "slo_targets", "observability_signals"} {
+		if !worker[u] {
+			t.Fatalf("a worker project must still resolve the universal dimension %q", u)
+		}
+	}
+}
+
 // allAnswers returns answers resolving every required decision for a project type.
 func allAnswers(a *Analyzer) map[string]string {
 	m := map[string]string{}
