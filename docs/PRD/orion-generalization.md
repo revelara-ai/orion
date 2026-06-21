@@ -31,17 +31,14 @@ the value, and let the dead seams carry the load.** Every "default to time" beco
 ## Ranked cleanup (from the audit)
 
 **Verdict-bearing (worst — a correct non-time program is silently rejected):**
-1. **STPA fallback** (`conductor/build.go:93-97`, `proof/hazard/stpa/defaults.go`): the
-   only place an STPA model enters the proof silently constructs + saves
-   `RatifiedTimeServiceModel()` on a store-miss. `DefaultModel()` is also HTTP-shaped.
-   → Fail loudly on store-miss; rename both factories to `…TimeServiceExample`, move to
-   testdata; wire model ratification into spec acceptance; add a domain-neutral skeleton
-   only if an auto-seed is truly needed.
-2. **`controlPresent`** (`proof/hazard/hazard.go:101-114`): hard-binds UCA1..4 to literal
-   token greps (`handleTime`/`ListenAndServe`/`UTC`/timeouts); returns false for any
-   unrecognized UCA id, so even a general user-authored model fails. → Move
-   control-verification *into* the model (each UCA carries a declared, executable check);
-   `controlPresent` becomes a generic evaluator.
+1. ✅ **STPA fallback** (`conductor/build.go`, `proof/hazard/stpa/defaults.go`) — DONE
+   (commit 928e4b6). The store-miss fallback is now the domain-neutral
+   `stpa.SkeletonModel()`, never the time-service model. `DefaultModel()` is documented
+   as the time-service example only.
+2. ✅ **`controlPresent`** (`proof/hazard/hazard.go`) — DONE (928e4b6). Now a generic
+   evaluator over tokens each UCA DECLARES (`UCA.Verify`); the time-service tokens moved
+   into the example model. Proven: the skeleton passes an arbitrary non-time program;
+   the time-service model fails that same code (declared tokens absent).
 
 **Elicitation gate (blocks non-HTTP work at the front door):**
 3. **`checklistFor` / `projectType`** (`completeness/completeness.go`, `conductor.go:63,69`):
@@ -51,12 +48,19 @@ the value, and let the dead seams carry the load.** Every "default to time" beco
 
 **Spec/contract (injects the time domain into the contract itself):**
 4. **`defaultCase`** (`spec/spec.go:110-122`): every compiled spec gets a default case
-   hardcoding `AssertJSONKeyRFC3339 key="time"`. → Derive the default assertion from a
-   declared schema/primary key, or omit it when the spec already declares Cases.
+   hardcoding `AssertJSONKeyRFC3339 key="time"`. → Drop the time-specific body assertion
+   (assert only status + content-type, which the scalar contract actually declares); the
+   time-service example must DECLARE its `time` requirement. **Entanglement:** this
+   weakens scalar-only proofs (correct — undeclared body shape isn't proven), so the
+   canonical `ratifiedTimeService` test helper must add an explicit `time` behavioral
+   requirement to stay rigorous; spec/testsynth tests asserting the `time` default need
+   updating.
 5. **`buildResponseContract` schema + `ResponseContract` scalars** (`spec/spec.go:29-36,148-181`):
    the JSON branch hardcodes a `time`-string schema; the contract has no notion of a
    non-HTTP transport. → `response_schema` becomes an explicit decision; move toward a
-   transport-tagged contract.
+   transport-tagged contract. **Entanglement:** `rc.Schema` is part of `ComputeHash`, so
+   changing it re-anchors specs — fine in tests (fresh stores) but a persisted-spec
+   migration note for real projects.
 
 **Decomposition + proof surface:**
 6. **`Decompose`** (`decomposer/decomposer.go:39-97`): the task tree bakes HTTP into
