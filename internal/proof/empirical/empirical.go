@@ -42,8 +42,14 @@ type ProbeResult struct {
 // service against the contract. The service runs in its own process group and is
 // reaped after the probe.
 func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truthalign.ModeResult, ProbeResult, error) {
+	// The route to probe comes from the contract or the first declared case — never a
+	// silent "/time" default (that imposed the time domain on every empirical probe).
+	if c.Route == "" && len(c.Cases) > 0 {
+		c.Route = c.Cases[0].Request.Path
+	}
 	if c.Route == "" {
-		c.Route = "/time"
+		return failMode("empirical: no route to probe (contract declares neither a route nor any cases)"),
+			ProbeResult{Detail: "no route"}, nil
 	}
 	binDir, err := os.MkdirTemp("", "orion-lookout-*")
 	if err != nil {
@@ -168,12 +174,9 @@ func probeContract(addr string, c testsynth.Contract) ProbeResult {
 	ct := resp.Header.Get("Content-Type")
 
 	if strings.ToLower(c.Format) == "text" {
+		// Content-type only — the body is NOT assumed to be a timestamp.
 		if !strings.Contains(ct, "text/plain") {
 			pr.Detail = "content-type " + ct
-			return pr
-		}
-		if _, err := time.Parse(time.RFC3339, strings.TrimSpace(string(body))); err != nil {
-			pr.Detail = "body not RFC3339"
 			return pr
 		}
 		pr.ResponseContractSatisfied = true
@@ -189,19 +192,19 @@ func probeContract(addr string, c testsynth.Contract) ProbeResult {
 		pr.Detail = "body not JSON"
 		return pr
 	}
-	// Generalized response contract (or-cfz): require the spec's key. The default
-	// (empty) is the time contract — key "time" whose value must be RFC3339 — so
-	// the time-service path is unchanged; any other key is asserted present.
-	key, rfc3339 := c.JSONKey()
-	val, ok := m[key]
-	if !ok {
-		pr.Detail = "missing " + key + " field"
-		return pr
-	}
-	if rfc3339 {
-		if _, err := time.Parse(time.RFC3339, val); err != nil {
-			pr.Detail = key + " not RFC3339"
+	// A DECLARED key is checked; an empty key requires only valid JSON + content-type
+	// (no "time" default imposing the time domain).
+	if key, rfc3339 := c.JSONKey(); key != "" {
+		val, ok := m[key]
+		if !ok {
+			pr.Detail = "missing " + key + " field"
 			return pr
+		}
+		if rfc3339 {
+			if _, err := time.Parse(time.RFC3339, val); err != nil {
+				pr.Detail = key + " not RFC3339"
+				return pr
+			}
 		}
 	}
 	pr.ResponseContractSatisfied = true

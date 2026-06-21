@@ -29,10 +29,10 @@ type Contract struct {
 	Route    string
 	Format   string // "json" | "text"
 	TimeZone string
-	// RequiredJSONKey is the empirical/legacy single-key seam: the JSON response must
-	// contain this key. The empty default still means the time contract here — the
-	// empirical/legacy de-timing is tracked under item #10 (this increment is the spec
-	// contract only).
+	// RequiredJSONKey is the legacy single-key seam: when set, the JSON response must
+	// contain this key. Empty means "no specific key required" — it no longer defaults
+	// to "time" (that imposed the time domain on every JSON probe). The real flow is
+	// Cases-driven; this single-key path is for direct/legacy callers only.
 	RequiredJSONKey string
 	// Cases, when present, drives per-case obligation generation (the requirements
 	// model). Empty → the legacy single-assertion corpus (behavioral always has the
@@ -40,11 +40,9 @@ type Contract struct {
 	Cases []spec.BehavioralCase
 }
 
-// JSONKey returns the required JSON key and whether its value must be RFC3339.
+// JSONKey returns the required JSON key and whether its value must be RFC3339. An
+// unset key means "no specific key" (no time default).
 func (c Contract) JSONKey() (key string, rfc3339 bool) {
-	if c.RequiredJSONKey == "" {
-		return "time", true
-	}
 	return c.RequiredJSONKey, false
 }
 
@@ -201,21 +199,21 @@ func sanitize(id string) string {
 // byte-for-byte so existing callers (no Cases) are unchanged.
 func legacyCorpus(c Contract) string {
 	if c.Route == "" {
-		c.Route = "/time"
+		c.Route = "/" // neutral default, not a time-specific "/time"
 	}
 	var assert string
 	if strings.ToLower(c.Format) == "text" {
+		// Content-type only — the body is NOT assumed to be a timestamp.
 		assert = `	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/plain") {
 		t.Fatalf("content-type = %q, want text/plain", ct)
-	}
-	if _, err := time.Parse(time.RFC3339, strings.TrimSpace(w.Body.String())); err != nil {
-		t.Fatalf("body is not an RFC3339 time: %q", w.Body.String())
 	}`
 	} else {
 		key, rfc3339 := c.JSONKey()
 		assert = `	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
 		t.Fatalf("content-type = %q, want application/json", ct)
-	}
+	}`
+		if key != "" { // a DECLARED key is checked; no time/key default
+			assert += `
 	var body map[string]string
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("response is not JSON: %v", err)
@@ -225,11 +223,12 @@ func legacyCorpus(c Contract) string {
 		t.Fatal("response missing required \"` + key + `\" field")
 	}
 	_ = val`
-		if rfc3339 {
-			assert += `
+			if rfc3339 {
+				assert += `
 	if _, err := time.Parse(time.RFC3339, val); err != nil {
 		t.Fatalf("\"` + key + `\" is not RFC3339: %q", val)
 	}`
+			}
 		}
 	}
 
@@ -246,6 +245,7 @@ import (
 
 var _ = json.Unmarshal
 var _ = strings.Contains
+var _ = time.Parse // may be unused when no RFC3339 assertion is generated
 
 // TestContractBehavior asserts the ResponseContract derived from the spec.
 func TestContractBehavior(t *testing.T) {
