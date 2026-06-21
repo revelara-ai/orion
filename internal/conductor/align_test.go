@@ -64,6 +64,78 @@ func TestNativeAlignerCatchesHardcodedTime(t *testing.T) {
 	}
 }
 
+// A CORRECT current-time service. The judge must NOT flag this — a paranoid judge
+// that fails honest code is as useless as one that rubber-stamps drift.
+const correctTimeService = `package main
+
+import (
+	"encoding/json"
+	"net/http"
+	"time"
+)
+
+func handleTime(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"time": time.Now().UTC().Format(time.RFC3339)})
+}
+
+func main() { http.HandleFunc("/time", handleTime); _ = http.ListenAndServe(":8080", nil) }
+`
+
+// A SUBTLER drift: it IS the current time, but in LOCAL time when the intent said
+// UTC. A genuine stress test of the judge's recall on non-obvious misalignment —
+// logged, not asserted, because either outcome is informative.
+const localTimeService = `package main
+
+import (
+	"encoding/json"
+	"net/http"
+	"time"
+)
+
+func handleTime(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"time": time.Now().Format(time.RFC3339)})
+}
+
+func main() { http.HandleFunc("/time", handleTime); _ = http.ListenAndServe(":8080", nil) }
+`
+
+func runAligner(t *testing.T, intent, code string) AlignVerdict {
+	t.Helper()
+	key := os.Getenv("ANTHROPIC_API_KEY")
+	if key == "" {
+		t.Skip("set ANTHROPIC_API_KEY to run the live alignment probes")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(code), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []spec.BehavioralCase{{ID: "t", Request: spec.RequestShape{Method: "GET", Path: "/time"}, Expect: spec.ExpectShape{Status: 200, ContentType: "application/json", Assertions: []spec.BodyAssertion{{Kind: spec.AssertJSONKeyRFC3339, Key: "time"}}}}}
+	v, err := NativeAligner(llm.NewAnthropic(key, os.Getenv("ORION_MODEL")))(context.Background(), intent, dir, cases)
+	if err != nil {
+		t.Fatalf("align: %v", err)
+	}
+	t.Logf("verdict: aligned=%v severity=%q concern=%q", v.Aligned, v.Severity, v.Concern)
+	return v
+}
+
+// TestNativeAlignerPrecision (live): the judge must PASS correct code — no false
+// positive — or it cannot be allowed to block.
+func TestNativeAlignerPrecision(t *testing.T) {
+	v := runAligner(t, `Return the CURRENT time as JSON under a "time" key.`, correctTimeService)
+	if !v.Aligned {
+		t.Errorf("FALSE POSITIVE: the judge flagged an honest current-time service — too paranoid to gate")
+	}
+}
+
+// TestNativeAlignerSubtleDriftProbe (live, log-only): a recall stress test —
+// local-time when UTC was intended.
+func TestNativeAlignerSubtleDriftProbe(t *testing.T) {
+	v := runAligner(t, `Return the current time in UTC as JSON under a "time" key.`, localTimeService)
+	t.Logf("subtle drift (local-vs-UTC) → aligned=%v (informative either way)", v.Aligned)
+}
+
 // TestNativeAlignerParsesVerdict: the LLM judge's report_alignment tool call is
 // decoded into an AlignVerdict.
 func TestNativeAlignerParsesVerdict(t *testing.T) {
