@@ -109,6 +109,21 @@ Manifest, obligation-set subset) and escalates genuine semantic drift to a human
 rubber-stamping align judge is the single biggest correctness risk in V3 — so it is
 gated to *only ever remove* a green light, never add one.
 
+**Validated (2026-06-20, live, Step 1):** against time-service probes the judge
+(a) caught a hardcoded constant that passed the RFC3339 case ("hardcoded-value-
+matching-format failure"), (b) did NOT false-positive on an honest `time.Now().UTC()`
+service, and (c) caught SUBTLE drift — local-time when UTC was intended — reasoning
+that "RFC3339 permits any offset, so the case is satisfied while the UTC intent is
+violated," and naming the missing `.UTC()`. Good recall on obvious AND subtle drift,
+clean precision. (Three cases ≠ statistical proof; the judge is non-deterministic;
+advisory-only stays essential.)
+
+**When it flips to blocking (Step 3): SEVERITY-TIERED.** High-severity (a clear
+intent violation) → block/escalate. Medium (ambiguity / a judgment call about an
+under-specified spec, like the zone-drift case) → surface for a human, do not
+auto-fail. This is the Manifesto's "escalate rather than compound," and it keeps the
+judge from tyrannizing on genuinely-ambiguous specs.
+
 ## 5. Reuse vs replace (honest)
 
 - **KEEP (the proven core):** `internal/proof` (behavioral+mutation, empirical, hazard)
