@@ -109,7 +109,7 @@ func (ca *ConductorAgent) handleAnswer(ctx context.Context, st *convoState, text
 		return end
 	}
 	if err := ca.conductor.RecordAnswer(ctx, od.Key, text); err != nil {
-		stream(acp.Update{Kind: "agent_message", Text: "couldn't record that: " + err.Error()})
+		stream(acp.Update{Kind: "agent_message", Text: "couldn't record that — " + err.Error() + "\n(this offline conductor records single values only; set ANTHROPIC_API_KEY and restart for the full grill that captures conditional behavior like a tz parameter.)"})
 		return end
 	}
 	if sv, err := ca.conductor.SpecView(ctx); err == nil {
@@ -151,7 +151,7 @@ func (ca *ConductorAgent) handleReview(ctx context.Context, st *convoState, text
 		return end
 	}
 	if err := ca.conductor.RecordAnswer(ctx, key, value); err != nil {
-		stream(acp.Update{Kind: "agent_message", Text: "couldn't record that: " + err.Error()})
+		stream(acp.Update{Kind: "agent_message", Text: "couldn't record that — " + err.Error() + "\n(this offline conductor records single values only; set ANTHROPIC_API_KEY and restart for the full grill that captures conditional behavior like a tz parameter.)"})
 		return end
 	}
 	st.awaitingRatify = false
