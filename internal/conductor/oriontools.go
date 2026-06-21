@@ -183,12 +183,17 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 				return "", err
 			}
 			out := "Build pipeline:\n" + RenderPhaseReport(phases)
-			out += fmt.Sprintf("\n\nVerdict %s · task closed=%v · tier %s · delivery %s.", res.Verdict, res.Closed, res.Tier, res.Delivery)
+			out += fmt.Sprintf("\n\nVerdict %s · attempts %d · task closed=%v · tier %s · delivery %s.", res.Verdict, res.Attempts, res.Closed, res.Tier, res.Delivery)
 			if res.Reason != "" {
 				out += "\nEscalation: " + res.Reason
 			}
 			if res.Alignment.Ran && !res.Alignment.Aligned {
 				out += fmt.Sprintf("\nAlignment (advisory, %s): %s", res.Alignment.Severity, res.Alignment.Concern)
+			}
+			// On a non-Accept verdict, surface the causal analysis so the developer sees
+			// WHY it rejected (and what the refinement loop already tried to fix).
+			if res.FailureAnalysis != "" {
+				out += fmt.Sprintf("\n\nCausal analysis (after %d refinement attempt(s)):\n%s", res.Attempts, res.FailureAnalysis)
 			}
 			return out, nil
 		},

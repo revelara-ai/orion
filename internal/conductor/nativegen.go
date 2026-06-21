@@ -24,7 +24,7 @@ import (
 // cases — not the harness-authored tests), so it still cannot grade its own
 // homework: the (independent) proof holds whatever it writes accountable.
 func NativeGenerator(provider llm.Provider) Generator {
-	return func(ctx context.Context, gs sandbox.GenSpec, buildDir string) (sandbox.GeneratedArtifact, error) {
+	return func(ctx context.Context, gs sandbox.GenSpec, buildDir, feedback string) (sandbox.GeneratedArtifact, error) {
 		reg := tools.NewRegistry()
 		reg.Register(writeFileTool(buildDir))
 		loop := harness.Loop{
@@ -33,12 +33,61 @@ func NativeGenerator(provider llm.Provider) Generator {
 			System:     generationRole(gs),
 			Supervisor: harness.Supervisor{MaxIterations: 24},
 		}
-		start := []llm.Message{llm.TextMessage(llm.RoleUser, "Generate the program now: write each file with write_file (a complete go.mod and main.go), then end your turn.")}
+		userMsg := "Generate the program now: write each file with write_file (a complete go.mod and main.go), then end your turn."
+		if strings.TrimSpace(feedback) != "" {
+			// Refinement attempt: hand the model its own prior code + the proof's causal
+			// analysis so it FIXES the specific failures instead of regenerating blind.
+			// readBuildSource excludes *_test.go, so the harness-authored proof corpus is
+			// never exposed — the trust wall holds across refinement.
+			userMsg = "Your previous attempt FAILED the independent proof. Here is its causal analysis:\n\n" +
+				feedback +
+				"\n\nHere is the code you previously wrote:\n\n" + readBuildSource(buildDir) +
+				"\n\nFix the failing behavior and rewrite the affected files with write_file (overwrite main.go, and go.mod if needed), then end your turn. " +
+				"Address EVERY failing/unexecuted case above, and do not regress the cases that already passed. Write real logic — the proof probes the live service and runs mutation testing."
+		}
+		start := []llm.Message{llm.TextMessage(llm.RoleUser, userMsg)}
 		if _, _, err := loop.Run(ctx, start, nil); err != nil {
 			return sandbox.GeneratedArtifact{}, fmt.Errorf("native generation: %w", err)
 		}
 		return sandbox.ArtifactFromDir(buildDir)
 	}
+}
+
+// readBuildSource returns the generator's own prior output (go.mod + non-test .go
+// files) for a refinement attempt. It EXCLUDES *_test.go: Go requires test files to
+// end in _test.go, so this guarantees the harness-authored proof corpus is never
+// fed back to the generator (the trust wall — "no agent grades its own homework").
+func readBuildSource(buildDir string) string {
+	entries, err := os.ReadDir(buildDir)
+	if err != nil {
+		return "(prior source unavailable)"
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		if strings.HasSuffix(n, "_test.go") { // never expose the proof corpus
+			continue
+		}
+		if n == "go.mod" || strings.HasSuffix(n, ".go") {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	var b strings.Builder
+	for _, n := range names {
+		data, err := os.ReadFile(filepath.Join(buildDir, n))
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&b, "// ===== %s =====\n%s\n\n", n, string(data))
+	}
+	if b.Len() == 0 {
+		return "(prior source unavailable)"
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // writeFileTool lets the generator write files into the build dir only (a path
