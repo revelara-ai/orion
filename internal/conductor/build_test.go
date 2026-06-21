@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/revelara-ai/orion/internal/orchestrator"
+	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
+	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 )
 
 // answerCanonicalTimeService submits + answers the blocking functional decisions
@@ -24,6 +26,19 @@ func ratifiedTimeService(t *testing.T) (*orchestrator.Conductor, context.Context
 		if err := oc.RecordAnswer(ctx, a[0], a[1]); err != nil {
 			t.Fatalf("answer %s: %v", a[0], err)
 		}
+	}
+	// DECLARE the time behavior (the general-harness way) — the default case no longer
+	// assumes a "time" key, so the time-service example must state its own contract.
+	if err := oc.AddRequirement(ctx, spec.Requirement{
+		Source: completeness.DimFunctional,
+		Text:   `GET /time returns the current time as an RFC3339 "time" JSON key`,
+		Cases: []spec.BehavioralCase{{
+			Request: spec.RequestShape{Method: "GET", Path: "/time"},
+			Expect: spec.ExpectShape{Status: 200, ContentType: "application/json",
+				Assertions: []spec.BodyAssertion{{Kind: spec.AssertJSONKeyRFC3339, Key: "time"}}},
+		}},
+	}); err != nil {
+		t.Fatalf("declare time requirement: %v", err)
 	}
 	if _, err := oc.ApproveSpec(ctx); err != nil {
 		t.Fatalf("approve: %v", err)
