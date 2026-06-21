@@ -28,6 +28,32 @@ Not a rewrite. The seams exist; the fix is: **stop defaulting, force the spec to
 the value, and let the dead seams carry the load.** Every "default to time" becomes
 "require the spec to declare it; fail loudly if absent."
 
+## Status (2026-06-21)
+
+The misaligned DEFAULTS that silently shaped every build toward the time domain are
+removed. The harness no longer (a) rejects a correct non-time program (hazard), (b)
+imposes a "time" body contract on every JSON spec, (c) defaults the proof probe to
+/time or a "time" key, or (d) grills a non-HTTP project on route/port/timezone.
+
+| # | Item | State |
+|---|------|-------|
+| 1 | STPA time-service fallback → SkeletonModel | ✅ 928e4b6 |
+| 2 | controlPresent → model-driven (UCA.Verify) | ✅ 928e4b6 |
+| 4 | defaultCase: no "time" body assertion | ✅ 7a10475 |
+| 5 | buildResponseContract: generic JSON schema | ✅ 7a10475 |
+| 8 | JSONKey/legacyCorpus: no "time" default | ✅ 0d6f440 |
+| 10 | empirical: no /time route default; de-timed legacy probe | ✅ 0d6f440 |
+| 3 | projectType registry (structural) | ✅ 1d58c19 |
+
+**Remaining (follow-ups, not silent-default bugs):**
+- **#3 threading** — wire the conductor to CHOOSE projectType from intent (inference),
+  instead of the hardcoded "http-service". The registry is ready; this is a feature.
+- **#6 decomposer per-type task templates** — the task tree bakes HTTP into obligations,
+  but the decomposer only builds `Tasks[0]`; real impact awaits multi-task execution, so
+  this folds into the workflow/brownfield build-out.
+- **#7 fixture rename / no silent gap-fill** — audit-rated a legitimate labeled fallback;
+  cosmetic.
+
 ## Ranked cleanup (from the audit)
 
 **Verdict-bearing (worst — a correct non-time program is silently rejected):**
