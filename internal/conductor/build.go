@@ -121,7 +121,10 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 		}
 		if attempt > 1 && art.ContentHash == lastHash {
 			// The generator re-emitted an identical artifact despite the analysis — it
-			// cannot refine further; stop and let the prior verdict escalate.
+			// cannot refine further; stop and let the prior verdict escalate. This break
+			// only fires at attempt>1, which means attempt 1 already ran a full prove and
+			// set `report` (the only ways to skip a prove all return early) — so the
+			// post-loop align/close/deliver always sees a real, non-zero verdict here.
 			onPhase.emit("Generate", PhaseWarn, "no change from the prior attempt — cannot refine further")
 			break
 		}
