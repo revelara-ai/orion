@@ -104,7 +104,7 @@ func functionalTask(projectType string, es spec.ExecutableSpec) Task {
 			Title:           fmt.Sprintf("Implement %s handler returning %s time in %s", rc.Route, format, rc.TimeZone),
 			ProofObligation: fmt.Sprintf("GET %s listens on port %d and returns a %s body containing the current time in %s, conforming to the ResponseContract", rc.Route, rc.Port, format, rc.TimeZone),
 			FileScope:       "internal/server/",
-			Covers:          []string{string(completeness.DimFunctional)},
+			Covers:          append([]string{string(completeness.DimFunctional)}, es.ResponseContract.RequiredCaseIDs()...),
 			DependsOn:       []string{"scaffold"},
 		}
 	default:
@@ -113,7 +113,7 @@ func functionalTask(projectType string, es spec.ExecutableSpec) Task {
 			Title:           "Implement the declared behavior",
 			ProofObligation: "the program satisfies its declared behavioral contract — the expected output for every declared case",
 			FileScope:       "internal/",
-			Covers:          []string{string(completeness.DimFunctional)},
+			Covers:          append([]string{string(completeness.DimFunctional)}, es.ResponseContract.RequiredCaseIDs()...),
 			DependsOn:       []string{"scaffold"},
 		}
 	}
@@ -159,6 +159,20 @@ func CoverageGate(es spec.ExecutableSpec, epic Epic) error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("coverage gap: spec requirement(s) with no ProofObligation: %v", missing)
+	}
+	// Case-ID granularity (or-jh4): every declared behavioral case must be owned by a
+	// task's ProofObligation, not just the functional DIMENSION — so a decomposition
+	// that drops a specific case is caught at plan time (belt-and-suspenders for the
+	// proof-time ObligationGate). A spec with no cases is vacuously covered here; the
+	// requirement that a behavioral spec MUST declare cases is enforced elsewhere.
+	var missingCases []string
+	for _, cid := range es.ResponseContract.RequiredCaseIDs() {
+		if !covered[cid] {
+			missingCases = append(missingCases, cid)
+		}
+	}
+	if len(missingCases) > 0 {
+		return fmt.Errorf("coverage gap: behavioral case(s) with no ProofObligation: %v", missingCases)
 	}
 	return nil
 }
