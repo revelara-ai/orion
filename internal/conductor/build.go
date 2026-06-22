@@ -10,6 +10,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/decomposer"
 	"github.com/revelara-ai/orion/internal/delivery"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
@@ -114,13 +115,29 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	contract := testsynth.Contract{Route: gs.Route, Format: gs.Format, TimeZone: gs.TimeZone, Cases: es.ResponseContract.Cases}
 	requiredIDs := es.ResponseContract.RequiredCaseIDs()
 
+	// Cluster coupled tasks by declared file scope so the schedule keeps tasks that
+	// touch overlapping paths contiguous — the foundation for assigning each cluster
+	// one agent/worktree (or-tcs.1.2). Failure to cluster is non-fatal: the build
+	// proceeds on the unclustered task order (runDAG still enforces dependency order).
+	dtasks := make([]decomposer.Task, len(pv.Tasks))
+	for i, t := range pv.Tasks {
+		dtasks[i] = decomposer.Task{Key: t.ID, FileScope: t.FileScope, DependsOn: t.DependsOn}
+	}
+	scheduleTasks := pv.Tasks
+	if clusters, cerr := decomposer.Cluster(dtasks); cerr != nil {
+		onPhase.emit("Cluster", PhaseWarn, cerr.Error())
+	} else {
+		onPhase.emit("Cluster", PhaseDone, fmt.Sprintf("%d task(s) in %d cluster(s)", len(pv.Tasks), len(clusters)))
+		scheduleTasks = orderByClusters(pv.Tasks, clusters)
+	}
+
 	// Execute the DAG: each task built+proved+gated independently, in dependency
 	// order (a task waits until its dependencies Accept). Slice 1: tasks share one
 	// GenSpec, so the expensive build+prove runs ONCE per distinct GenSpec and each
 	// further task is gated against that same proof (see closeFromProven) — the
 	// scheduler still enforces ordering + gating, without re-proving N times.
 	built := map[string]taskResult{}
-	results, err := runDAG(pv.Tasks, func(task orchestrator.PlanTask) (taskResult, error) {
+	results, err := runDAG(scheduleTasks, func(task orchestrator.PlanTask) (taskResult, error) {
 		key := genSpecKey(gs)
 		if prev, ok := built[key]; ok {
 			return closeFromProven(ctx, store, prev, task)
@@ -346,6 +363,33 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		Closed: closed, BuildDir: buildDir, Attempts: attempts,
 		FailureAnalysis: failureAnalysis, Alignment: alignment, art: finalArt,
 	}, nil
+}
+
+// orderByClusters flattens clusters (already in dependency order) into their member
+// PlanTasks so coupled tasks are scheduled contiguously. The dependency-correct
+// order is still enforced by runDAG's own topological sort; clustering only groups
+// the schedule (and, in later slices, assigns each cluster its own worktree).
+func orderByClusters(tasks []orchestrator.PlanTask, clusters []decomposer.TaskCluster) []orchestrator.PlanTask {
+	byID := make(map[string]orchestrator.PlanTask, len(tasks))
+	for _, t := range tasks {
+		byID[t.ID] = t
+	}
+	out := make([]orchestrator.PlanTask, 0, len(tasks))
+	seen := make(map[string]bool, len(tasks))
+	for _, c := range clusters {
+		for _, m := range c.Members {
+			if t, ok := byID[m]; ok && !seen[m] {
+				out = append(out, t)
+				seen[m] = true
+			}
+		}
+	}
+	for _, t := range tasks { // any task not placed by clustering keeps its order
+		if !seen[t.ID] {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // genSpecKey identifies a GenSpec so tasks that would build an identical artifact
