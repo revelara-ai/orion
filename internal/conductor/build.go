@@ -21,6 +21,7 @@ import (
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 	"github.com/revelara-ai/orion/internal/reliabilityscan"
 	"github.com/revelara-ai/orion/internal/reliabilitytier"
+	"github.com/revelara-ai/orion/internal/repo"
 	"github.com/revelara-ai/orion/internal/sandbox"
 	"github.com/revelara-ai/orion/internal/worktree"
 )
@@ -132,16 +133,15 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	}
 	scheduleTasks := orderByClusters(pv.Tasks, clusters)
 
-	// Worktree-per-cluster isolation (or-tcs.1.3): each cluster builds in its own git
-	// worktree off the project repo — the agent's only writable workdir. Greenfield
-	// assumes an existing (possibly empty) git repo; if there is none, the build fails
-	// rather than scribbling outside one (foundation for parallel + integrated builds).
-	projectRoot := GitRoot(ctx, ".")
-	if projectRoot == "" {
-		return BuildResult{}, fmt.Errorf("orion build requires a git repository (run inside one; `git init` for a greenfield project)")
+	// Build in Orion's MANAGED repo (<store.Dir()>/repo), not the developer's
+	// working tree: greenfield inits it, brownfield clones the target. Nothing
+	// scribbles outside it, and greenfield no longer fails for "not in a git repo".
+	managed, rerr := repo.Resolve(ctx, store, repo.Intake{})
+	if rerr != nil {
+		return BuildResult{}, fmt.Errorf("resolve managed repo: %w", rerr)
 	}
-	wtMgr := worktree.New(projectRoot, store)
-	clusterWT, cleanupWT, werr := clusterWorktreeSet(ctx, wtMgr, clusters, "HEAD")
+	wtMgr := worktree.New(managed.Path, store).WithBase(managed.Base)
+	clusterWT, cleanupWT, werr := clusterWorktreeSet(ctx, wtMgr, clusters, managed.Base)
 	if werr != nil {
 		return BuildResult{}, fmt.Errorf("worktree isolation: %w", werr)
 	}
