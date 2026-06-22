@@ -140,9 +140,7 @@ Constructed off the managed repo, not `GitRoot(cwd)`. Three additions:
 - **`BuildDAG`**: replace the `GitRoot(ctx,".")` → fail block
   (`build.go:139-142`) with `r, err := repo.Resolve(ctx, store, intake)` then
   `worktree.New(r.Path, store).WithBase(r.Base)`. **Greenfield never fails and
-  never touches the developer's tree.** `intake` is greenfield by default;
-  brownfield is derived from the existing `internal/brownfield` classification when
-  a target is present.
+  never touches the developer's tree.** `intake` is greenfield by default (`repo.Intake{}`). Brownfield wiring from the `internal/brownfield` classification is **deferred to or-any.8** — the greenfield flow has no target-repo intake yet, and classifying the cwd would re-introduce the dependency this rewire removed. The brownfield `Resolve` arm itself is built + tested.
 - **`clusterWorktreeSet`**: base off `r.Base`, not the literal `"HEAD"`.
 - **`GitDeliver` — untouched this cycle.** It is already guarded by `GitRoot(ctx,
   ".") != ""` (`build.go:252`), so greenfield-with-no-dev-repo already *skips*
