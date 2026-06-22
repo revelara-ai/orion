@@ -239,6 +239,11 @@ func TestStatusReportsBehind(t *testing.T) {
 	if st.Behind < 1 {
 		t.Fatalf("Behind = %d, want >= 1 (main advanced past the branch)", st.Behind)
 	}
+	// Behind is informational: a worktree that is only behind (clean tree, not ahead)
+	// is still Clean.
+	if !st.Clean {
+		t.Errorf("Clean should be true when only Behind (uncommitted=%v ahead=%d), got false", st.Uncommitted, st.Ahead)
+	}
 }
 
 // TestRemovePreservesUncommittedWorkAsWipCommit: --force over a dirty worktree
