@@ -32,6 +32,7 @@ type Worktree struct {
 type Status struct {
 	Uncommitted bool // dirty working tree (git status --porcelain non-empty)
 	Ahead       int  // commits on the branch not yet in the integration base (un-integrated)
+	Behind      int  // commits on the integration base not yet in the branch (un-rebased)
 	Clean       bool // no uncommitted changes and nothing un-integrated
 }
 
@@ -213,7 +214,11 @@ func (m *Manager) Status(issueID string) (Status, error) {
 	if out, err := runGit(path, "rev-list", "--count", m.base+"..HEAD"); err == nil {
 		fmt.Sscanf(strings.TrimSpace(out), "%d", &ahead)
 	}
-	return Status{Uncommitted: uncommitted, Ahead: ahead, Clean: !uncommitted && ahead == 0}, nil
+	behind := 0
+	if out, err := runGit(path, "rev-list", "--count", "HEAD.."+m.base); err == nil {
+		fmt.Sscanf(strings.TrimSpace(out), "%d", &behind)
+	}
+	return Status{Uncommitted: uncommitted, Ahead: ahead, Behind: behind, Clean: !uncommitted && ahead == 0}, nil
 }
 
 // Prune wraps `git worktree prune`.

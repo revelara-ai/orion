@@ -214,3 +214,29 @@ func TestCreateRecordsWorktreeTxn(t *testing.T) {
 		t.Fatalf("record = %+v, want path=%s branch=or-0d2 status=active", rec, wt.Path)
 	}
 }
+
+// TestStatusReportsBehind: after the base branch advances past a worktree's
+// branch point, Status reports how many commits the worktree is behind.
+func TestStatusReportsBehind(t *testing.T) {
+	repo := newRepo(t)
+	m := New(repo, mustStore(t))
+	ctx := context.Background()
+
+	if _, err := m.Create(ctx, "or-bhd", "main"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Advance main beyond the worktree's branch point (shared refs).
+	if err := os.WriteFile(filepath.Join(repo, "more.md"), []byte("more\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, repo, "git", "add", ".")
+	run(t, repo, "git", "commit", "-m", "advance main")
+
+	st, err := m.Status("or-bhd")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if st.Behind < 1 {
+		t.Fatalf("Behind = %d, want >= 1 (main advanced past the branch)", st.Behind)
+	}
+}
