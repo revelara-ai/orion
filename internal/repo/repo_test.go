@@ -107,4 +107,13 @@ func TestResolveClonesBrownfieldTarget(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(r.Path, "app.go")); err != nil {
 		t.Fatalf("cloned content missing: %v", err)
 	}
+
+	// Idempotent: re-resolve reuses the clone, returns the same repo.
+	r2, err := Resolve(ctx, store, Intake{Brownfield: true, Source: src})
+	if err != nil {
+		t.Fatalf("re-resolve brownfield: %v", err)
+	}
+	if r2.Path != r.Path || r2.Base != r.Base {
+		t.Fatalf("re-resolve changed: Path %q->%q Base %q->%q", r.Path, r2.Path, r.Base, r2.Base)
+	}
 }
