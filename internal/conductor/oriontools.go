@@ -125,6 +125,43 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 	})
 
 	r.Register(tools.Tool{
+		Name:        "direct_work",
+		Description: "Map a developer's change intent onto the existing codebase's models to DIRECT the work: the functional model (which domains/packages it touches + the blast radius of impacted packages) AND the STAMP baseline (which control hazards the change must PRESERVE). Use this for a brownfield change to scope the decomposition and seed the proof obligations before grilling the details.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"intent":{"type":"string","description":"the developer's change intent"}},"required":["intent"]}`),
+		Safety:      tools.Safety{ReadOnly: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			if provider == nil {
+				return "directing work from intent needs a model provider (offline).", nil
+			}
+			var p struct {
+				Intent string `json:"intent"`
+			}
+			_ = json.Unmarshal(in, &p)
+			dir, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			m := brownfield.ScanRepoMap(dir)
+			if m.Profile.Mode == brownfield.Greenfield {
+				return "GREENFIELD — no existing codebase to map the intent against; grill the spec from the intent directly.", nil
+			}
+			fm, ferr := AnalyzeFunctionalModel(ctx, provider, m)
+			if ferr != nil {
+				return "", ferr
+			}
+			base, serr := AnalyzeSTAMPBaseline(ctx, provider, m, fm)
+			if serr != nil {
+				return "", serr
+			}
+			im, merr := MapIntent(ctx, provider, p.Intent, m, fm, base)
+			if merr != nil {
+				return "", merr
+			}
+			return im.Digest(), nil
+		},
+	})
+
+	r.Register(tools.Tool{
 		Name:        "record_answer",
 		Description: "Record the developer's answer to a spec decision (key from check_completeness + the value). For response_format, use a canonical value — \"json\" or \"plain text\" (the only formats the build+proof pipeline supports). If a tool returns an \"unrecognized/ambiguous format\" error, re-ask and record one of those.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]}`),
