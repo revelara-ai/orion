@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
-	"github.com/revelara-ai/orion/internal/proof/safeenv"
+	"github.com/revelara-ai/orion/internal/proof/proofexec"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 )
@@ -56,13 +56,20 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truth
 		return truthalign.ModeResult{}, ProbeResult{}, err
 	}
 	defer os.RemoveAll(binDir)
-	bin := filepath.Join(binDir, "svc")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, ".")
-	build.Dir = artifactDir
-	build.Env = safeenv.Build() // scrubbed: building generated code never sees host secrets
-	if out, err := build.CombinedOutput(); err != nil {
-		return failMode("build failed: " + strings.TrimSpace(string(out))), ProbeResult{Detail: "build failed"}, nil
+	// Stage the artifact into a proof-controlled dir and build it INSIDE the proof
+	// sandbox (network + filesystem isolated): the generator's worktree is never
+	// the build workdir, and the untrusted build cannot read host secrets or reach
+	// the network during compilation. (The probe RUN below is not yet sandboxed —
+	// it needs the service reachable on loopback; tracked as a follow-up.)
+	if err := stageArtifact(artifactDir, binDir); err != nil {
+		return failMode("stage artifact: " + err.Error()), ProbeResult{Detail: "stage failed"}, nil
+	}
+	bin := filepath.Join(binDir, "svc")
+	if out, code, err := proofexec.GoToolchain(ctx, binDir, "build", "-o", "svc", "."); err != nil {
+		return truthalign.ModeResult{}, ProbeResult{}, fmt.Errorf("empirical build exec: %w", err)
+	} else if code != 0 {
+		return failMode("build failed: " + strings.TrimSpace(out)), ProbeResult{Detail: "build failed"}, nil
 	}
 
 	port, err := freePort()
@@ -107,6 +114,38 @@ func modeFrom(pr ProbeResult) truthalign.ModeResult {
 
 func failMode(detail string) truthalign.ModeResult {
 	return truthalign.ModeResult{Mode: "empirical", Pass: false, Output: detail, Metrics: map[string]float64{"empirical_pass_rate": 0, "run_count": 1}}
+}
+
+// stageArtifact copies the buildable Go sources (go.mod/go.sum + top-level *.go)
+// from the generator's worktree into a proof-controlled dir, so the empirical
+// build runs in an isolated workdir rather than the agent's worktree.
+func stageArtifact(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	staged := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if name != "go.mod" && name != "go.sum" && !strings.HasSuffix(name, ".go") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(src, name))
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dst, name), data, 0o644); err != nil {
+			return err
+		}
+		staged++
+	}
+	if staged == 0 {
+		return fmt.Errorf("no buildable Go sources in %s", src)
+	}
+	return nil
 }
 
 func freePort() (int, error) {

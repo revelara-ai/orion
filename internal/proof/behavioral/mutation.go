@@ -3,11 +3,10 @@ package behavioral
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"github.com/revelara-ai/orion/internal/proof/safeenv"
+	"github.com/revelara-ai/orion/internal/proof/proofexec"
 )
 
 // mutant is a deliberate behavior-changing edit to the artifact. A fault-catching
@@ -54,12 +53,14 @@ func MutationScore(ctx context.Context, artifactDir, corpusSource string) (kille
 		_ = os.WriteFile(filepath.Join(dir, "go.mod"), gomod, 0o644)
 		_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte(mutated), 0o644)
 		_ = os.WriteFile(filepath.Join(dir, "orion_behavioral_test.go"), []byte(corpusSource), 0o644)
-		cmd := exec.CommandContext(ctx, "go", "test", "./...")
-		cmd.Dir = dir
-		cmd.Env = safeenv.Build() // scrubbed: mutated generated code never sees host secrets
-		runErr := cmd.Run()
+		// Run the mutant's corpus inside the proof sandbox (mutated generated code
+		// never sees host secrets and cannot reach the network).
+		_, code, execErr := proofexec.GoToolchain(ctx, dir, "test", "./...")
 		os.RemoveAll(dir)
-		if runErr != nil {
+		if execErr != nil {
+			return killed, total, execErr
+		}
+		if code != 0 {
 			killed++ // corpus caught the mutant
 		}
 	}
