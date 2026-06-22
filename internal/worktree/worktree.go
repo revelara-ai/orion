@@ -52,6 +52,11 @@ type Manager struct {
 	// Default: never.
 	inIntegration func(issueID string) bool
 
+	// alive reports whether the agent owning a worktree is still running.
+	// Injectable; the agentruntime wires heartbeat/PID liveness. Default: always
+	// alive (no reaping).
+	alive func(issueID string) bool
+
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
 }
@@ -63,6 +68,7 @@ func New(repoDir string, store *contextstore.Store) *Manager {
 		store:         store,
 		base:          "main",
 		inIntegration: func(string) bool { return false },
+		alive:         func(string) bool { return true },
 		locks:         map[string]*sync.Mutex{},
 	}
 }
@@ -74,6 +80,15 @@ func (m *Manager) WithBase(base string) *Manager { m.base = base; return m }
 func (m *Manager) WithIntegrationCheck(f func(string) bool) *Manager {
 	if f != nil {
 		m.inIntegration = f
+	}
+	return m
+}
+
+// WithLivenessCheck injects the agent-liveness predicate for §7 stale reclaim
+// (default: always alive). The agentruntime wires heartbeat/PID liveness.
+func (m *Manager) WithLivenessCheck(f func(string) bool) *Manager {
+	if f != nil {
+		m.alive = f
 	}
 	return m
 }
@@ -336,6 +351,14 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			_ = os.RemoveAll(dir)
 		}
 		_ = m.Prune()
+	}
+
+	// §7 — reclaim STALE worktrees: a live worktree whose owning agent is no longer
+	// running is preserved (WIP) and removed, freeing the slot for re-allocation.
+	for _, wt := range live {
+		if !m.alive(wt.IssueID) {
+			_ = m.Remove(ctx, wt.IssueID, RemoveOpts{Force: true})
+		}
 	}
 
 	// Repair Context Store drift: a recorded worktree with no live dir → mark gone.
