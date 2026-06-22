@@ -38,6 +38,25 @@ type Contract struct {
 	// model). Empty → the legacy single-assertion corpus (behavioral always has the
 	// default case, so this fires only for direct callers).
 	Cases []spec.BehavioralCase
+	// EntrySymbol is the DECLARED behavioral entry point the corpus invokes in-process
+	// (the proof harness calls it directly). Empty defaults to DefaultEntrySymbol
+	// ("handleTime", the HTTP-family contract symbol). Declaring it lets non-HTTP or
+	// multi-route programs name their own handler instead of the hardwired symbol
+	// (or-ciq, generalization item #9).
+	EntrySymbol string
+}
+
+// DefaultEntrySymbol is the HTTP-family behavioral entry point used when a Contract
+// does not declare its own (keeps the existing single-route HTTP path unchanged).
+const DefaultEntrySymbol = "handleTime"
+
+// Entry returns the declared behavioral entry symbol, defaulting to
+// DefaultEntrySymbol. The corpus and the mutation target both call THIS symbol.
+func (c Contract) Entry() string {
+	if c.EntrySymbol == "" {
+		return DefaultEntrySymbol
+	}
+	return c.EntrySymbol
 }
 
 // JSONKey returns the required JSON key and whether its value must be RFC3339. An
@@ -76,14 +95,14 @@ var (
 )
 `)
 	for _, cs := range cases {
-		b.WriteString(caseTest(cs))
+		b.WriteString(caseTest(cs, c.Entry()))
 	}
 	return b.String()
 }
 
 // caseTest emits one obligation test for a behavioral case (in-process via the
 // handleTime contract symbol), bracketed by RUN/PASS markers.
-func caseTest(cs spec.BehavioralCase) string {
+func caseTest(cs spec.BehavioralCase, entry string) string {
 	method := cs.Request.Method
 	if method == "" {
 		method = "GET"
@@ -100,7 +119,7 @@ func caseTest(cs spec.BehavioralCase) string {
 	for k, v := range cs.Request.Headers {
 		fmt.Fprintf(&b, "\treq.Header.Set(%q, %q)\n", k, v)
 	}
-	b.WriteString("\tw := httptest.NewRecorder()\n\thandleTime(w, req)\n")
+	fmt.Fprintf(&b, "\tw := httptest.NewRecorder()\n\t%s(w, req)\n", entry)
 	fmt.Fprintf(&b, "\tif w.Code != %d {\n\t\tt.Fatalf(\"status = %%d, want %d\", w.Code)\n\t}\n", cs.Expect.Status, cs.Expect.Status)
 	if cs.Expect.ContentType != "" {
 		fmt.Fprintf(&b, "\tif ct := w.Header().Get(\"Content-Type\"); !strings.Contains(ct, %q) {\n\t\tt.Fatalf(\"content-type = %%q, want %s\", ct)\n\t}\n", cs.Expect.ContentType, cs.Expect.ContentType)
@@ -251,11 +270,11 @@ var _ = time.Parse // may be unused when no RFC3339 assertion is generated
 func TestContractBehavior(t *testing.T) {
 	req := httptest.NewRequest("GET", %q, nil)
 	w := httptest.NewRecorder()
-	handleTime(w, req)
+	%s(w, req)
 	if w.Code != 200 {
 		t.Fatalf("status = %%d, want 200", w.Code)
 	}
 %s
 }
-`, c.Route, assert)
+`, c.Route, c.Entry(), assert)
 }
