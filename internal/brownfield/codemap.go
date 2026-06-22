@@ -29,10 +29,11 @@ type RepoMap struct {
 
 // GoPackage is one Go package's public surface + its internal dependencies.
 type GoPackage struct {
-	Name     string   // package name
-	Dir      string   // dir relative to the repo root
-	Imports  []string // internal imports (within the module) — the architecture edges
-	Exported []string // exported funcs + types (the API surface)
+	Name       string   // package name
+	Dir        string   // dir relative to the repo root
+	Imports    []string // internal imports (within the module) — the architecture edges (out)
+	Exported   []string // exported funcs + types (the API surface)
+	Dependents []string // internal packages that import THIS one — the reverse edges (in)
 }
 
 const maxMappedPackages = 60 // bound the digest on very large repos
@@ -44,10 +45,95 @@ func ScanRepoMap(repoDir string) RepoMap {
 	for _, l := range m.Profile.Languages {
 		if l == "go" {
 			m.Packages, m.Truncated = scanGoPackages(repoDir, m.Module)
+			computeDependents(m.Packages)
 			break
 		}
 	}
 	return m
+}
+
+// computeDependents fills each package's reverse edges (who imports it) from the
+// forward import edges — the basis for blast-radius/impact analysis.
+func computeDependents(pkgs []GoPackage) {
+	idx := make(map[string]int, len(pkgs))
+	for i, p := range pkgs {
+		idx[p.Dir] = i
+	}
+	for _, p := range pkgs {
+		for _, imp := range p.Imports {
+			if j, ok := idx[imp]; ok {
+				pkgs[j].Dependents = append(pkgs[j].Dependents, p.Dir)
+			}
+		}
+	}
+	for i := range pkgs {
+		sort.Strings(pkgs[i].Dependents)
+	}
+}
+
+// BlastRadius returns the transitive set of packages affected by a change to dir
+// (everything that depends on it, directly or indirectly) — the impact of touching it.
+func (m RepoMap) BlastRadius(dir string) []string {
+	rev := make(map[string][]string, len(m.Packages))
+	for _, p := range m.Packages {
+		rev[p.Dir] = p.Dependents
+	}
+	seen := map[string]bool{}
+	queue := append([]string(nil), rev[dir]...)
+	for len(queue) > 0 {
+		d := queue[0]
+		queue = queue[1:]
+		if seen[d] {
+			continue
+		}
+		seen[d] = true
+		queue = append(queue, rev[d]...)
+	}
+	out := make([]string, 0, len(seen))
+	for d := range seen {
+		out = append(out, d)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Foundations returns up to n packages with the widest blast radius (high fan-in) —
+// the risky-to-change core: a change here ripples across the system.
+func (m RepoMap) Foundations(n int) []GoPackage {
+	type fr struct {
+		p     GoPackage
+		reach int
+	}
+	frs := make([]fr, 0, len(m.Packages))
+	for _, p := range m.Packages {
+		frs = append(frs, fr{p, len(m.BlastRadius(p.Dir))})
+	}
+	sort.Slice(frs, func(i, j int) bool {
+		if frs[i].reach != frs[j].reach {
+			return frs[i].reach > frs[j].reach
+		}
+		return frs[i].p.Dir < frs[j].p.Dir
+	})
+	var out []GoPackage
+	for _, f := range frs {
+		if f.reach == 0 || len(out) >= n {
+			break
+		}
+		out = append(out, f.p)
+	}
+	return out
+}
+
+// EntryPoints returns packages nothing else imports — the roots (mains/top-level): a
+// change here is localized (no internal dependents).
+func (m RepoMap) EntryPoints() []GoPackage {
+	var out []GoPackage
+	for _, p := range m.Packages {
+		if len(p.Dependents) == 0 {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // modulePath reads the `module` line from go.mod, or "" if absent.
@@ -114,7 +200,11 @@ func scanGoPackages(repoDir, modPath string) ([]GoPackage, int) {
 		for _, imp := range f.Imports {
 			p := strings.Trim(imp.Path.Value, `"`)
 			if modPath != "" && (p == modPath || strings.HasPrefix(p, modPath+"/")) {
-				a.imports[strings.TrimPrefix(strings.TrimPrefix(p, modPath), "/")] = true
+				rel := strings.TrimPrefix(strings.TrimPrefix(p, modPath), "/")
+				if rel == "" {
+					rel = "." // an import of the module root package
+				}
+				a.imports[rel] = true
 			}
 		}
 		for _, decl := range f.Decls {
@@ -175,6 +265,24 @@ func (m RepoMap) Digest() string {
 	if len(m.KeyFiles) > 0 {
 		fmt.Fprintf(&b, "key files: %s\n", strings.Join(m.KeyFiles, ", "))
 	}
+	// Architecture/impact: foundations (wide blast radius — risky) + entry points
+	// (localized). This is what directs where an intent's work lands + its risk.
+	if found := m.Foundations(6); len(found) > 0 {
+		b.WriteString("\n## Architecture (impact)\n")
+		b.WriteString("foundations (high blast radius — change with care):\n")
+		for _, p := range found {
+			fmt.Fprintf(&b, "- %s → affects %d package(s)\n", p.Dir, len(m.BlastRadius(p.Dir)))
+		}
+		eps := m.EntryPoints()
+		dirs := make([]string, 0, len(eps))
+		for _, p := range eps {
+			dirs = append(dirs, p.Dir)
+		}
+		if len(dirs) > 0 {
+			fmt.Fprintf(&b, "entry points (roots — localized to change): %s\n", strings.Join(clipList(dirs, 12), ", "))
+		}
+	}
+
 	if len(m.Packages) > 0 {
 		fmt.Fprintf(&b, "\n## Go packages (%d) — API surface + internal deps\n", len(m.Packages))
 		for _, p := range m.Packages {
