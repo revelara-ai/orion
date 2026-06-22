@@ -70,3 +70,41 @@ func TestResolveInitsManagedRepoForGreenfield(t *testing.T) {
 		t.Fatalf("managed repo .git should exist: %v", err)
 	}
 }
+
+// newSourceRepo creates a throwaway upstream repo on `trunk` with one commit,
+// returning its path — the brownfield clone target.
+func newSourceRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	gitOut(t, dir, "init", "-b", "trunk")
+	gitOut(t, dir, "config", "user.email", "src@example.com")
+	gitOut(t, dir, "config", "user.name", "Src")
+	if err := os.WriteFile(filepath.Join(dir, "app.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, dir, "add", ".")
+	gitOut(t, dir, "commit", "-m", "upstream")
+	return dir
+}
+
+func TestResolveClonesBrownfieldTarget(t *testing.T) {
+	store := mustStore(t)
+	ctx := context.Background()
+	src := newSourceRepo(t)
+
+	r, err := Resolve(ctx, store, Intake{Brownfield: true, Source: src})
+	if err != nil {
+		t.Fatalf("resolve brownfield: %v", err)
+	}
+	if r.Path != filepath.Join(store.Dir(), "repo") {
+		t.Fatalf("Path = %q", r.Path)
+	}
+	// Base is the cloned upstream default branch, not a hardcoded "main".
+	if r.Base != "trunk" {
+		t.Fatalf("Base = %q, want trunk (the cloned default branch)", r.Base)
+	}
+	// The upstream content came across.
+	if _, err := os.Stat(filepath.Join(r.Path, "app.go")); err != nil {
+		t.Fatalf("cloned content missing: %v", err)
+	}
+}
