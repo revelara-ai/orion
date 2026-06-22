@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/revelara-ai/orion/internal/brownfield"
 	"github.com/revelara-ai/orion/internal/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
@@ -51,6 +52,23 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 				return "", err
 			}
 			return asJSON(map[string]any{"status": sv.Status, "open_decisions": sv.OpenDecisions}), nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "read_codebase",
+		Description: "Read the EXISTING codebase in the working directory: greenfield/brownfield mode, languages, key files, and (for Go) the package structure + exported API surface + internal dependency edges. Call this FIRST when the intent concerns an existing project, so your questions and the spec are grounded in the REAL code (which packages exist, what they expose, how they depend on each other) — not invented structure.",
+		Safety:      tools.Safety{ReadOnly: true},
+		Run: func(_ context.Context, _ json.RawMessage) (string, error) {
+			dir, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			m := brownfield.ScanRepoMap(dir)
+			if m.Profile.Mode == brownfield.Greenfield {
+				return "GREENFIELD workspace (" + dir + "): no existing source to integrate with — design new structure from the intent.", nil
+			}
+			return m.Digest(), nil
 		},
 	})
 
