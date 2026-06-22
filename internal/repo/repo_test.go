@@ -66,5 +66,7 @@ func TestResolveInitsManagedRepoForGreenfield(t *testing.T) {
 	if c := gitOut(t, r.Path, "rev-list", "--count", "HEAD"); c != "1" {
 		t.Fatalf("commit count after re-resolve = %q, want still 1 (idempotent)", c)
 	}
-	_ = os.Stat
+	if _, err := os.Stat(filepath.Join(r.Path, ".git")); err != nil {
+		t.Fatalf("managed repo .git should exist: %v", err)
+	}
 }
