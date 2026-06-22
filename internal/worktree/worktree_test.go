@@ -277,3 +277,33 @@ func TestRemovePreservesUncommittedWorkAsWipCommit(t *testing.T) {
 		t.Fatalf("WIP commit should contain scratch.txt; show=%q err=%v", out, err)
 	}
 }
+
+// TestReconcileReclaimsStaleViaLivenessHook: a worktree whose owning agent is no
+// longer alive (per the injected predicate) is reclaimed by Reconcile; a live one
+// survives.
+func TestReconcileReclaimsStaleViaLivenessHook(t *testing.T) {
+	repo := newRepo(t)
+	m := New(repo, mustStore(t)).WithLivenessCheck(func(id string) bool {
+		return id != "or-dead" // or-dead's owner is gone
+	})
+	ctx := context.Background()
+
+	live, err := m.Create(ctx, "or-live", "main")
+	if err != nil {
+		t.Fatalf("create live: %v", err)
+	}
+	dead, err := m.Create(ctx, "or-dead", "main")
+	if err != nil {
+		t.Fatalf("create dead: %v", err)
+	}
+
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if _, err := os.Stat(dead.Path); !os.IsNotExist(err) {
+		t.Fatalf("stale worktree should be reclaimed/removed")
+	}
+	if _, err := os.Stat(live.Path); err != nil {
+		t.Fatalf("live worktree should survive reconcile: %v", err)
+	}
+}
