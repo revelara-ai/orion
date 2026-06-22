@@ -188,6 +188,9 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 			if res.OutputDir != "" {
 				out += "\nCode written to: " + res.OutputDir + " (proven; visible in your working repo)"
 			}
+			if res.Git.Branch != "" {
+				out += fmt.Sprintf("\nCommitted to branch %s (%s) — worktree: %s", res.Git.Branch, res.Git.Commit, res.Git.Path)
+			}
 			if res.Reason != "" {
 				out += "\nEscalation: " + res.Reason
 			}
