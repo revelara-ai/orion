@@ -113,7 +113,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		model = stpa.SkeletonModel()
 		_ = stpa.Save(ctx, store, proj.ID, model)
 	}
-	contract := testsynth.Contract{Route: gs.Route, Format: gs.Format, TimeZone: gs.TimeZone, Cases: es.ResponseContract.Cases}
+	contract := testsynth.Contract{Route: gs.Route, Format: gs.Format, TimeZone: gs.TimeZone, Cases: es.ResponseContract.Cases, EntrySymbol: gs.Entry()}
 	requiredIDs := es.ResponseContract.RequiredCaseIDs()
 
 	// Cluster coupled tasks by declared file scope (or-tcs.1.2): the schedule keeps

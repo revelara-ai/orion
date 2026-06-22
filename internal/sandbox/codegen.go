@@ -26,6 +26,21 @@ type GenSpec struct {
 	// contract). The native LLM generator builds arbitrary code to these; the
 	// deterministic fixture ignores them (it only knows the canonical time service).
 	Cases []spec.BehavioralCase
+	// EntrySymbol is the DECLARED behavioral entry point the generated program must
+	// expose for the proof harness to call (must match the corpus' testsynth.Contract
+	// entry symbol). Empty defaults to "handleTime" (the HTTP-family contract symbol),
+	// so existing callers are unchanged (or-3ba.4 / or-ciq).
+	EntrySymbol string
+}
+
+// Entry returns the declared entry symbol the generated program must expose,
+// defaulting to "handleTime" (kept identical to testsynth.DefaultEntrySymbol so the
+// generator and the proof corpus always agree).
+func (g GenSpec) Entry() string {
+	if g.EntrySymbol == "" {
+		return "handleTime"
+	}
+	return g.EntrySymbol
 }
 
 // GeneratedArtifact describes a written file.
@@ -136,7 +151,7 @@ func location() *time.Location {
 	return loc{{end}}
 }
 
-func handleTime(w http.ResponseWriter, r *http.Request) {
+func {{.Entry}}(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().In(location())
 {{if eq .Format "text"}}	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte(now.Format(time.RFC3339)))
@@ -147,7 +162,7 @@ func handleTime(w http.ResponseWriter, r *http.Request) {
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	mux := http.NewServeMux()
-	mux.Handle({{printf "%q" .Route}}, instrument(http.HandlerFunc(handleTime)))
+	mux.Handle({{printf "%q" .Route}}, instrument(http.HandlerFunc({{.Entry}})))
 
 	addr := ":{{.Port}}"
 	if p := os.Getenv("PORT"); p != "" {
