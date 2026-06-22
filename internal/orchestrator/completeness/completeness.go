@@ -142,31 +142,82 @@ func universalDecisions() []RequiredDecision {
 // Deterministic intent matchers: only resolve a decision when the intent states
 // it explicitly. Narrow by design so the gate never guesses.
 var (
-	portRe = regexp.MustCompile(`(?i)\bport\s+\d{2,5}\b`)
+	portRe = regexp.MustCompile(`(?i)\bport\s+(\d{2,5})\b`)
 	// Only formats the contract + proof pipeline actually support, so the two
 	// gates share one vocabulary. An intent naming an unsupported format (xml,
 	// protobuf) does NOT auto-resolve — it stays open and is asked, then rejected
 	// loudly at contract assembly rather than silently mishandled.
 	jsonRe  = regexp.MustCompile(`(?i)\b(json|plain ?text)\b`)
 	tzRe    = regexp.MustCompile(`(?i)\b(utc|gmt|local time|[a-z]+/[a-z_]+)\b`)
-	routeRe = regexp.MustCompile(`(?i)(\broute\b|\bpath\b|\bendpoint\b)\s+\S+|\s/[a-z0-9_\-/]+`)
+	// A path is recognized only after a route/path/endpoint keyword OR at a word
+	// start (string start or whitespace) — so "client/server" or "and/or" do NOT
+	// falsely resolve a route (the gate never guesses).
+	routeRe = regexp.MustCompile(`(?i)(?:\b(?:route|path|endpoint)\s+|(?:^|\s))(/[a-z0-9_\-/]+)`)
 )
 
-func resolvedFromIntent(intent, key string) bool {
+// extractFromIntent returns the value a functional decision takes when the intent
+// states it explicitly, and whether it did. Narrow + deterministic by design — the
+// gate never guesses; it reads back only what the intent literally says. This is
+// what makes an intent-stated decision USABLE rather than dropped-without-a-value
+// (the or-jh7 bug, where Analyze removed it from OpenDecisions but nothing recorded
+// the value, so spec.Compile then errored "unresolved").
+func extractFromIntent(intent, key string) (string, bool) {
 	switch key {
 	case "port":
-		return portRe.MatchString(intent)
+		if m := portRe.FindStringSubmatch(intent); m != nil {
+			return m[1], true
+		}
 	case "response_format":
-		return jsonRe.MatchString(intent)
+		if m := jsonRe.FindStringSubmatch(intent); m != nil {
+			if strings.Contains(strings.ToLower(m[1]), "json") {
+				return "json", true
+			}
+			return "text", true
+		}
 	case "timezone":
-		return tzRe.MatchString(intent)
+		if m := tzRe.FindStringSubmatch(intent); m != nil {
+			return normalizeTZ(m[1]), true
+		}
 	case "route":
-		return routeRe.MatchString(intent)
-	default:
-		// Non-functional dimensions are never inferred from a bare idea — they
-		// require an explicit answer (PRD: decide in the spec, not in production).
-		return false
+		if m := routeRe.FindStringSubmatch(intent); m != nil {
+			return m[1], true
+		}
 	}
+	// Non-functional dimensions are never inferred from a bare idea — they require an
+	// explicit answer (PRD: decide in the spec, not in production).
+	return "", false
+}
+
+func resolvedFromIntent(intent, key string) bool {
+	_, ok := extractFromIntent(intent, key)
+	return ok
+}
+
+// normalizeTZ canonicalizes a stated timezone to the vocabulary the spec uses.
+func normalizeTZ(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "utc":
+		return "UTC"
+	case "gmt":
+		return "GMT"
+	case "local time", "local":
+		return "local"
+	default:
+		return s // an IANA zone (e.g. America/New_York) is kept verbatim
+	}
+}
+
+// IntentValues returns, for each checklist key the intent states explicitly, the
+// value it states — so the flow can record intent-resolved decisions instead of
+// dropping them. Deterministic and side-effect-free (or-jh7).
+func (a *Analyzer) IntentValues(intent string) map[string]string {
+	out := map[string]string{}
+	for _, rd := range a.checklist {
+		if v, ok := extractFromIntent(intent, rd.Key); ok {
+			out[rd.Key] = v
+		}
+	}
+	return out
 }
 
 // ScaleThreshold is a concrete capacity target a scale fallback preset expands to.

@@ -162,6 +162,16 @@ func (c *Conductor) assembleSpec(ctx context.Context) (contextstore.Project, con
 	if err != nil {
 		return proj, sp, spec.ExecutableSpec{}, nil, err
 	}
+	// Intent-stated functional decisions are USABLE, not dropped: apply the values the
+	// intent explicitly states (deterministically re-derived from the intent) so an
+	// intent that names a port/format/route compiles instead of erroring "unresolved"
+	// (or-jh7). An explicit stored answer always wins.
+	for k, v := range c.gate.IntentValues(proj.Intent) {
+		if strings.TrimSpace(answers[k]) == "" {
+			answers[k] = v
+			kinds[k] = "precise"
+		}
+	}
 
 	open := c.gate.Analyze(proj.Intent, answers)
 	var blocking []string
