@@ -97,6 +97,34 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 	})
 
 	r.Register(tools.Tool{
+		Name:        "propose_stamp_baseline",
+		Description: "Propose a STAMP control-structure baseline for the EXISTING system — its losses, control structure (controllers + control actions + feedback), and unsafe control actions (each with the hazard + the code tokens that prove the control is present) — grounded in the functional model. This is the 'what must not break' baseline a brownfield change is later proven to PRESERVE. PROPOSED only; the developer ratifies each UCA (controlled / accepted-gap) before it anchors. Review it with the developer.",
+		Safety:      tools.Safety{ReadOnly: true},
+		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
+			if provider == nil {
+				return "STAMP baseline needs a model provider (offline).", nil
+			}
+			dir, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			m := brownfield.ScanRepoMap(dir)
+			if m.Profile.Mode == brownfield.Greenfield {
+				return "GREENFIELD — no existing system to model; the new spec's STPA defines the hazards.", nil
+			}
+			fm, ferr := AnalyzeFunctionalModel(ctx, provider, m)
+			if ferr != nil {
+				return "", ferr
+			}
+			model, serr := AnalyzeSTAMPBaseline(ctx, provider, m, fm)
+			if serr != nil {
+				return "", serr
+			}
+			return RenderBaseline(model), nil
+		},
+	})
+
+	r.Register(tools.Tool{
 		Name:        "record_answer",
 		Description: "Record the developer's answer to a spec decision (key from check_completeness + the value). For response_format, use a canonical value — \"json\" or \"plain text\" (the only formats the build+proof pipeline supports). If a tool returns an \"unrecognized/ambiguous format\" error, re-ask and record one of those.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]}`),
