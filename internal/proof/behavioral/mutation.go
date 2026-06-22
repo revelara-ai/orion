@@ -2,6 +2,7 @@ package behavioral
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,20 +19,30 @@ type mutant struct {
 	new  string
 }
 
-// behaviorChangingMutants are string-level mutations of the generated Go HTTP
-// time-service that alter observable behavior the ResponseContract pins.
-var behaviorChangingMutants = []mutant{
+// httpStringMutants are symbol-independent string mutations of the generated Go
+// HTTP service that alter observable behavior the ResponseContract pins.
+var httpStringMutants = []mutant{
 	{"json-field-rename", `"time"`, `"t1me"`},
 	{"json-content-type", `"application/json"`, `"application/octet-stream"`},
 	{"text-content-type", `"text/plain; charset=utf-8"`, `"application/octet-stream"`},
-	{"status-500", `func handleTime(w http.ResponseWriter, r *http.Request) {`, "func handleTime(w http.ResponseWriter, r *http.Request) {\n\tw.WriteHeader(500)"},
+}
+
+// mutantsFor returns the behavior-changing mutants for an artifact whose DECLARED
+// behavioral entry symbol is entry. The status-500 mutant targets that declared
+// handler signature rather than a hardwired "handleTime", so the mutation gate
+// generalizes with the contract (or-ciq).
+func mutantsFor(entry string) []mutant {
+	sig := fmt.Sprintf("func %s(w http.ResponseWriter, r *http.Request) {", entry)
+	out := append([]mutant(nil), httpStringMutants...)
+	out = append(out, mutant{"status-500", sig, sig + "\n\tw.WriteHeader(500)"})
+	return out
 }
 
 // MutationScore mutates the artifact and runs the corpus against each applicable
 // mutant. Returns killed and total (applicable) counts. A mutant is "killed" when
 // the corpus fails on it. The caller should have verified the corpus passes on
 // the unmutated artifact first.
-func MutationScore(ctx context.Context, artifactDir, corpusSource string) (killed, total int, err error) {
+func MutationScore(ctx context.Context, artifactDir, corpusSource, entrySym string) (killed, total int, err error) {
 	mainSrc, err := os.ReadFile(filepath.Join(artifactDir, "main.go"))
 	if err != nil {
 		return 0, 0, err
@@ -40,7 +51,7 @@ func MutationScore(ctx context.Context, artifactDir, corpusSource string) (kille
 	if err != nil {
 		return 0, 0, err
 	}
-	for _, m := range behaviorChangingMutants {
+	for _, m := range mutantsFor(entrySym) {
 		if !strings.Contains(string(mainSrc), m.old) {
 			continue // mutant not applicable to this artifact
 		}
@@ -56,7 +67,7 @@ func MutationScore(ctx context.Context, artifactDir, corpusSource string) (kille
 		// Run the mutant's corpus inside the proof sandbox (mutated generated code
 		// never sees host secrets and cannot reach the network).
 		_, code, execErr := proofexec.GoToolchain(ctx, dir, "test", "./...")
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		if execErr != nil {
 			return killed, total, execErr
 		}

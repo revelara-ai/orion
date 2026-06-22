@@ -26,7 +26,7 @@ func TestContractBehavior(t *testing.T) { /* asserts nothing */ }
 `
 	threshold := reliabilitytier.MutationThreshold(reliabilitytier.Standard)
 
-	rk, rt, err := MutationScore(ctx, dir, realCorpus)
+	rk, rt, err := MutationScore(ctx, dir, realCorpus, "handleTime")
 	if err != nil {
 		t.Fatalf("mutation (real): %v", err)
 	}
@@ -38,7 +38,7 @@ func TestContractBehavior(t *testing.T) { /* asserts nothing */ }
 		t.Fatalf("real corpus mutation score %.2f (%d/%d) below threshold %.2f", realScore, rk, rt, threshold)
 	}
 
-	tk, tt, err := MutationScore(ctx, dir, tautology)
+	tk, tt, err := MutationScore(ctx, dir, tautology, "handleTime")
 	if err != nil {
 		t.Fatalf("mutation (tautology): %v", err)
 	}

@@ -28,7 +28,7 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract, corpus
 	}
 	keep := corpusDirOut != nil
 	if !keep {
-		defer os.RemoveAll(proofDir)
+		defer func() { _ = os.RemoveAll(proofDir) }()
 	} else {
 		*corpusDirOut = proofDir
 	}
@@ -64,7 +64,7 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract, corpus
 	if pass {
 		// Behavioral quality gate: the corpus must KILL behavior-changing mutants
 		// (green coverage is a vanity metric; mutation score is the signal).
-		killed, total, mErr := MutationScore(ctx, artifactDir, corpus)
+		killed, total, mErr := MutationScore(ctx, artifactDir, corpus, c.Entry())
 		if mErr == nil {
 			score := MutationScoreValue(killed, total)
 			metrics["mutation_score"] = score
