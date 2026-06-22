@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 	"github.com/revelara-ai/orion/internal/sandbox"
@@ -137,5 +138,33 @@ func TestHarnessIsolation(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("generation domain could reach a proof artifact: %q", got)
 		}
+	}
+}
+
+// TestProveAllFastFailsOnNonCompilingCode: the diagnostics tier short-circuits the
+// expensive proof — a non-compiling artifact returns a Reject carrying ONLY the
+// diagnostics mode (behavioral/empirical/hazard never run), with the compiler error in
+// the output for the refinement loop to feed back.
+func TestProveAllFastFailsOnNonCompilingCode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go vet")
+	}
+	ctx := context.Background()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module broken\n\ngo 1.25\n")
+	writeFile(t, filepath.Join(dir, "main.go"), "package main\n\nfunc main() { _ = nope() }\n") // undefined: nope
+
+	rep, err := ProveAll(ctx, dir, testsynth.Contract{Route: "/time", Format: jsonContract}, stpa.SkeletonModel())
+	if err != nil {
+		t.Fatalf("proveall: %v", err)
+	}
+	if rep.Outcome.Verdict == truthalign.Accept {
+		t.Fatal("non-compiling code must not Accept")
+	}
+	if len(rep.Modes) != 1 || rep.Modes[0].Result.Mode != "diagnostics" {
+		t.Fatalf("expected ONLY the diagnostics mode (expensive modes skipped), got %d: %+v", len(rep.Modes), rep.Modes)
+	}
+	if !strings.Contains(rep.Modes[0].Result.Output, "nope") {
+		t.Fatalf("diagnostics output should carry the compiler error: %q", rep.Modes[0].Result.Output)
 	}
 }
