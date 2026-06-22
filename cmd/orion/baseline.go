@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/revelara-ai/orion/internal/brownfield"
 )
@@ -22,6 +23,15 @@ func cmdBaseline(args []string) int {
 	if err == nil && dir == "." {
 		dir = abs
 	}
+
+	// Step-2 fork: greenfield (create new structure) vs brownfield (integrate with
+	// existing code). This decides the create-vs-edit path for everything downstream.
+	prof := brownfield.Classify(dir)
+	fmt.Printf("repo: %s\n  mode: %s", dir, prof.Mode)
+	if len(prof.Languages) > 0 {
+		fmt.Printf(" (%s)", strings.Join(prof.Languages, ", "))
+	}
+	fmt.Printf("\n  git: %v (commits: %v) · source files: %d · tests: %v\n\n", prof.HasGit, prof.HasCommits, prof.SourceFiles, prof.HasTests)
 
 	res, err := brownfield.Baseline(context.Background(), dir)
 	if err != nil {
