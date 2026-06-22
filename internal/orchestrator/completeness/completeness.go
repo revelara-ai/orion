@@ -73,6 +73,30 @@ func RegisteredProjectType(projectType string) bool {
 // checklist and the decomposer's per-type functional task template (or-3ba.1).
 func (a *Analyzer) ProjectType() string { return a.projectType }
 
+// projectTypeMatchers map a CLEAR intent signal to a non-default project type, in
+// priority order. The gate never guesses: only an explicit signal switches the type.
+var projectTypeMatchers = []struct {
+	re   *regexp.Regexp
+	kind string
+}{
+	{regexp.MustCompile(`(?i)\b(cli|command[- ]line|terminal (?:app|tool)|console (?:app|application))\b`), "cli"},
+	{regexp.MustCompile(`(?i)\b(library|package|sdk|reusable module)\b`), "library"},
+	{regexp.MustCompile(`(?i)\b(worker|background job|cron job|daemon|batch (?:job|process))\b`), "worker"},
+}
+
+// InferProjectType deterministically chooses the project type from the intent. The
+// default is "http-service" (the V2.0 greenfield path); a clear CLI/library/worker
+// signal switches it. It never guesses on a bare idea — anything without an explicit
+// non-HTTP signal stays http-service (or-3ba.2).
+func InferProjectType(intent string) string {
+	for _, m := range projectTypeMatchers {
+		if m.re.MatchString(intent) {
+			return m.kind
+		}
+	}
+	return "http-service"
+}
+
 // Checklist returns a copy of the required-decisions checklist (deterministic).
 func (a *Analyzer) Checklist() []RequiredDecision {
 	out := make([]RequiredDecision, len(a.checklist))
