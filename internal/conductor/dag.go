@@ -5,7 +5,6 @@ import (
 
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/proof"
-	"github.com/revelara-ai/orion/internal/sandbox"
 )
 
 // taskResult is the outcome of building + proving one DAG task.
@@ -18,8 +17,7 @@ type taskResult struct {
 	Attempts        int
 	FailureAnalysis string
 	Alignment       AlignmentRecord
-	Blocked         bool                      // a dependency did not Accept, so this task was not run
-	art             sandbox.GeneratedArtifact // the proven artifact (for GenSpec-identical reuse)
+	Blocked         bool // a dependency did not Accept, so this task was not run
 }
 
 // runDAG executes each task through runTask in dependency (topological) order.
