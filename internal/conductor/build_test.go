@@ -133,3 +133,22 @@ func TestShowCodeReportsLocationAndContent(t *testing.T) {
 		t.Fatalf("show_code did not return the generated source:\n%s", out)
 	}
 }
+
+// TestBuildDAGResolvesManagedRepoNotCwd: the build no longer depends on a cwd git
+// repo — it resolves Orion's managed repo under the store dir. Run from a non-git
+// cwd, the build succeeds and the managed repo exists.
+func TestBuildDAGResolvesManagedRepoNotCwd(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles + runs a service + proof; skipped in -short")
+	}
+	oc, ctx := ratifiedTimeService(t) // ratifies (chdirs into a throwaway git repo)
+	t.Chdir(t.TempDir())              // move to a NON-git cwd
+
+	if _, err := BuildDAG(ctx, oc.Store(), nil, nil, nil, ""); err != nil {
+		t.Fatalf("BuildDAG should resolve the managed repo from a non-git cwd: %v", err)
+	}
+	managedGit := filepath.Join(oc.Store().Dir(), "repo", ".git")
+	if _, err := os.Stat(managedGit); err != nil {
+		t.Fatalf("managed repo should exist at <store.Dir()>/repo: %v", err)
+	}
+}
