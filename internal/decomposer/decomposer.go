@@ -34,14 +34,12 @@ type Epic struct {
 	Tasks []Task
 }
 
-// Decompose produces the Epic for an accepted spec. Deterministic for the
-// http-service path.
-func Decompose(es spec.ExecutableSpec) Epic {
-	rc := es.ResponseContract
-	route, tz := rc.Route, rc.TimeZone
-	port := rc.Port
-	format := es.Decisions["response_format"]
-
+// Decompose produces the Epic for an accepted spec. The FUNCTIONAL task is selected
+// by projectType (a non-HTTP type does not get an HTTP "GET route on port" obligation);
+// the scaffold + universal reliability tasks are shared across types, and CoverageGate
+// stays generic (or-3ba.1). Deterministic for the V2.0 Go-greenfield path. Empty
+// projectType defaults to http-service.
+func Decompose(es spec.ExecutableSpec, projectType string) Epic {
 	cap := capacityTarget(es)
 
 	tasks := []Task{
@@ -52,14 +50,7 @@ func Decompose(es spec.ExecutableSpec) Epic {
 			FileScope:       "go.mod,cmd/",
 			Covers:          []string{string(completeness.DimFunctional)},
 		},
-		{
-			Key:             "handler",
-			Title:           fmt.Sprintf("Implement %s handler returning %s time in %s", route, format, tz),
-			ProofObligation: fmt.Sprintf("GET %s listens on port %d and returns a %s body containing the current time in %s, conforming to the ResponseContract", route, port, format, tz),
-			FileScope:       "internal/server/",
-			Covers:          []string{string(completeness.DimFunctional)},
-			DependsOn:       []string{"scaffold"},
-		},
+		functionalTask(projectType, es),
 		{
 			Key:             "capacity",
 			Title:           "Apply capacity & concurrency controls",
@@ -95,6 +86,37 @@ func Decompose(es spec.ExecutableSpec) Epic {
 	}
 
 	return Epic{Title: "Deliver: " + es.Intent, Tasks: tasks}
+}
+
+// functionalTask is the per-type FUNCTIONAL task — the one that bakes in what the
+// software does and how it is invoked. It keeps the key "handler" so the shared
+// universal tasks' dependency edges hold across types. Only http-service gets an
+// HTTP "GET <route> on port" obligation; any other type gets a domain-neutral
+// "satisfies its declared behavioral contract" obligation (or-3ba.1). Add a case
+// (cli, worker, library) to give that type its own functional obligation.
+func functionalTask(projectType string, es spec.ExecutableSpec) Task {
+	switch projectType {
+	case "http-service", "":
+		rc := es.ResponseContract
+		format := es.Decisions["response_format"]
+		return Task{
+			Key:             "handler",
+			Title:           fmt.Sprintf("Implement %s handler returning %s time in %s", rc.Route, format, rc.TimeZone),
+			ProofObligation: fmt.Sprintf("GET %s listens on port %d and returns a %s body containing the current time in %s, conforming to the ResponseContract", rc.Route, rc.Port, format, rc.TimeZone),
+			FileScope:       "internal/server/",
+			Covers:          []string{string(completeness.DimFunctional)},
+			DependsOn:       []string{"scaffold"},
+		}
+	default:
+		return Task{
+			Key:             "handler",
+			Title:           "Implement the declared behavior",
+			ProofObligation: "the program satisfies its declared behavioral contract — the expected output for every declared case",
+			FileScope:       "internal/",
+			Covers:          []string{string(completeness.DimFunctional)},
+			DependsOn:       []string{"scaffold"},
+		}
+	}
 }
 
 // capacityTarget renders the concrete capacity threshold from the spec's scale

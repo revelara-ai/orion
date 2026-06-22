@@ -69,6 +69,10 @@ func RegisteredProjectType(projectType string) bool {
 	return len(functionalDecisions(projectType)) > 0
 }
 
+// ProjectType returns the analyzer's project type — it drives both the functional
+// checklist and the decomposer's per-type functional task template (or-3ba.1).
+func (a *Analyzer) ProjectType() string { return a.projectType }
+
 // Checklist returns a copy of the required-decisions checklist (deterministic).
 func (a *Analyzer) Checklist() []RequiredDecision {
 	out := make([]RequiredDecision, len(a.checklist))
