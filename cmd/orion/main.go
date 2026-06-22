@@ -55,6 +55,8 @@ func run(args []string) int {
 			return cmdBaseline(args[1:])
 		case "map":
 			return cmdMap(args[1:])
+		case "change":
+			return cmdChange(args[1:])
 		case "proof":
 			return cmdProof(args[1:])
 		case "deliver":
