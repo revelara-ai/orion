@@ -22,6 +22,7 @@ import (
 	"github.com/revelara-ai/orion/internal/reliabilityscan"
 	"github.com/revelara-ai/orion/internal/reliabilitytier"
 	"github.com/revelara-ai/orion/internal/sandbox"
+	"github.com/revelara-ai/orion/internal/worktree"
 )
 
 // Generator produces the service for a spec into buildDir. The default is the
@@ -115,38 +116,55 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	contract := testsynth.Contract{Route: gs.Route, Format: gs.Format, TimeZone: gs.TimeZone, Cases: es.ResponseContract.Cases}
 	requiredIDs := es.ResponseContract.RequiredCaseIDs()
 
-	// Cluster coupled tasks by declared file scope so the schedule keeps tasks that
-	// touch overlapping paths contiguous — the foundation for assigning each cluster
-	// one agent/worktree (or-tcs.1.2). Failure to cluster is non-fatal: the build
-	// proceeds on the unclustered task order (runDAG still enforces dependency order).
+	// Cluster coupled tasks by declared file scope (or-tcs.1.2): the schedule keeps
+	// cluster members contiguous, and — below — each cluster builds in its own
+	// worktree. A clustering failure is non-fatal: all tasks collapse to one cluster.
 	dtasks := make([]decomposer.Task, len(pv.Tasks))
 	for i, t := range pv.Tasks {
 		dtasks[i] = decomposer.Task{Key: t.ID, FileScope: t.FileScope, DependsOn: t.DependsOn}
 	}
-	scheduleTasks := pv.Tasks
-	if clusters, cerr := decomposer.Cluster(dtasks); cerr != nil {
+	clusters, cerr := decomposer.Cluster(dtasks)
+	if cerr != nil {
 		onPhase.emit("Cluster", PhaseWarn, cerr.Error())
+		clusters = []decomposer.TaskCluster{singleCluster(pv.Tasks)}
 	} else {
 		onPhase.emit("Cluster", PhaseDone, fmt.Sprintf("%d task(s) in %d cluster(s)", len(pv.Tasks), len(clusters)))
-		scheduleTasks = orderByClusters(pv.Tasks, clusters)
+	}
+	scheduleTasks := orderByClusters(pv.Tasks, clusters)
+
+	// Worktree-per-cluster isolation (or-tcs.1.3): each cluster builds in its own git
+	// worktree off the project repo — the agent's only writable workdir. Greenfield
+	// assumes an existing (possibly empty) git repo; if there is none, the build fails
+	// rather than scribbling outside one (foundation for parallel + integrated builds).
+	projectRoot := GitRoot(ctx, ".")
+	if projectRoot == "" {
+		return BuildResult{}, fmt.Errorf("orion build requires a git repository (run inside one; `git init` for a greenfield project)")
+	}
+	wtMgr := worktree.New(projectRoot, store)
+	clusterWT, cleanupWT, werr := clusterWorktreeSet(ctx, wtMgr, clusters, "HEAD")
+	if werr != nil {
+		return BuildResult{}, fmt.Errorf("worktree isolation: %w", werr)
+	}
+	defer cleanupWT()
+	clusterByTask := map[string]string{}
+	for _, cl := range clusters {
+		for _, m := range cl.Members {
+			clusterByTask[m] = cl.Key
+		}
 	}
 
-	// Execute the DAG: each task built+proved+gated independently, in dependency
-	// order (a task waits until its dependencies Accept). Slice 1: tasks share one
-	// GenSpec, so the expensive build+prove runs ONCE per distinct GenSpec and each
-	// further task is gated against that same proof (see closeFromProven) — the
-	// scheduler still enforces ordering + gating, without re-proving N times.
-	built := map[string]taskResult{}
+	// Execute the DAG: each task built+proved+gated INDEPENDENTLY, in dependency order
+	// (a task waits until its dependencies Accept), inside its cluster's worktree. The
+	// expensive proof is memoized by artifact content hash, so identical artifacts are
+	// proven once (deterministic) — the scheduler enforces ordering+gating without
+	// re-proving N times, even though each cluster generates into its own worktree.
+	proofCache := map[string]proof.Report{}
 	results, err := runDAG(scheduleTasks, func(task orchestrator.PlanTask) (taskResult, error) {
-		key := genSpecKey(gs)
-		if prev, ok := built[key]; ok {
-			return closeFromProven(ctx, store, prev, task)
+		buildDir := clusterWT[clusterByTask[task.ID]]
+		if buildDir == "" {
+			return taskResult{}, fmt.Errorf("task %s has no cluster worktree", task.ID)
 		}
-		tr, berr := buildOneTask(ctx, store, gen, aligner, onPhase, es, model, gs, contract, requiredIDs, task)
-		if berr == nil {
-			built[key] = tr
-		}
-		return tr, berr
+		return buildOneTask(ctx, store, gen, aligner, onPhase, es, model, gs, contract, requiredIDs, buildDir, proofCache, task)
 	})
 	if err != nil {
 		return BuildResult{}, err
@@ -259,9 +277,8 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 // gate — into the task's own build dir. Each task is proven INDEPENDENTLY (the
 // generation⊥proof wall holds per node); the harness-authored corpus is never
 // readable to the generator. Returns the per-task outcome.
-func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink, es spec.ExecutableSpec, model stpa.Model, gs sandbox.GenSpec, contract testsynth.Contract, requiredIDs []string, task orchestrator.PlanTask) (taskResult, error) {
+func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink, es spec.ExecutableSpec, model stpa.Model, gs sandbox.GenSpec, contract testsynth.Contract, requiredIDs []string, buildDir string, proofCache map[string]proof.Report, task orchestrator.PlanTask) (taskResult, error) {
 	taskID := task.ID
-	buildDir := filepath.Join(store.Dir(), "build", taskID)
 	if err := os.MkdirAll(buildDir, 0o755); err != nil {
 		return taskResult{}, fmt.Errorf("build dir: %w", err)
 	}
@@ -277,7 +294,6 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	var feedback string
 	attempts := 0
 	var lastHash string
-	var finalArt sandbox.GeneratedArtifact
 	for attempt := 1; attempt <= maxBuildAttempts; attempt++ {
 		genDetail := ""
 		if attempt > 1 {
@@ -296,22 +312,32 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 			break
 		}
 		lastHash = art.ContentHash
-		finalArt = art
 		if _, perr := sandbox.PersistArtifact(ctx, store, taskID, art); perr != nil {
 			return taskResult{}, fmt.Errorf("persist artifact: %w", perr)
 		}
 		onPhase.emit("Generate", PhaseDone, genDetail)
 		attempts = attempt
 
-		onPhase.emit("Prove", PhaseRunning, "behavioral + empirical + hazard")
-		rep, rerr := proof.ProveAll(ctx, buildDir, contract, model)
-		if rerr != nil {
-			onPhase.emit("Prove", PhaseFailed, rerr.Error())
-			return taskResult{}, fmt.Errorf("proof: %w", rerr)
+		// Proof is memoized by artifact content hash: an identical artifact (e.g. a
+		// sibling cluster building the same code) is proven once — the verdict is
+		// deterministic — so the DAG never re-proves the same bytes N times.
+		var rep proof.Report
+		if cached, ok := proofCache[art.ContentHash]; ok {
+			rep = cached
+			onPhase.emit("Prove", PhaseDone, "reused (identical artifact already proven)")
+		} else {
+			onPhase.emit("Prove", PhaseRunning, "behavioral + empirical + hazard")
+			r, rerr := proof.ProveAll(ctx, buildDir, contract, model)
+			if rerr != nil {
+				onPhase.emit("Prove", PhaseFailed, rerr.Error())
+				return taskResult{}, fmt.Errorf("proof: %w", rerr)
+			}
+			// Coverage gate: every requirement the spec declares must have an executed,
+			// passing obligation — else downgrade the verdict (the or-y9d kill).
+			proof.EnforceObligations(requiredIDs, &r)
+			proofCache[art.ContentHash] = r
+			rep = r
 		}
-		// Coverage gate: every requirement the spec declares must have an executed,
-		// passing obligation — else downgrade the verdict (the or-y9d kill).
-		proof.EnforceObligations(requiredIDs, &rep)
 		report = rep
 
 		if string(report.Outcome.Verdict) == "Accept" {
@@ -361,7 +387,7 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	return taskResult{
 		TaskID: taskID, Report: report, Verdict: string(report.Outcome.Verdict),
 		Closed: closed, BuildDir: buildDir, Attempts: attempts,
-		FailureAnalysis: failureAnalysis, Alignment: alignment, art: finalArt,
+		FailureAnalysis: failureAnalysis, Alignment: alignment,
 	}, nil
 }
 
@@ -390,33 +416,6 @@ func orderByClusters(tasks []orchestrator.PlanTask, clusters []decomposer.TaskCl
 		}
 	}
 	return out
-}
-
-// genSpecKey identifies a GenSpec so tasks that would build an identical artifact
-// reuse one build+prove (Slice 1: all tasks currently share one GenSpec; per-task
-// specialization is a later slice).
-func genSpecKey(gs sandbox.GenSpec) string {
-	return fmt.Sprintf("%s|%s|%d|%s|%d", gs.Route, gs.Format, gs.Port, gs.TimeZone, len(gs.Cases))
-}
-
-// closeFromProven reuses an already-built+proven artifact for another DAG task: it
-// persists the SAME artifact under the task's id and gates closure against the SAME
-// proof report. The code is byte-identical, so its independent proof is identical
-// and deterministic — this is what keeps multi-task DAG execution from re-proving
-// the same service once per task. (When a future slice gives tasks distinct
-// GenSpecs, genSpecKey differs and each is built + proven on its own.)
-func closeFromProven(ctx context.Context, store *contextstore.Store, prev taskResult, task orchestrator.PlanTask) (taskResult, error) {
-	if _, err := sandbox.PersistArtifact(ctx, store, task.ID, prev.art); err != nil {
-		return taskResult{}, fmt.Errorf("persist artifact: %w", err)
-	}
-	closed, err := New(store).ProveAndCloseReport(ctx, task.ID, prev.Report)
-	if err != nil {
-		return taskResult{}, fmt.Errorf("gate: %w", err)
-	}
-	tr := prev
-	tr.TaskID = task.ID
-	tr.Closed = closed
-	return tr, nil
 }
 
 // provenLoad renders the proven load from the spec's scale dimension.

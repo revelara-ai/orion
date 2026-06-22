@@ -17,6 +17,7 @@ import (
 // and ratifies — leaving an accepted, anchored spec ready to build.
 func ratifiedTimeService(t *testing.T) (*orchestrator.Conductor, context.Context) {
 	t.Helper()
+	withGitRepo(t) // builds run in their own git repo (worktree-per-cluster isolation)
 	oc := orchestrator.NewWithStore(openStore(t))
 	ctx := context.Background()
 	if _, err := oc.Submit(ctx, "Build an HTTP service that returns the current time."); err != nil {
