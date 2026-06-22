@@ -128,14 +128,14 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 
 	r.Register(tools.Tool{
 		Name:        "preview_spec",
-		Description: "Assemble the spec WITHOUT accepting it (fallbacks resolved) and return it to review with the developer.",
+		Description: "Assemble the spec WITHOUT accepting it (fallbacks resolved) and return it as a readable document for the developer to review. It surfaces an ASSUMPTIONS section — decisions resolved by a fallback default that the developer did NOT specify — which the developer should confirm or override before ratifying.",
 		Safety:      tools.Safety{ReadOnly: true},
 		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
 			es, err := c.PreviewSpec(ctx)
 			if err != nil {
 				return "", err
 			}
-			return asJSON(es), nil
+			return SpecDocument(es, false), nil // readable preview incl. the assumptions to review
 		},
 	})
 
@@ -148,7 +148,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 			if err != nil {
 				return "", err
 			}
-			doc := SpecDocument(es)
+			doc := SpecDocument(es, true)
 			// Persist the document as the durable artifact of the grill.
 			if st := c.Store(); st != nil {
 				dir := filepath.Join(st.Dir(), "specs")
