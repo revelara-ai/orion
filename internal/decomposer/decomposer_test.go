@@ -28,7 +28,7 @@ func acceptedSpec(t *testing.T) spec.ExecutableSpec {
 // requirement with at least one ProofObligation, and no task lacks one.
 func TestEverySpecRequirementHasProofObligation(t *testing.T) {
 	es := acceptedSpec(t)
-	epic := Decompose(es)
+	epic := Decompose(es, "http-service")
 
 	if len(epic.Tasks) == 0 {
 		t.Fatal("decomposition produced no tasks")
@@ -50,7 +50,7 @@ func TestEverySpecRequirementHasProofObligation(t *testing.T) {
 // dimension yields a capacity ProofObligation carrying the concrete threshold.
 func TestStatedScaleDimensionProducesCapacityProofObligation(t *testing.T) {
 	es := acceptedSpec(t)
-	epic := Decompose(es)
+	epic := Decompose(es, "http-service")
 
 	var capacity *Task
 	for i := range epic.Tasks {
@@ -72,7 +72,7 @@ func TestStatedScaleDimensionProducesCapacityProofObligation(t *testing.T) {
 // TestCoverageGateDetectsGap: removing a covering task trips the coverage gate.
 func TestCoverageGateDetectsGap(t *testing.T) {
 	es := acceptedSpec(t)
-	epic := Decompose(es)
+	epic := Decompose(es, "http-service")
 	// Drop the capacity task → scale becomes uncovered.
 	var trimmed []Task
 	for _, task := range epic.Tasks {
@@ -88,7 +88,7 @@ func TestCoverageGateDetectsGap(t *testing.T) {
 // TestDependenciesFormDAG: declared dependencies reference existing task keys
 // (no dangling edges, no self-loops).
 func TestDependenciesFormDAG(t *testing.T) {
-	epic := Decompose(acceptedSpec(t))
+	epic := Decompose(acceptedSpec(t), "http-service")
 	keys := map[string]bool{}
 	for _, task := range epic.Tasks {
 		keys[task.Key] = true

@@ -351,7 +351,7 @@ func (c *Conductor) ensurePlan(ctx context.Context, proj contextstore.Project, s
 	if err != nil {
 		return "", err
 	}
-	epic := decomposer.Decompose(es)
+	epic := decomposer.Decompose(es, c.gate.ProjectType())
 	if err := decomposer.CoverageGate(es, epic); err != nil {
 		return "", err
 	}
