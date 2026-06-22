@@ -98,6 +98,11 @@ func (c *Conductor) Submit(ctx context.Context, intent string) (Confirmation, er
 
 	c.mu.Lock()
 	c.intent = trimmed
+	// Choose the project type from the intent (deterministic; default http-service)
+	// so the gate raises the right functional decisions and the decomposer uses the
+	// right per-type task template. A clear CLI/library/worker signal switches it;
+	// otherwise the V2.0 http-service path is unchanged (or-3ba.2).
+	c.gate = completeness.NewAnalyzer(completeness.InferProjectType(trimmed))
 	c.mu.Unlock()
 
 	// Persist the intent as a project + draft spec so it survives a restart. The
