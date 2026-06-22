@@ -73,6 +73,30 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 	})
 
 	r.Register(tools.Tool{
+		Name:        "map_domains",
+		Description: "Analyze the existing codebase into its FUNCTIONAL domains (capabilities) and the packages implementing each — the semantic layer over read_codebase. Use it to locate WHERE the developer's intent lands (which domain/packages it touches). Proposed + grounded (every package validated against the real code); review it with the developer.",
+		Safety:      tools.Safety{ReadOnly: true},
+		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
+			if provider == nil {
+				return "domain analysis needs a model provider (offline) — use read_codebase for the structural map instead.", nil
+			}
+			dir, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			m := brownfield.ScanRepoMap(dir)
+			if m.Profile.Mode == brownfield.Greenfield {
+				return "GREENFIELD workspace — no existing domains to map; design from the intent.", nil
+			}
+			fm, err := AnalyzeFunctionalModel(ctx, provider, m)
+			if err != nil {
+				return "", err
+			}
+			return fm.Digest(), nil
+		},
+	})
+
+	r.Register(tools.Tool{
 		Name:        "record_answer",
 		Description: "Record the developer's answer to a spec decision (key from check_completeness + the value). For response_format, use a canonical value — \"json\" or \"plain text\" (the only formats the build+proof pipeline supports). If a tool returns an \"unrecognized/ambiguous format\" error, re-ask and record one of those.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]}`),
