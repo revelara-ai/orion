@@ -76,6 +76,9 @@ func Resolve(ctx context.Context, store *contextstore.Store, intake Intake) (Rep
 		}
 		return Repo{Path: path, Base: base}, nil
 	}
+	if intake.Brownfield {
+		return cloneBrownfield(ctx, path, intake.Source)
+	}
 	return initGreenfield(ctx, path)
 }
 
@@ -92,4 +95,20 @@ func initGreenfield(ctx context.Context, path string) (Repo, error) {
 		return Repo{}, err
 	}
 	return Repo{Path: path, Base: "main"}, nil
+}
+
+// cloneBrownfield clones the target repo into the managed path; Base is the
+// cloned default branch.
+func cloneBrownfield(ctx context.Context, path, source string) (Repo, error) {
+	if strings.TrimSpace(source) == "" {
+		return Repo{}, fmt.Errorf("brownfield intake requires a Source repo")
+	}
+	if _, err := git(ctx, ".", "clone", source, path); err != nil {
+		return Repo{}, err
+	}
+	base, err := currentBranch(ctx, path)
+	if err != nil {
+		return Repo{}, err
+	}
+	return Repo{Path: path, Base: base}, nil
 }
