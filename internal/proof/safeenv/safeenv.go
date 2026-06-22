@@ -44,3 +44,18 @@ func Build() []string {
 	out = append(out, "GOFLAGS=")
 	return out
 }
+
+// Map returns the same scrubbed environment as Build in key/value form, for
+// callers (e.g. internal/sandbox, which takes a map[string]string) that need it
+// shaped that way. Same allowlist, same GOFLAGS-forced-empty, same secret drop.
+func Map() map[string]string {
+	m := make(map[string]string, len(allowed)+1)
+	for _, kv := range os.Environ() {
+		k, v, ok := strings.Cut(kv, "=")
+		if ok && allowed[k] && k != "GOFLAGS" {
+			m[k] = v
+		}
+	}
+	m["GOFLAGS"] = ""
+	return m
+}

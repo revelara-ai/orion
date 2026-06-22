@@ -8,11 +8,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"github.com/revelara-ai/orion/internal/proof/safeenv"
+	"github.com/revelara-ai/orion/internal/proof/proofexec"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 	"github.com/revelara-ai/orion/internal/reliabilitytier"
@@ -50,16 +49,17 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract, corpus
 		return truthalign.ModeResult{}, fmt.Errorf("write corpus: %w", err)
 	}
 
-	// Run the tests independently (the baseline). -v so passing per-case obligation
-	// markers (RUN/PASS) are not suppressed by `go test`.
-	cmd := exec.CommandContext(ctx, "go", "test", "-v", "./...")
-	cmd.Dir = proofDir
-	cmd.Env = safeenv.Build() // scrubbed: toolchain/cache vars only, no host secrets
-	out, err := cmd.CombinedOutput()
-	pass := err == nil
+	// Run the tests independently (the baseline) INSIDE the proof sandbox (network
+	// + filesystem isolated) so the generated code under test cannot read host
+	// secrets or reach the network. -v so passing per-case obligation markers
+	// (RUN/PASS) are not suppressed by `go test`.
+	output, code, err := proofexec.GoToolchain(ctx, proofDir, "test", "-v", "./...")
+	if err != nil {
+		return truthalign.ModeResult{}, fmt.Errorf("behavioral exec: %w", err)
+	}
+	pass := code == 0
 
 	metrics := map[string]float64{"run_count": 1, "mutation_score": 0}
-	output := string(out)
 	obligations := parseObligations(output) // per-case executed/passed from markers
 	if pass {
 		// Behavioral quality gate: the corpus must KILL behavior-changing mutants

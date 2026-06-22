@@ -89,6 +89,11 @@ func (bwrapBackend) Run(ctx context.Context, s Spec) (Result, error) {
 		"--unshare-user", "--unshare-ipc", "--unshare-pid", "--unshare-uts", "--unshare-cgroup",
 		"--die-with-parent", "--clearenv",
 		"--proc", "/proc", "--tmpfs", "/tmp",
+		// Minimal fresh devtmpfs (/dev/null, /dev/urandom, …): no host devices, but
+		// required by real toolchains — `go build`/`go test` open /dev/null for the
+		// build cache and telemetry. (A static binary needs none, which is why the
+		// original backend omitted it.)
+		"--dev", "/dev",
 	}
 	if !s.AllowNet {
 		args = append(args, "--unshare-net") // default-deny egress
