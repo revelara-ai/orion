@@ -11,6 +11,7 @@ import (
 	"context"
 
 	"github.com/revelara-ai/orion/internal/proof/behavioral"
+	"github.com/revelara-ai/orion/internal/proof/diagnostics"
 	"github.com/revelara-ai/orion/internal/proof/empirical"
 	"github.com/revelara-ai/orion/internal/proof/hazard"
 	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
@@ -146,6 +147,15 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (Repor
 // artifact and the ratified STPA model, and converges requiring all three. This
 // is the full credibility-core verdict.
 func ProveAll(ctx context.Context, artifactDir string, c testsynth.Contract, model stpa.Model) (Report, error) {
+	// Fast-feedback tier (cheapest first): a static check (compile + vet). If the
+	// generated code does not compile, the behavioral/empirical/hazard modes cannot run
+	// — return a Reject with the diagnostics immediately, skipping minutes of pointless
+	// work. The refinement loop feeds these diagnostics straight back to the generator.
+	if d := diagnostics.Check(ctx, artifactDir); !d.OK {
+		mr := truthalign.ModeResult{Mode: "diagnostics", Pass: false, Output: d.Output}
+		return Report{Outcome: truthalign.Converge(mr), Modes: []ModeReport{{Result: mr}}}, nil
+	}
+
 	bmr, err := behavioral.Prove(ctx, artifactDir, c, nil)
 	if err != nil {
 		return Report{}, err
