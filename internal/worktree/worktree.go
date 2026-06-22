@@ -268,6 +268,19 @@ func (m *Manager) Remove(ctx context.Context, issueID string, opts RemoveOpts) e
 		})
 	}
 
+	// §6.6 — best-effort preserve work before destroying the tree: under --force a
+	// dirty worktree's uncommitted changes are snapshotted as a WIP commit on the
+	// branch (recoverable via the managed repo's reflog), so --force never silently
+	// loses work. Best-effort — failures must not block removal (crash-safety wins).
+	if opts.Force {
+		if st, _ := m.Status(issueID); st.Uncommitted {
+			_, _ = runGit(path, "add", "-A")
+			_, _ = runGit(path,
+				"-c", "user.name=Orion", "-c", "user.email=orion@revelara.ai", "-c", "commit.gpgsign=false",
+				"commit", "--no-verify", "-m", "orion: WIP snapshot before worktree removal")
+		}
+	}
+
 	// §6.7 — remove via git, fall back to RemoveAll, then prune + verify.
 	if _, err := m.git("worktree", "remove", path); err != nil {
 		if _, err2 := m.git("worktree", "remove", "--force", path); err2 != nil {
