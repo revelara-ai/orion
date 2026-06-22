@@ -240,3 +240,40 @@ func TestStatusReportsBehind(t *testing.T) {
 		t.Fatalf("Behind = %d, want >= 1 (main advanced past the branch)", st.Behind)
 	}
 }
+
+// TestRemovePreservesUncommittedWorkAsWipCommit: --force over a dirty worktree
+// does not silently lose work — the dirty changes are snapshotted as a WIP commit
+// on the branch before the tree is deleted.
+func TestRemovePreservesUncommittedWorkAsWipCommit(t *testing.T) {
+	repo := newRepo(t)
+	m := New(repo, mustStore(t))
+	ctx := context.Background()
+
+	wt, err := m.Create(ctx, "or-wip", "main")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	before, _ := runGit(wt.Path, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(wt.Path, "scratch.txt"), []byte("precious\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.Remove(ctx, "or-wip", RemoveOpts{Force: true}); err != nil {
+		t.Fatalf("forced remove: %v", err)
+	}
+	if _, err := os.Stat(wt.Path); !os.IsNotExist(err) {
+		t.Fatalf("worktree dir should be gone after forced remove")
+	}
+	// The branch advanced with a WIP commit preserving the work.
+	after, err := runGit(repo, "rev-parse", "or-wip")
+	if err != nil {
+		t.Fatalf("branch or-wip should still exist with preserved work: %v", err)
+	}
+	if strings.TrimSpace(after) == strings.TrimSpace(before) {
+		t.Fatal("expected a WIP commit on the branch preserving the dirty work")
+	}
+	out, err := runGit(repo, "show", "--stat", "or-wip")
+	if err != nil || !strings.Contains(out, "scratch.txt") {
+		t.Fatalf("WIP commit should contain scratch.txt; show=%q err=%v", out, err)
+	}
+}
