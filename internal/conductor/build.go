@@ -44,6 +44,7 @@ type BuildResult struct {
 	Reason          string // escalation reason, if any
 	BuildDir        string
 	OutputDir       string          // where the proven code was written in the dev's repo (Accept only)
+	Git             GitDelivery     // git commit/branch of the proven code (when ORION_GIT_DELIVERY)
 	Alignment       AlignmentRecord // advisory intent-alignment audit (log-only in V3 Step 1)
 	Attempts        int             // build+prove attempts spent (>=1)
 	FailureAnalysis string          // causal analysis of the final non-Accept verdict, if any
@@ -243,6 +244,7 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 	// dir. Export failure is non-fatal: the proven code still lives in buildDir + the
 	// store, so we warn and carry on rather than fail an otherwise-green build.
 	var outputDir string
+	var gitDelivery GitDelivery
 	if string(report.Outcome.Verdict) == "Accept" && outRoot != "" {
 		dest := ServiceOutputDir(outRoot, es)
 		if files, eerr := ExportProvenCode(buildDir, dest, es); eerr != nil {
@@ -251,12 +253,28 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 			outputDir = dest
 			onPhase.emit("Deliver", PhaseDone, fmt.Sprintf("code written to %s (%d files)", dest, len(files)))
 		}
+		// Opt-in (ORION_GIT_DELIVERY): commit the proven code onto an Orion branch in a
+		// WORKTREE of the developer's repo — their working tree is untouched. Non-fatal:
+		// a delivery failure warns; the code still lives in outputDir + the build dir.
+		if GitDeliverEnabled() {
+			if root := GitRoot(ctx, "."); root != "" {
+				if d, gerr := GitDeliver(ctx, root, store, buildDir, es); gerr != nil {
+					onPhase.emit("Deliver", PhaseWarn, "git delivery failed: "+gerr.Error())
+				} else {
+					gitDelivery = d
+					onPhase.emit("Deliver", PhaseDone, fmt.Sprintf("committed to branch %s (%s)", d.Branch, d.Commit))
+				}
+			} else {
+				onPhase.emit("Deliver", PhaseWarn, "git delivery requested but the working directory is not a git repo")
+			}
+		}
 	}
 
 	return BuildResult{
 		TaskID: taskID, Verdict: string(report.Outcome.Verdict), Closed: closed,
 		OutputDir: outputDir,
 		Tier:      string(tier), Delivery: string(res.Decision), Reason: res.Reason, BuildDir: buildDir,
+		Git:       gitDelivery,
 		Alignment: alignment, Attempts: attempts, FailureAnalysis: failureAnalysis,
 	}, nil
 }
