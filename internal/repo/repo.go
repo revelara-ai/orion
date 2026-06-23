@@ -103,7 +103,9 @@ func cloneBrownfield(ctx context.Context, path, source string) (Repo, error) {
 	if strings.TrimSpace(source) == "" {
 		return Repo{}, fmt.Errorf("brownfield intake requires a Source repo")
 	}
-	if _, err := git(ctx, ".", "clone", source, path); err != nil {
+	// Clone from the managed repo's PARENT dir (which exists), not the process cwd —
+	// a cwd anchor (git -C '.') breaks when the cwd is a since-removed worktree.
+	if _, err := git(ctx, filepath.Dir(path), "clone", source, path); err != nil {
 		return Repo{}, err
 	}
 	base, err := currentBranch(ctx, path)

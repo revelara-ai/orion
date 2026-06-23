@@ -139,12 +139,12 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	// Build in Orion's MANAGED repo (<store.Dir()>/repo), not the developer's
 	// working tree: greenfield inits it, brownfield clones the target. Nothing
 	// scribbles outside it, and greenfield no longer fails for "not in a git repo".
-	// Greenfield only this cycle: repo.Intake{} always inits a fresh managed repo.
-	// internal/repo's brownfield arm (clone an existing target) is built + tested but
-	// not wired here — the greenfield BuildDAG flow has no target-repo intake, and
-	// classifying the cwd would re-introduce the cwd dependency this rewire removed.
-	// Wiring brownfield from a target input is deferred to or-any.8.
-	managed, rerr := repo.Resolve(ctx, store, repo.Intake{})
+	// Greenfield (default) inits a fresh managed repo; a brownfield target —
+	// ORION_BROWNFIELD_TARGET, classified by internal/brownfield — clones the
+	// existing repo so the build edits real code (or-any.8). The env flag mirrors
+	// ORION_GIT_DELIVERY; a first-class conductor/CLI target input lands with the
+	// assembled change-proof flow (or-3p5.4).
+	managed, rerr := repo.Resolve(ctx, store, brownfieldIntake(os.Getenv("ORION_BROWNFIELD_TARGET")))
 	if rerr != nil {
 		return BuildResult{}, fmt.Errorf("resolve managed repo: %w", rerr)
 	}
