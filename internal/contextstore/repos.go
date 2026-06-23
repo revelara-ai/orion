@@ -570,11 +570,23 @@ func (r *AttemptRepo) List(ctx context.Context, taskID string) ([]Attempt, error
 type ProofRepo struct{ tx *sql.Tx }
 
 func (r *ProofRepo) Create(ctx context.Context, taskID string, p Proof) (string, error) {
-	id, now := newID(), nowRFC3339()
 	detail := p.Detail
 	if detail == "" {
 		detail = "{}"
 	}
+	// Idempotent re-run: a proof identical in (task, mode, verdict, detail) is
+	// recorded once — re-running build_service for the same artifact returns the
+	// existing id instead of appending a duplicate (or-6z3).
+	var existing string
+	switch err := r.tx.QueryRowContext(ctx,
+		`SELECT id FROM proofs WHERE task_id=? AND mode=? AND verdict=? AND detail=? ORDER BY created_at DESC LIMIT 1`,
+		taskID, p.Mode, p.Verdict, detail).Scan(&existing); {
+	case err == nil:
+		return existing, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return "", fmt.Errorf("dedup proof: %w", err)
+	}
+	id, now := newID(), nowRFC3339()
 	_, err := r.tx.ExecContext(ctx,
 		`INSERT INTO proofs
 		   (id, task_id, mode, verdict, mutation_score, empirical_pass_rate,
@@ -615,6 +627,17 @@ func (r *ProofRepo) CountByTask(ctx context.Context, taskID string) (int, error)
 type ArtifactRepo struct{ tx *sql.Tx }
 
 func (r *ArtifactRepo) Create(ctx context.Context, taskID, artifactType, storagePath, contentHash string) (string, error) {
+	// Idempotent: an artifact for (task, content_hash) is recorded once — re-running
+	// the same deterministic build returns the existing id, not a duplicate (or-6z3).
+	var existing string
+	switch err := r.tx.QueryRowContext(ctx,
+		`SELECT id FROM artifacts WHERE task_id=? AND content_hash=? ORDER BY created_at DESC LIMIT 1`,
+		taskID, contentHash).Scan(&existing); {
+	case err == nil:
+		return existing, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return "", fmt.Errorf("dedup artifact: %w", err)
+	}
 	id, now := newID(), nowRFC3339()
 	_, err := r.tx.ExecContext(ctx,
 		`INSERT INTO artifacts (id, task_id, artifact_type, storage_path, content_hash, created_at)
@@ -690,6 +713,17 @@ func (r *DeliveryRepo) Create(ctx context.Context, epicID, operatingEnvelope, ru
 	if runbook == "" {
 		runbook = "{}"
 	}
+	// Idempotent: a delivery for (epic, operating_envelope) is recorded once — a
+	// re-run of the same proven epic returns the existing id, not a duplicate (or-6z3).
+	var existing string
+	switch err := r.tx.QueryRowContext(ctx,
+		`SELECT id FROM deliveries WHERE epic_id=? AND operating_envelope=? ORDER BY created_at DESC LIMIT 1`,
+		epicID, operatingEnvelope).Scan(&existing); {
+	case err == nil:
+		return existing, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return "", fmt.Errorf("dedup delivery: %w", err)
+	}
 	id, now := newID(), nowRFC3339()
 	_, err := r.tx.ExecContext(ctx,
 		`INSERT INTO deliveries (id, epic_id, operating_envelope, runbook, created_at) VALUES (?,?,?,?,?)`,
@@ -722,11 +756,23 @@ func (r *DeliveryRepo) LatestForProject(ctx context.Context, projectID string) (
 type EscalationRepo struct{ tx *sql.Tx }
 
 func (r *EscalationRepo) Create(ctx context.Context, projectID, taskID, reason string) (string, error) {
-	id, now := newID(), nowRFC3339()
 	var taskArg any
 	if taskID != "" {
 		taskArg = taskID
 	}
+	// Idempotent: an escalation for (project, task, reason) is recorded once — a
+	// re-run that re-escalates the same task returns the existing id (or-6z3).
+	// `task_id IS ?` is null-safe so a NULL task_id matches a NULL arg.
+	var existing string
+	switch err := r.tx.QueryRowContext(ctx,
+		`SELECT id FROM escalations WHERE project_id=? AND task_id IS ? AND reason=? ORDER BY created_at DESC LIMIT 1`,
+		projectID, taskArg, reason).Scan(&existing); {
+	case err == nil:
+		return existing, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return "", fmt.Errorf("dedup escalation: %w", err)
+	}
+	id, now := newID(), nowRFC3339()
 	_, err := r.tx.ExecContext(ctx,
 		`INSERT INTO escalations (id, project_id, task_id, reason, resolved, created_at) VALUES (?,?,?,?,0,?)`,
 		id, projectID, taskArg, reason, now)
