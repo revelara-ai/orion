@@ -34,7 +34,7 @@ func TestKnownFaultyArtifactIsRejected(t *testing.T) {
 
 	// Conforming artifact (Orion's real generator).
 	good := t.TempDir()
-	if _, err := sandbox.GenerateFixtureService(good, sandbox.GenSpec{Route: "/time", Port: 8080, Format: "json", TimeZone: "UTC"}); err != nil {
+	if _, err := sandbox.GenerateTimeServiceFixture(good, sandbox.GenSpec{Module: "orion-generated/svc", Route: "/time", Port: 8080, Format: "json", TimeZone: "UTC"}); err != nil {
 		t.Fatalf("generate good: %v", err)
 	}
 	goodOutcome, err := ProveBehavioral(ctx, good, contract)

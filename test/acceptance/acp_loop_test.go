@@ -51,7 +51,7 @@ func fixtureACPDriver(t *testing.T, req agentruntime.GenRequest) agentruntime.AC
 	t.Helper()
 	return func(ctx context.Context, root string) (agentruntime.ACPSession, func(), error) {
 		stage := t.TempDir()
-		if _, err := sandbox.GenerateFixtureService(stage, sandbox.GenSpec{
+		if _, err := sandbox.GenerateTimeServiceFixture(stage, sandbox.GenSpec{
 			Module: req.Module, Route: req.Route, Port: req.Port, Format: req.Format, TimeZone: req.TimeZone,
 		}); err != nil {
 			return nil, func() {}, err

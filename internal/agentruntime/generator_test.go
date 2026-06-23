@@ -26,7 +26,7 @@ func fixtureAgentDriver(t *testing.T, req GenRequest) ACPDriver {
 	return func(ctx context.Context, root string) (ACPSession, func(), error) {
 		// Pre-render the real service the "agent" will author.
 		stage := t.TempDir()
-		if _, err := sandbox.GenerateFixtureService(stage, sandbox.GenSpec{
+		if _, err := sandbox.GenerateTimeServiceFixture(stage, sandbox.GenSpec{
 			Module: req.Module, Route: req.Route, Port: req.Port, Format: req.Format, TimeZone: req.TimeZone,
 		}); err != nil {
 			return nil, func() {}, err

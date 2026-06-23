@@ -100,7 +100,7 @@ func cmdProof(args []string) int {
 func generateService(ctx context.Context, gs sandbox.GenSpec, buildDir, feedback string) (sandbox.GeneratedArtifact, error) {
 	preset, ok := configuredAgent()
 	if !ok {
-		return sandbox.GenerateFixtureService(buildDir, gs)
+		return sandbox.GenerateTimeServiceFixture(buildDir, gs)
 	}
 	gen := agentruntime.AgentGenerator{Driver: agentruntime.SpawnDriver(preset, generationRole(gs), nil)}
 	desc := "implement the ratified service"

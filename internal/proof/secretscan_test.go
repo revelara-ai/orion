@@ -17,7 +17,7 @@ import (
 func TestHardcodedSecretBlocksDeliveryBar(t *testing.T) {
 	// Clean artifact (Orion-generated) → no secrets → bar can deliver.
 	clean := t.TempDir()
-	if _, err := sandbox.GenerateFixtureService(clean, sandbox.GenSpec{Route: "/time", Port: 8080, Format: "json", TimeZone: "UTC"}); err != nil {
+	if _, err := sandbox.GenerateTimeServiceFixture(clean, sandbox.GenSpec{Module: "orion-generated/svc", Route: "/time", Port: 8080, Format: "json", TimeZone: "UTC"}); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 	if !SecurityClean(clean) {

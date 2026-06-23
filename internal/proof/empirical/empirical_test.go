@@ -14,7 +14,7 @@ import (
 // satisfies the contract.
 func TestEmpiricalProbesRunningService(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := sandbox.GenerateFixtureService(dir, sandbox.GenSpec{Route: "/time", Port: 8080, Format: "json", TimeZone: "UTC"}); err != nil {
+	if _, err := sandbox.GenerateTimeServiceFixture(dir, sandbox.GenSpec{Module: "orion-generated/svc", Route: "/time", Port: 8080, Format: "json", TimeZone: "UTC"}); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 	mr, pr, err := Prove(context.Background(), dir, testsynth.Contract{Route: "/time", Format: "json", TimeZone: "UTC"})
