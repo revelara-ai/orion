@@ -2,11 +2,12 @@
 -- SQLite (WAL). Tracker (beads/GitHub) is a one-way projection, never truth.
 
 CREATE TABLE IF NOT EXISTS projects (
-    id         TEXT PRIMARY KEY,
-    name       TEXT NOT NULL,
-    intent     TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    intent       TEXT NOT NULL,
+    project_type TEXT NOT NULL DEFAULT 'http-service',
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS specs (

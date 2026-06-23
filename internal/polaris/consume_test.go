@@ -26,7 +26,7 @@ func seedProject(t *testing.T, s *contextstore.Store) string {
 	var pid string
 	_ = s.WithTx(ctx, func(tx *contextstore.Tx) error {
 		var e error
-		pid, e = tx.Projects().Create(ctx, "demo", "build a time service")
+		pid, e = tx.Projects().Create(ctx, "demo", "build a time service", "http-service")
 		return e
 	})
 	return pid

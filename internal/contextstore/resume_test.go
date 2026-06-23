@@ -50,7 +50,7 @@ func TestResumeAfterSIGKILL(t *testing.T) {
 	var taskID string
 	s := mustOpenAt(t, dir)
 	if err := s.WithTx(ctx, func(tx *Tx) error {
-		pid, _ := tx.Projects().Create(ctx, "demo", "build a time service")
+		pid, _ := tx.Projects().Create(ctx, "demo", "build a time service", "http-service")
 		sid, _ := tx.Specs().CreateDraft(ctx, pid)
 		for _, kv := range [][2]string{{"response_format", "json"}, {"timezone", "UTC"}, {"port", "8080"}, {"route", "/time"}} {
 			if _, e := tx.Decisions().Create(ctx, pid, sid, kv[0], kv[1], "precise", false); e != nil {

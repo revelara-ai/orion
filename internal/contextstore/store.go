@@ -62,6 +62,7 @@ func Open(dir string) (*Store, error) {
 		{"decisions", "value_kind", "TEXT NOT NULL DEFAULT 'precise'"},
 		{"proofs", "detail", "TEXT NOT NULL DEFAULT '{}'"},
 		{"deliveries", "runbook", "TEXT NOT NULL DEFAULT '{}'"},
+		{"projects", "project_type", "TEXT NOT NULL DEFAULT 'http-service'"},
 	} {
 		if err := ensureColumn(db, m.table, m.col, m.decl); err != nil {
 			_ = db.Close()

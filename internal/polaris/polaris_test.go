@@ -35,7 +35,7 @@ func TestPolarisTokenNotInContextStoreAndUnreachableFromSandbox(t *testing.T) {
 	}
 	// Put some real data in the store.
 	_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
-		_, e := tx.Projects().Create(ctx, "demo", "build something")
+		_, e := tx.Projects().Create(ctx, "demo", "build something", "http-service")
 		return e
 	})
 	_ = store.Close()
