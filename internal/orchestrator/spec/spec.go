@@ -94,7 +94,13 @@ func Compile(intent string, answers map[string]string, kinds map[string]string, 
 // derived from the scalar contract, plus every requirement's cases, sorted by ID
 // for determinism.
 func buildCases(rc ResponseContract, reqs []Requirement) []BehavioralCase {
-	cases := []BehavioralCase{defaultCase(rc)}
+	var cases []BehavioralCase
+	// Synthesize the happy-path case only for an HTTP contract (one with a route or
+	// content type). A non-HTTP/minimal contract has no implied GET case — its
+	// behavioral cases come from the declared requirements (or-3ba.5).
+	if rc.Route != "" || rc.ContentType != "" {
+		cases = append(cases, defaultCase(rc))
+	}
 	for _, r := range reqs {
 		for _, c := range r.Cases {
 			c.EnsureID()
@@ -146,6 +152,14 @@ func (s ExecutableSpec) VerifyAnchor() bool {
 }
 
 func buildResponseContract(a map[string]string) (ResponseContract, error) {
+	// Non-HTTP project types (CLI, library, worker) raise no HTTP response
+	// format/route/port decisions, so those answers are absent. Produce a minimal
+	// contract instead of erroring on a missing response_format — the behavioral
+	// cases come entirely from the developer's declared requirements. (or-3ba.5:
+	// a non-HTTP spec assembles + compiles.)
+	if strings.TrimSpace(a["response_format"]) == "" && strings.TrimSpace(a["route"]) == "" {
+		return ResponseContract{}, nil
+	}
 	rc := ResponseContract{
 		Route:    a["route"],
 		TimeZone: a["timezone"],
