@@ -9,9 +9,11 @@ import (
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/actuation"
+	"github.com/revelara-ai/orion/internal/contextengine"
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/decomposer"
 	"github.com/revelara-ai/orion/internal/delivery"
+	"github.com/revelara-ai/orion/internal/memory"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
@@ -164,13 +166,24 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	// expensive proof is memoized by artifact content hash, so identical artifacts are
 	// proven once (deterministic) — the scheduler enforces ordering+gating without
 	// re-proving N times, even though each cluster generates into its own worktree.
+	// or-b73: wire the context engine + tiered memory into the build loop so recalled
+	// context (and the generation-tier poisoning quarantine) primes generation. Best-
+	// effort: if memory is unavailable the loop runs with spec-only context.
+	var eng *contextengine.Engine
+	if memDir := filepath.Join(store.Dir(), "memory"); os.MkdirAll(memDir, 0o700) == nil {
+		if mem, merr := memory.Open(memDir); merr == nil {
+			eng = contextengine.New(store, mem)
+			defer mem.Close()
+		}
+	}
+
 	proofCache := map[string]proof.Report{}
 	results, err := runDAG(scheduleTasks, func(task orchestrator.PlanTask) (taskResult, error) {
 		buildDir := clusterWT[clusterByTask[task.ID]]
 		if buildDir == "" {
 			return taskResult{}, fmt.Errorf("task %s has no cluster worktree", task.ID)
 		}
-		return buildOneTask(ctx, store, gen, aligner, onPhase, es, model, gs, contract, requiredIDs, buildDir, proofCache, task)
+		return buildOneTask(ctx, store, gen, aligner, onPhase, es, model, gs, contract, requiredIDs, buildDir, proofCache, eng, task)
 	})
 	if err != nil {
 		return BuildResult{}, err
@@ -283,10 +296,19 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 // gate — into the task's own build dir. Each task is proven INDEPENDENTLY (the
 // generation⊥proof wall holds per node); the harness-authored corpus is never
 // readable to the generator. Returns the per-task outcome.
-func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink, es spec.ExecutableSpec, model stpa.Model, gs sandbox.GenSpec, contract testsynth.Contract, requiredIDs []string, buildDir string, proofCache map[string]proof.Report, task orchestrator.PlanTask) (taskResult, error) {
+func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink, es spec.ExecutableSpec, model stpa.Model, gs sandbox.GenSpec, contract testsynth.Contract, requiredIDs []string, buildDir string, proofCache map[string]proof.Report, eng *contextengine.Engine, task orchestrator.PlanTask) (taskResult, error) {
 	taskID := task.ID
 	if err := os.MkdirAll(buildDir, 0o755); err != nil {
 		return taskResult{}, fmt.Errorf("build dir: %w", err)
+	}
+
+	// or-b73: assemble the trust-tiered recalled context (spec constraints + retrieved
+	// memory, generation-tier memory quarantined as data-only) and prime the generator
+	// with it. Best-effort — a memory/recall miss simply yields spec-only context.
+	if eng != nil {
+		if bundle, aerr := eng.Assemble(ctx, taskID, es.Intent); aerr == nil {
+			gs.Context = bundle.Render(contextengine.DomainGeneration)
+		}
 	}
 
 	// Bounded refinement loop (Manifesto): generate → prove → if the verdict is not

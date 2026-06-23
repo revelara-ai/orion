@@ -153,6 +153,11 @@ func generationRole(gs sandbox.GenSpec) string {
 	for _, c := range cases {
 		b.WriteString(renderCaseForGen(c))
 	}
+	// or-b73: the trust-tiered recalled context (spec constraints + retrieved memory,
+	// generation-tier memory quarantined as data-only) the Conductor assembled.
+	if s := strings.TrimSpace(gs.Context); s != "" {
+		b.WriteString("\n" + s + "\n")
+	}
 	b.WriteString("\nWrite go.mod and main.go via write_file, then end your turn.")
 	return b.String()
 }
