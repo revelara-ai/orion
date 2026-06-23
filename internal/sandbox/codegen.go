@@ -31,6 +31,11 @@ type GenSpec struct {
 	// entry symbol). Empty defaults to "handleTime" (the HTTP-family contract symbol),
 	// so existing callers are unchanged (or-3ba.4 / or-ciq).
 	EntrySymbol string
+	// Context is the assembled, trust-tiered recalled context (spec constraints +
+	// retrieved memory, with generation-tier memory quarantined) that the Conductor
+	// injects into the generation prompt (or-b73). The deterministic fixture ignores
+	// it; the LLM/agent generators include it. Empty when no context was assembled.
+	Context string
 }
 
 // Entry returns the declared entry symbol the generated program must expose,
