@@ -130,36 +130,50 @@ func writeFileTool(buildDir string) tools.Tool {
 // The handleTime symbol is the proof harness's stable entry point (the behavioral
 // mode calls it in-process); the model writes whatever logic satisfies the cases
 // behind it.
-func generationRole(gs sandbox.GenSpec) string {
+// GenerationPrompt builds the code generator's system prompt from the spec slice.
+// It is CASE-DRIVEN (the declared behavioral cases ARE the contract), uses the
+// DECLARED entry symbol, and stresses RELIABILITY — it primes the generator to build
+// exactly what the spec requires, not a fixed time-service example. HTTP/service
+// details (route, port, format) appear only when the contract carries them; per-case
+// requirements (status, content-type, timezone, error shape) ride on the cases.
+// writeHint is the protocol-specific file-write instruction so the native and
+// spawned-agent paths share ONE general prompt (or-3ba.7 — de-time/HTTP-biased).
+func GenerationPrompt(gs sandbox.GenSpec, writeHint string) string {
 	module := gs.Module
 	if module == "" {
 		module = "orion-generated/svc"
 	}
 	var b strings.Builder
-	b.WriteString("You are Orion's code generator. Write a COMPLETE, COMPILABLE Go HTTP service that satisfies the behavioral contract below.\n\n")
+	b.WriteString("You are Orion's code generator. Write COMPLETE, COMPILABLE, RELIABLE Go that satisfies the behavioral contract below — build exactly what the contract requires, nothing more.\n\n")
 	b.WriteString("Hard requirements:\n")
 	b.WriteString("- A go.mod with `module " + module + "` and a recent `go` line (e.g. go 1.25).\n")
-	fmt.Fprintf(&b, "- main.go exposing the request handler as a top-level func `%s(w http.ResponseWriter, r *http.Request)` (the proof harness calls this symbol directly).\n", gs.Entry())
-	fmt.Fprintf(&b, "- A main() that mounts %s at the route and listens on $PORT (default the port below), with server timeouts + graceful shutdown.\n", gs.Entry())
-	b.WriteString("- If a case uses an unknown/invalid input, return the exact status + body the case requires (do not crash).\n")
-	b.WriteString("- Real logic, not hardcoded responses: the proof probes the LIVE service at the current time and runs mutation testing.\n\n")
-	fmt.Fprintf(&b, "Route: %s\nDefault response format: %s\nDefault timezone: %s\nPort: %d\n\n", gs.Route, fmtOr(gs.Format, "json"), fmtOr(gs.TimeZone, "UTC"), portOr(gs.Port))
-	b.WriteString("The service MUST satisfy these behavioral cases (request → expected response):\n")
+	fmt.Fprintf(&b, "- Expose the behavioral entry point as a top-level func `%s(w http.ResponseWriter, r *http.Request)` — the proof harness calls this symbol directly.\n", gs.Entry())
+	b.WriteString("- Real logic, not hardcoded responses: the proof runs the LIVE program and mutation-tests it; for any input a case specifies (including invalid input) return EXACTLY the status + body that case requires, never crashing.\n")
+	b.WriteString("- RELIABILITY (Orion eats its own dog food): server timeouts + graceful shutdown, validated inputs, and errors handled without panicking.\n")
+	if gs.Route != "" || gs.Port != 0 {
+		fmt.Fprintf(&b, "- A main() that mounts %s and listens on $PORT (default %d), serving route %s as %s.\n", gs.Entry(), portOr(gs.Port), gs.Route, fmtOr(gs.Format, "json"))
+	}
+	b.WriteString("\nThe program MUST satisfy these behavioral cases (request → expected response) — these ARE the contract:\n")
 	cases := append([]spec.BehavioralCase(nil), gs.Cases...)
 	sort.Slice(cases, func(i, j int) bool { return cases[i].ID < cases[j].ID })
-	if len(cases) == 0 {
-		fmt.Fprintf(&b, "- GET %s → 200, %s, a current timestamp.\n", gs.Route, fmtOr(gs.Format, "json"))
-	}
 	for _, c := range cases {
 		b.WriteString(renderCaseForGen(c))
+	}
+	if len(cases) == 0 {
+		b.WriteString("- (no behavioral cases were declared — satisfy the stated intent and the reliability requirements above)\n")
 	}
 	// or-b73: the trust-tiered recalled context (spec constraints + retrieved memory,
 	// generation-tier memory quarantined as data-only) the Conductor assembled.
 	if s := strings.TrimSpace(gs.Context); s != "" {
 		b.WriteString("\n" + s + "\n")
 	}
-	b.WriteString("\nWrite go.mod and main.go via write_file, then end your turn.")
+	b.WriteString("\n" + writeHint)
 	return b.String()
+}
+
+// generationRole is the native (in-process LLM) generator's system prompt.
+func generationRole(gs sandbox.GenSpec) string {
+	return GenerationPrompt(gs, "Write go.mod and main.go via write_file, then end your turn.")
 }
 
 func renderCaseForGen(c spec.BehavioralCase) string {
