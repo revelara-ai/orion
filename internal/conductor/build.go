@@ -170,8 +170,10 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	// context (and the generation-tier poisoning quarantine) primes generation. Best-
 	// effort: if memory is unavailable the loop runs with spec-only context.
 	var eng *contextengine.Engine
+	var mem *memory.Store
 	if memDir := filepath.Join(store.Dir(), "memory"); os.MkdirAll(memDir, 0o700) == nil {
-		if mem, merr := memory.Open(memDir); merr == nil {
+		if m, merr := memory.Open(memDir); merr == nil {
+			mem = m
 			eng = contextengine.New(store, mem)
 			defer mem.Close()
 		}
@@ -183,7 +185,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		if buildDir == "" {
 			return taskResult{}, fmt.Errorf("task %s has no cluster worktree", task.ID)
 		}
-		return buildOneTask(ctx, store, gen, aligner, onPhase, es, model, gs, contract, requiredIDs, buildDir, proofCache, eng, task)
+		return buildOneTask(ctx, store, gen, aligner, onPhase, es, model, gs, contract, requiredIDs, buildDir, proofCache, eng, mem, task)
 	})
 	if err != nil {
 		return BuildResult{}, err
@@ -296,7 +298,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 // gate — into the task's own build dir. Each task is proven INDEPENDENTLY (the
 // generation⊥proof wall holds per node); the harness-authored corpus is never
 // readable to the generator. Returns the per-task outcome.
-func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink, es spec.ExecutableSpec, model stpa.Model, gs sandbox.GenSpec, contract testsynth.Contract, requiredIDs []string, buildDir string, proofCache map[string]proof.Report, eng *contextengine.Engine, task orchestrator.PlanTask) (taskResult, error) {
+func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink, es spec.ExecutableSpec, model stpa.Model, gs sandbox.GenSpec, contract testsynth.Contract, requiredIDs []string, buildDir string, proofCache map[string]proof.Report, eng *contextengine.Engine, mem *memory.Store, task orchestrator.PlanTask) (taskResult, error) {
 	taskID := task.ID
 	if err := os.MkdirAll(buildDir, 0o755); err != nil {
 		return taskResult{}, fmt.Errorf("build dir: %w", err)
@@ -410,6 +412,14 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	closed, err := New(store).ProveAndCloseReport(ctx, taskID, report)
 	if err != nil {
 		return taskResult{}, fmt.Errorf("gate: %w", err)
+	}
+
+	// Slice 1 (or-hd3.2): populate memory so a LATER task recalls what was proven,
+	// then bound the tier — the context-degradation defense. Best-effort: a memory
+	// write miss never fails an otherwise-green build.
+	if mem != nil {
+		_ = rememberOutcome(ctx, mem, taskID, report)
+		_ = mem.EvictToCapacity(ctx, memory.MTM, memMTMCapacity)
 	}
 
 	return taskResult{
