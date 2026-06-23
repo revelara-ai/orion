@@ -13,11 +13,12 @@ var ErrNotFound = errors.New("contextstore: not found")
 // ── Domain types ─────────────────────────────────────────────────────────────
 
 type Project struct {
-	ID        string
-	Name      string
-	Intent    string
-	CreatedAt string
-	UpdatedAt string
+	ID          string
+	Name        string
+	Intent      string
+	ProjectType string // http-service (default) | cli | library | worker — the inferred build type (or-3ba.5)
+	CreatedAt   string
+	UpdatedAt   string
 }
 
 type Spec struct {
@@ -99,11 +100,14 @@ type Proof struct {
 
 type ProjectRepo struct{ tx *sql.Tx }
 
-func (r *ProjectRepo) Create(ctx context.Context, name, intent string) (string, error) {
+func (r *ProjectRepo) Create(ctx context.Context, name, intent, projectType string) (string, error) {
+	if projectType == "" {
+		projectType = "http-service"
+	}
 	id, now := newID(), nowRFC3339()
 	_, err := r.tx.ExecContext(ctx,
-		`INSERT INTO projects (id, name, intent, created_at, updated_at) VALUES (?,?,?,?,?)`,
-		id, name, intent, now, now)
+		`INSERT INTO projects (id, name, intent, project_type, created_at, updated_at) VALUES (?,?,?,?,?,?)`,
+		id, name, intent, projectType, now, now)
 	if err != nil {
 		return "", fmt.Errorf("create project: %w", err)
 	}
@@ -113,8 +117,8 @@ func (r *ProjectRepo) Create(ctx context.Context, name, intent string) (string, 
 func (r *ProjectRepo) Get(ctx context.Context, id string) (Project, error) {
 	var p Project
 	err := r.tx.QueryRowContext(ctx,
-		`SELECT id, name, intent, created_at, updated_at FROM projects WHERE id=?`, id).
-		Scan(&p.ID, &p.Name, &p.Intent, &p.CreatedAt, &p.UpdatedAt)
+		`SELECT id, name, intent, project_type, created_at, updated_at FROM projects WHERE id=?`, id).
+		Scan(&p.ID, &p.Name, &p.Intent, &p.ProjectType, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Project{}, ErrNotFound
 	}
@@ -125,8 +129,8 @@ func (r *ProjectRepo) Get(ctx context.Context, id string) (Project, error) {
 func (r *ProjectRepo) Latest(ctx context.Context) (Project, error) {
 	var p Project
 	err := r.tx.QueryRowContext(ctx,
-		`SELECT id, name, intent, created_at, updated_at FROM projects ORDER BY created_at DESC, id DESC LIMIT 1`).
-		Scan(&p.ID, &p.Name, &p.Intent, &p.CreatedAt, &p.UpdatedAt)
+		`SELECT id, name, intent, project_type, created_at, updated_at FROM projects ORDER BY created_at DESC, id DESC LIMIT 1`).
+		Scan(&p.ID, &p.Name, &p.Intent, &p.ProjectType, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Project{}, ErrNotFound
 	}
@@ -135,7 +139,7 @@ func (r *ProjectRepo) Latest(ctx context.Context) (Project, error) {
 
 func (r *ProjectRepo) List(ctx context.Context) ([]Project, error) {
 	rows, err := r.tx.QueryContext(ctx,
-		`SELECT id, name, intent, created_at, updated_at FROM projects ORDER BY created_at DESC, id`)
+		`SELECT id, name, intent, project_type, created_at, updated_at FROM projects ORDER BY created_at DESC, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +147,7 @@ func (r *ProjectRepo) List(ctx context.Context) ([]Project, error) {
 	var out []Project
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.Intent, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Intent, &p.ProjectType, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

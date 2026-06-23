@@ -46,7 +46,7 @@ func TestTransactionalWrite(t *testing.T) {
 	var taskID string
 	// Happy path: a full sequence commits atomically.
 	err := s.WithTx(ctx, func(tx *Tx) error {
-		pid, err := tx.Projects().Create(ctx, "demo", "build a time service")
+		pid, err := tx.Projects().Create(ctx, "demo", "build a time service", "http-service")
 		if err != nil {
 			return err
 		}
@@ -116,7 +116,7 @@ func TestSurvivesRestart(t *testing.T) {
 	var pid string
 	if err := s1.WithTx(ctx, func(tx *Tx) error {
 		var e error
-		pid, e = tx.Projects().Create(ctx, "demo", intent)
+		pid, e = tx.Projects().Create(ctx, "demo", intent, "http-service")
 		if e != nil {
 			return e
 		}
@@ -155,7 +155,7 @@ func TestDoneGateRejectsWithoutAcceptedProof(t *testing.T) {
 
 	var taskID, rejectProofID, acceptProofID string
 	if err := s.WithTx(ctx, func(tx *Tx) error {
-		pid, _ := tx.Projects().Create(ctx, "demo", "x")
+		pid, _ := tx.Projects().Create(ctx, "demo", "x", "http-service")
 		sid, _ := tx.Specs().CreateDraft(ctx, pid)
 		eid, _ := tx.Epics().Create(ctx, pid, sid, "e")
 		var err error

@@ -83,6 +83,25 @@ func (c *Conductor) ProjectID() string {
 	return c.projectID
 }
 
+// currentProjectSpec loads the current project + spec AND reconstructs the
+// completeness gate from the project's PERSISTED type, so a conductor reloaded in a
+// later session (Submit in session 1; Approve/Build in session 2) raises the right
+// per-type decisions and decomposes for the right type — instead of reverting to
+// the http-service default (or-3ba.5). Every spec-flow load path goes through here
+// rather than calling the store directly.
+func (c *Conductor) currentProjectSpec(ctx context.Context) (contextstore.Project, contextstore.Spec, error) {
+	proj, sp, err := c.store.CurrentProjectSpec(ctx)
+	if err != nil {
+		return proj, sp, err
+	}
+	if pt := proj.ProjectType; pt != "" && pt != c.gate.ProjectType() {
+		c.mu.Lock()
+		c.gate = completeness.NewAnalyzer(pt)
+		c.mu.Unlock()
+	}
+	return proj, sp, err
+}
+
 // Submit intakes a developer intent and returns a confirmation. It honors
 // context cancellation (every Conductor entry point is cancellable so a hung
 // run can be interrupted) and rejects an empty intent rather than silently
@@ -102,7 +121,8 @@ func (c *Conductor) Submit(ctx context.Context, intent string) (Confirmation, er
 	// so the gate raises the right functional decisions and the decomposer uses the
 	// right per-type task template. A clear CLI/library/worker signal switches it;
 	// otherwise the V2.0 http-service path is unchanged (or-3ba.2).
-	c.gate = completeness.NewAnalyzer(completeness.InferProjectType(trimmed))
+	ptype := completeness.InferProjectType(trimmed)
+	c.gate = completeness.NewAnalyzer(ptype)
 	c.mu.Unlock()
 
 	// Persist the intent as a project + draft spec so it survives a restart. The
@@ -110,7 +130,7 @@ func (c *Conductor) Submit(ctx context.Context, intent string) (Confirmation, er
 	if c.store != nil {
 		var projectID string
 		err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
-			pid, err := tx.Projects().Create(ctx, projectName(trimmed), trimmed)
+			pid, err := tx.Projects().Create(ctx, projectName(trimmed), trimmed, ptype)
 			if err != nil {
 				return err
 			}

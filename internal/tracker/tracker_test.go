@@ -20,7 +20,7 @@ func seed(t *testing.T) (*contextstore.Store, string) {
 	ctx := context.Background()
 	var pid string
 	if err := s.WithTx(ctx, func(tx *contextstore.Tx) error {
-		pid, _ = tx.Projects().Create(ctx, "demo", "build a time service")
+		pid, _ = tx.Projects().Create(ctx, "demo", "build a time service", "http-service")
 		sid, _ := tx.Specs().CreateDraft(ctx, pid)
 		eid, _ := tx.Epics().Create(ctx, pid, sid, "Deliver: time service")
 		for _, title := range []string{"scaffold", "handler", "capacity"} {

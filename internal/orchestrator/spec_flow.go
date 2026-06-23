@@ -50,7 +50,7 @@ func (c *Conductor) AddRequirement(ctx context.Context, req spec.Requirement) er
 		return err
 	}
 	req.SetIDs()
-	_, sp, err := c.store.CurrentProjectSpec(ctx)
+	_, sp, err := c.currentProjectSpec(ctx)
 	if err != nil {
 		return fmt.Errorf("no current spec to add a requirement: %w", err)
 	}
@@ -80,7 +80,7 @@ func (c *Conductor) Requirements(ctx context.Context) ([]spec.Requirement, error
 	if c.store == nil {
 		return nil, errNoStore
 	}
-	_, sp, err := c.store.CurrentProjectSpec(ctx)
+	_, sp, err := c.currentProjectSpec(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("no current spec: %w", err)
 	}
@@ -102,7 +102,7 @@ func (c *Conductor) RecordAnswer(ctx context.Context, key, value string) error {
 	if spec.IsConditionalValue(value) {
 		return fmt.Errorf("%q reads as conditional behavior, not a single value — capture it with add_requirement (explicit request→expected cases) so it can be proven", key)
 	}
-	proj, sp, err := c.store.CurrentProjectSpec(ctx)
+	proj, sp, err := c.currentProjectSpec(ctx)
 	if err != nil {
 		return fmt.Errorf("no current spec to answer: %w", err)
 	}
@@ -154,7 +154,7 @@ func (c *Conductor) assembleSpec(ctx context.Context) (contextstore.Project, con
 	if c.store == nil {
 		return proj, sp, spec.ExecutableSpec{}, nil, errNoStore
 	}
-	proj, sp, err := c.store.CurrentProjectSpec(ctx)
+	proj, sp, err := c.currentProjectSpec(ctx)
 	if err != nil {
 		return proj, sp, spec.ExecutableSpec{}, nil, fmt.Errorf("no current spec: %w", err)
 	}
@@ -247,7 +247,7 @@ func (c *Conductor) SpecView(ctx context.Context) (SpecView, error) {
 	if c.store == nil {
 		return SpecView{}, errNoStore
 	}
-	proj, sp, err := c.store.CurrentProjectSpec(ctx)
+	proj, sp, err := c.currentProjectSpec(ctx)
 	if err != nil {
 		return SpecView{}, fmt.Errorf("no current spec: %w", err)
 	}
@@ -276,7 +276,7 @@ func (c *Conductor) RecallSpec(ctx context.Context) (spec.ExecutableSpec, error)
 	if c.store == nil {
 		return spec.ExecutableSpec{}, errNoStore
 	}
-	proj, sp, err := c.store.CurrentProjectSpec(ctx)
+	proj, sp, err := c.currentProjectSpec(ctx)
 	if err != nil {
 		return spec.ExecutableSpec{}, err
 	}
@@ -319,7 +319,7 @@ func (c *Conductor) PlanView(ctx context.Context) (PlanView, error) {
 	if c.store == nil {
 		return PlanView{}, errNoStore
 	}
-	proj, sp, err := c.store.CurrentProjectSpec(ctx)
+	proj, sp, err := c.currentProjectSpec(ctx)
 	if err != nil {
 		return PlanView{}, fmt.Errorf("no current spec: %w", err)
 	}

@@ -18,7 +18,7 @@ func TestRecallRebuildsContextAfterAgentKill(t *testing.T) {
 	// Seed an accepted spec with answered decisions, an epic, and a task.
 	var specID, taskID string
 	if err := s.WithTx(ctx, func(tx *Tx) error {
-		pid, _ := tx.Projects().Create(ctx, "demo", "build a time service")
+		pid, _ := tx.Projects().Create(ctx, "demo", "build a time service", "http-service")
 		var err error
 		specID, err = tx.Specs().CreateDraft(ctx, pid)
 		if err != nil {

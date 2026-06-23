@@ -152,7 +152,7 @@ func TestPersistAndRetrieve(t *testing.T) {
 	defer s.Close()
 	var pid string
 	_ = s.WithTx(ctx, func(tx *contextstore.Tx) error {
-		pid, _ = tx.Projects().Create(ctx, "demo", "time service")
+		pid, _ = tx.Projects().Create(ctx, "demo", "time service", "http-service")
 		return nil
 	})
 
