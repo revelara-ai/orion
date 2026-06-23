@@ -49,19 +49,19 @@ type GeneratedArtifact struct {
 	ContentHash string
 }
 
-// GenerateFixtureService writes a real, compilable Go HTTP time-service into dir
-// (the agent's worktree), conforming to the ResponseContract. The generated
+// GenerateTimeServiceFixture writes a real, compilable Go HTTP time-service into
+// dir (the agent's worktree), conforming to the ResponseContract. It is the
+// labeled no-LLM fallback — the canonical time-service example. The generated
 // service carries reliability primitives (server timeouts, graceful shutdown) —
 // Orion eats its own dog food. Returns the main.go artifact descriptor.
-func GenerateFixtureService(dir string, gs GenSpec) (GeneratedArtifact, error) {
-	if gs.Module == "" {
-		gs.Module = "orion-generated/timeservice"
-	}
-	if gs.Route == "" {
-		gs.Route = "/time"
-	}
-	if gs.Port == 0 {
-		gs.Port = 8080
+//
+// An incomplete GenSpec is REJECTED, not silently papered over: Module/Route/Port
+// must be supplied by the caller. Route/Port come from the anchored
+// ResponseContract, so an empty one signals a non-HTTP or malformed spec that this
+// HTTP fixture cannot build (or-3ba.3). TimeZone keeps its canonical UTC default.
+func GenerateTimeServiceFixture(dir string, gs GenSpec) (GeneratedArtifact, error) {
+	if gs.Module == "" || gs.Route == "" || gs.Port == 0 {
+		return GeneratedArtifact{}, fmt.Errorf("GenerateTimeServiceFixture: incomplete GenSpec (Module=%q Route=%q Port=%d) — this HTTP fixture requires a complete contract", gs.Module, gs.Route, gs.Port)
 	}
 	if gs.TimeZone == "" {
 		gs.TimeZone = "UTC"

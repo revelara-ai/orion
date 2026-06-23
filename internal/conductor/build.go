@@ -77,7 +77,7 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink, outRoot string) (BuildResult, error) {
 	if gen == nil {
 		gen = func(_ context.Context, gs sandbox.GenSpec, dir, _ string) (sandbox.GeneratedArtifact, error) {
-			return sandbox.GenerateFixtureService(dir, gs)
+			return sandbox.GenerateTimeServiceFixture(dir, gs)
 		}
 	}
 
@@ -95,6 +95,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	onPhase.emit("Decompose", PhaseDone, fmt.Sprintf("%d task(s)", len(pv.Tasks)))
 
 	gs := sandbox.GenSpec{
+		Module:   "orion-generated/service",
 		Route:    es.ResponseContract.Route,
 		Port:     es.ResponseContract.Port,
 		Format:   es.ResponseContract.Format(), // anchored contract is the source of truth

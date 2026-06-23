@@ -91,7 +91,7 @@ func TestNativeGeneratorBuildsArbitraryService(t *testing.T) {
 	cases := []spec.BehavioralCase{
 		{ID: "greet", Request: spec.RequestShape{Method: "GET", Path: "/greet"}, Expect: spec.ExpectShape{Status: 200, ContentType: "application/json", Assertions: []spec.BodyAssertion{{Kind: spec.AssertJSONKeyPresent, Key: "message"}}}},
 	}
-	gs := sandbox.GenSpec{Route: "/greet", Format: "json", Cases: cases}
+	gs := sandbox.GenSpec{Module: "orion-generated/svc", Route: "/greet", Format: "json", Cases: cases}
 
 	gen := &genProvider{resp: []*llm.ChatResponse{
 		writeFileCall("1", "go.mod", "module orion-generated/svc\n\ngo 1.25\n"),
@@ -130,7 +130,7 @@ func TestNativeGeneratorRejectsPathEscape(t *testing.T) {
 	}}
 	// The escape is rejected inside the loop (tool error); generation then ends with
 	// no files → ArtifactFromDir errors. Either way, nothing is written outside dir.
-	_, _ = NativeGenerator(gen)(context.Background(), sandbox.GenSpec{Route: "/x", Format: "json"}, dir, "")
+	_, _ = NativeGenerator(gen)(context.Background(), sandbox.GenSpec{Module: "orion-generated/svc", Route: "/x", Format: "json"}, dir, "")
 	if _, err := os.Stat(filepath.Join(dir, "..", "escape.go")); err == nil {
 		t.Fatal("write_file allowed a path escaping the build dir")
 	}

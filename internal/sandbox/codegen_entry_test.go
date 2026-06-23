@@ -20,7 +20,7 @@ func TestGenSpecEntryDefault(t *testing.T) {
 // not a hardwired handleTime (or-3ba.4).
 func TestFixtureUsesDeclaredEntrySymbol(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := GenerateFixtureService(dir, GenSpec{Route: "/now", Port: 8080, Format: "json", TimeZone: "UTC", EntrySymbol: "handleNow"}); err != nil {
+	if _, err := GenerateTimeServiceFixture(dir, GenSpec{Module: "orion-generated/svc", Route: "/now", Port: 8080, Format: "json", TimeZone: "UTC", EntrySymbol: "handleNow"}); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 	src, _ := os.ReadFile(filepath.Join(dir, "main.go"))

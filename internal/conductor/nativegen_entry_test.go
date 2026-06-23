@@ -11,7 +11,7 @@ import (
 // The generator is instructed to expose the DECLARED entry symbol, not a hardwired
 // handleTime (or-3ba.4).
 func TestGenerationRoleUsesDeclaredEntrySymbol(t *testing.T) {
-	role := generationRole(sandbox.GenSpec{Route: "/now", Port: 8080, EntrySymbol: "handleNow"})
+	role := generationRole(sandbox.GenSpec{Module: "orion-generated/svc", Route: "/now", Port: 8080, EntrySymbol: "handleNow"})
 	if !strings.Contains(role, "handleNow") {
 		t.Fatalf("generation role does not instruct the declared entry symbol:\n%s", role)
 	}

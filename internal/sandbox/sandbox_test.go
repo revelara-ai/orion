@@ -110,7 +110,7 @@ func TestGenerateArtifactInWorktree(t *testing.T) {
 	ctx := context.Background()
 	worktree := t.TempDir()
 
-	art, err := GenerateFixtureService(worktree, GenSpec{Route: "/time", Port: 8080, Format: "json", TimeZone: "UTC"})
+	art, err := GenerateTimeServiceFixture(worktree, GenSpec{Module: "orion-generated/svc", Route: "/time", Port: 8080, Format: "json", TimeZone: "UTC"})
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestGenerateArtifactInWorktree(t *testing.T) {
 // ResponseContract (route, port, format).
 func TestGeneratedServiceConformsToContract(t *testing.T) {
 	worktree := t.TempDir()
-	if _, err := GenerateFixtureService(worktree, GenSpec{Route: "/now", Port: 9090, Format: "json", TimeZone: "UTC"}); err != nil {
+	if _, err := GenerateTimeServiceFixture(worktree, GenSpec{Module: "orion-generated/svc", Route: "/now", Port: 9090, Format: "json", TimeZone: "UTC"}); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 	src, _ := os.ReadFile(filepath.Join(worktree, "main.go"))

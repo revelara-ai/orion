@@ -43,7 +43,7 @@ func main() {
 // writeBrokenTimeService starts from the fixture (for a valid, version-matched
 // go.mod) then overwrites main.go with the broken handler.
 func writeBrokenTimeService(dir string, gs sandbox.GenSpec) (sandbox.GeneratedArtifact, error) {
-	if _, err := sandbox.GenerateFixtureService(dir, gs); err != nil {
+	if _, err := sandbox.GenerateTimeServiceFixture(dir, gs); err != nil {
 		return sandbox.GeneratedArtifact{}, err
 	}
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(brokenTimeService), 0o644); err != nil {
@@ -101,7 +101,7 @@ func TestBuildAndProveRefinesUntilAccept(t *testing.T) {
 			return writeBrokenTimeService(dir, gs) // attempt 1: broken → Reject
 		}
 		gotFeedback = feedback                         // attempt 2 received the analysis
-		return sandbox.GenerateFixtureService(dir, gs) // correct service → Accept
+		return sandbox.GenerateTimeServiceFixture(dir, gs) // correct service → Accept
 	}
 
 	res, err := BuildAndProve(ctx, oc.Store(), gen, nil, nil, "")
