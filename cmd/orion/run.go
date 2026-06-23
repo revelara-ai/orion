@@ -141,13 +141,10 @@ func resolveAgent(name string, lookPath func(string) (string, error)) (agentrunt
 	return p, true
 }
 
-// generationRole primes a spawned vendor agent to write the contract-conformant
-// service (exposing handleTime, the proof harness's stable contract symbol).
+// generationRole primes a spawned vendor agent with the SAME general, case-driven,
+// reliability-focused prompt as the native path (one shared builder) — not a
+// time-service-specific prompt. The only difference is the file-write instruction
+// (this path writes via the ACP fs/write_text_file tool). (or-3ba.7)
 func generationRole(gs sandbox.GenSpec) string {
-	role := fmt.Sprintf("You are Orion's code generator. Write a complete, compilable Go HTTP service that serves route %s returning %s, timezone %s, honoring a PORT env override. Expose the request handler as a top-level func handleTime(w http.ResponseWriter, r *http.Request). Write go.mod and main.go into the working directory via fs/write_text_file, then end the turn.", gs.Route, gs.Format, gs.TimeZone)
-	// or-b73: append the Conductor's assembled trust-tiered recalled context.
-	if s := strings.TrimSpace(gs.Context); s != "" {
-		role += "\n\n" + s
-	}
-	return role
+	return conductor.GenerationPrompt(gs, "Write go.mod and main.go into the working directory via fs/write_text_file, then end the turn.")
 }
