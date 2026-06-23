@@ -78,3 +78,26 @@ func TestLeak(t *testing.T){ _ = os.WriteFile("leak.out", []byte(os.Getenv("ANTH
 		t.Fatalf("scrubbed env leaked the host key to code under proof: %q", leaked)
 	}
 }
+
+// TestBuildScrubsCoordinatorKeys locks the slice-0 (or-hd3.1) invariant: the
+// bounded coordinator-inference provider key — whatever provider is configured —
+// is never reachable from a proof exec. safeenv is deny-by-default, so any key
+// name absent from the toolchain allowlist is dropped; this guards the named
+// coordinator keys explicitly so a future allowlist edit cannot silently expose
+// one. See docs/adr/ADR-0001-bounded-coordinator-inference.md.
+func TestBuildScrubsCoordinatorKeys(t *testing.T) {
+	coordKeys := []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "ORION_COORDINATOR_API_KEY"}
+	for _, k := range coordKeys {
+		t.Setenv(k, "coord-CANARY-"+k)
+	}
+	for _, kv := range Build() {
+		if strings.Contains(kv, "CANARY") {
+			t.Fatalf("scrubbed env carried a coordinator key: %q", kv)
+		}
+		for _, k := range coordKeys {
+			if strings.HasPrefix(kv, k+"=") {
+				t.Fatalf("coordinator key %s survived scrubbing", k)
+			}
+		}
+	}
+}
