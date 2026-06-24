@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/brownfield"
@@ -82,16 +83,28 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 }
 
 // changedFiles returns the paths the change touched in the worktree (git status).
+// Porcelain v1 lines are "XY PATH": XY is a fixed 2-col status field (often space-
+// padded, e.g. " M path"), then a space, then the path at index 3. The leading column
+// must NOT be trimmed — doing so shifts the offset and corrupts the path.
 func changedFiles(ctx context.Context, dir string) []string {
-	out, err := gitIn(ctx, dir, "status", "--porcelain")
-	if err != nil || strings.TrimSpace(out) == "" {
+	// Raw (non-trimming) git call: gitIn TrimSpace's its output, which would strip the
+	// leading status column of the first porcelain line. Porcelain parsing needs the
+	// bytes verbatim.
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "status", "--porcelain").Output()
+	if err != nil {
 		return nil
 	}
 	var files []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if len(line) > 3 {
-			files = append(files, strings.TrimSpace(line[3:]))
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if len(line) < 4 {
+			continue
 		}
+		path := line[3:]
+		if i := strings.Index(path, " -> "); i >= 0 { // rename: "old -> new"
+			path = path[i+4:]
+		}
+		files = append(files, strings.Trim(path, `"`))
 	}
 	return files
 }
