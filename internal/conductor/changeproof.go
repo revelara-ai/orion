@@ -3,6 +3,7 @@ package conductor
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/brownfield"
@@ -44,10 +45,19 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	res := ChangeResult{Branch: wt.Branch, Path: wt.Path}
 
 	// Regression gate: green-before (worktree == HEAD) → the generator edits the
-	// worktree → green-after. The generator IS the change being applied.
-	reg, err := brownfield.RegressionGate(ctx, wt.Path, func() error {
+	// worktree → green-after. The generator IS the change being applied. Opt-in
+	// ORION_REGRESSION_SCOPE=blast scopes the gate to the changed packages + their
+	// blast radius (fast on big repos, e.g. Orion-on-Orion); default is the full suite
+	// (sound against out-of-import-graph regressions). See or-3p5.5.
+	apply := func() error {
 		return DiffGenerator(ctx, provider, wt.Path, intent, m.Digest())
-	})
+	}
+	var reg brownfield.RegressionResult
+	if os.Getenv("ORION_REGRESSION_SCOPE") == "blast" {
+		reg, err = brownfield.RegressionGateScoped(ctx, wt.Path, m, apply)
+	} else {
+		reg, err = brownfield.RegressionGate(ctx, wt.Path, apply)
+	}
 	if err != nil {
 		return res, fmt.Errorf("regression gate: %w", err)
 	}
