@@ -20,7 +20,7 @@ func TestProjectTypeGatesFunctionalDecisions(t *testing.T) {
 		return m
 	}
 	http := keysOf(NewAnalyzer("http-service").Checklist())
-	for _, k := range []string{"response_format", "route", "port", "timezone", "scale_profile", "security_model"} {
+	for _, k := range []string{"response_format", "route", "port", "scale_profile", "security_model"} {
 		if !http[k] {
 			t.Fatalf("http-service checklist missing %q", k)
 		}
@@ -29,7 +29,7 @@ func TestProjectTypeGatesFunctionalDecisions(t *testing.T) {
 		t.Fatal("worker is not a registered type")
 	}
 	worker := keysOf(NewAnalyzer("worker").Checklist())
-	for _, h := range []string{"response_format", "route", "port", "timezone"} {
+	for _, h := range []string{"response_format", "route", "port"} {
 		if worker[h] {
 			t.Fatalf("a non-HTTP (worker) project must NOT be grilled on the HTTP decision %q", h)
 		}
@@ -154,7 +154,7 @@ func TestRequiredDecisionsChecklist(t *testing.T) {
 }
 
 // TestAmbiguousIntentSurfacesOpenDecisions: the canonical ambiguous intent
-// surfaces (at minimum) response_format, timezone, port, route — and does not
+// surfaces (at minimum) response_format, port, route — and does not
 // silently guess them.
 func TestAmbiguousIntentSurfacesOpenDecisions(t *testing.T) {
 	a := NewAnalyzer("http-service")
@@ -163,7 +163,7 @@ func TestAmbiguousIntentSurfacesOpenDecisions(t *testing.T) {
 	for _, k := range keys(ods) {
 		got[k] = true
 	}
-	for _, want := range []string{"response_format", "timezone", "port", "route"} {
+	for _, want := range []string{"response_format", "port", "route"} {
 		if !got[want] {
 			t.Fatalf("ambiguous intent did not surface %q; got %v", want, keys(ods))
 		}
@@ -194,8 +194,26 @@ func TestExplicitIntentResolvesWithoutGuessing(t *testing.T) {
 	if k["response_format"] {
 		t.Fatal("response_format was explicitly stated (JSON) but still open")
 	}
-	if !k["timezone"] {
-		t.Fatal("timezone was not stated and must remain open (no silent guess)")
+	if !k["route"] {
+		t.Fatal("route was not stated and must remain open (no silent guess)")
+	}
+}
+
+// TestHTTPServiceChecklistHasNoTimezone guards the time-service-leftover fix: timezone
+// is NOT a universal http-service decision — a general service must never be grilled for
+// a timezone it has no concept of (codegen defaults UTC; a zone is a behavioral
+// requirement, not a checklist gate).
+func TestHTTPServiceChecklistHasNoTimezone(t *testing.T) {
+	a := NewAnalyzer("http-service")
+	for _, d := range a.Checklist() {
+		if d.Key == "timezone" {
+			t.Fatal("http-service checklist still requires 'timezone' (time-service leftover)")
+		}
+	}
+	for _, od := range a.Analyze("Build an HTTP service that returns user profiles", nil) {
+		if od.Key == "timezone" {
+			t.Fatal("a general http-service intent surfaced a timezone open decision")
+		}
 	}
 }
 

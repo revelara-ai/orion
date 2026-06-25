@@ -144,7 +144,6 @@ func functionalDecisions(projectType string) []RequiredDecision {
 	case "http-service", "": // "" defaults to http-service (the V2.0 greenfield path)
 		return []RequiredDecision{
 			{"response_format", DimFunctional, "What response format should the service return (e.g. JSON, plain text)?", ""},
-			{"timezone", DimFunctional, "Which timezone should times be reported in (e.g. UTC, local)?", ""},
 			{"port", DimFunctional, "Which port should the service listen on?", ""},
 			{"route", DimFunctional, "Which route/path serves the response (e.g. /time)?", ""},
 		}
@@ -175,8 +174,7 @@ var (
 	// gates share one vocabulary. An intent naming an unsupported format (xml,
 	// protobuf) does NOT auto-resolve — it stays open and is asked, then rejected
 	// loudly at contract assembly rather than silently mishandled.
-	jsonRe  = regexp.MustCompile(`(?i)\b(json|plain ?text)\b`)
-	tzRe    = regexp.MustCompile(`(?i)\b(utc|gmt|local time|[a-z]+/[a-z_]+)\b`)
+	jsonRe = regexp.MustCompile(`(?i)\b(json|plain ?text)\b`)
 	// A path is recognized only after a route/path/endpoint keyword OR at a word
 	// start (string start or whitespace) — so "client/server" or "and/or" do NOT
 	// falsely resolve a route (the gate never guesses).
@@ -202,10 +200,6 @@ func extractFromIntent(intent, key string) (string, bool) {
 			}
 			return "text", true
 		}
-	case "timezone":
-		if m := tzRe.FindStringSubmatch(intent); m != nil {
-			return normalizeTZ(m[1]), true
-		}
 	case "route":
 		if m := routeRe.FindStringSubmatch(intent); m != nil {
 			return m[1], true
@@ -219,20 +213,6 @@ func extractFromIntent(intent, key string) (string, bool) {
 func resolvedFromIntent(intent, key string) bool {
 	_, ok := extractFromIntent(intent, key)
 	return ok
-}
-
-// normalizeTZ canonicalizes a stated timezone to the vocabulary the spec uses.
-func normalizeTZ(s string) string {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "utc":
-		return "UTC"
-	case "gmt":
-		return "GMT"
-	case "local time", "local":
-		return "local"
-	default:
-		return s // an IANA zone (e.g. America/New_York) is kept verbatim
-	}
 }
 
 // IntentValues returns, for each checklist key the intent states explicitly, the
