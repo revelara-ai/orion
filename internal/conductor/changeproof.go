@@ -10,6 +10,8 @@ import (
 	"github.com/revelara-ai/orion/internal/brownfield"
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/llm"
+	"github.com/revelara-ai/orion/internal/proof/newbehavior"
+	"github.com/revelara-ai/orion/internal/proof/truthalign"
 	"github.com/revelara-ai/orion/internal/worktree"
 )
 
@@ -19,6 +21,7 @@ type ChangeResult struct {
 	Path         string // the worktree the change lives in
 	Regression   brownfield.RegressionResult
 	FilesChanged []string
+	NewBehavior  *truthalign.ModeResult // nil when no ratified cases were supplied
 	Committed    bool
 	Reason       string // why not committed, if applicable
 }
@@ -32,7 +35,7 @@ type ChangeResult struct {
 // This is the "do no harm + deliver" spine of brownfield. The NEW-behavior proof
 // (harness-authored obligations targeting the changed surface) and STAMP-baseline
 // preservation are the next rigor layers on top of this regression-gated loop.
-func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.Store, provider llm.Provider, intent string) (ChangeResult, error) {
+func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.Store, provider llm.Provider, intent string, cases []newbehavior.Case) (ChangeResult, error) {
 	m := brownfield.ScanRepoMap(repoRoot)
 
 	mgr := worktree.New(repoRoot, store)
@@ -70,6 +73,21 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	if !reg.Held {
 		res.Reason = reg.Reason
 		return res, nil // change generated but it did not preserve existing behavior — not committed
+	}
+
+	// New-behavior proof (or-3p5.3): the regression gate proved do-no-harm; this proves
+	// the change does what was asked, against the ratified cases (oracle = the case, never
+	// the generator). Commit is gated on regression-held AND new-behavior=Accept.
+	if len(cases) > 0 {
+		mr, nbErr := newbehavior.ProveNewBehavior(ctx, wt.Path, cases)
+		if nbErr != nil {
+			return res, fmt.Errorf("new-behavior proof: %w", nbErr)
+		}
+		res.NewBehavior = &mr
+		if !mr.Pass {
+			res.Reason = "regression held, but the new-behavior proof did not pass"
+			return res, nil // change preserved existing behavior but did not prove the asked-for behavior — not committed
+		}
 	}
 
 	if _, err := gitIn(ctx, wt.Path, "add", "-A"); err != nil {
