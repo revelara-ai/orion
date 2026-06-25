@@ -2,23 +2,31 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/conductor"
 	"github.com/revelara-ai/orion/internal/llm"
+	"github.com/revelara-ai/orion/internal/proof/newbehavior"
 )
 
 // cmdChange runs the brownfield change-proof loop on the current repo: generate the
-// change in a worktree, prove it preserves the existing tests (green→green), and commit
-// it on a review branch. Usage:
+// change in a worktree, prove it preserves the existing tests (green→green), optionally
+// prove the asked-for NEW behavior against ratified --cases, and commit it on a review
+// branch. Usage:
 //
-//	orion change "<change intent>"
+//	orion change [--cases <file.json>] "<change intent>"
 func cmdChange(args []string) int {
+	args, cases, err := extractCases(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "orion change:", err)
+		return 2
+	}
 	intent := strings.TrimSpace(strings.Join(args, " "))
 	if intent == "" {
-		fmt.Fprintln(os.Stderr, `usage: orion change "<change intent>"`)
+		fmt.Fprintln(os.Stderr, `usage: orion change [--cases <file.json>] "<change intent>"`)
 		return 2
 	}
 	key := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
@@ -39,7 +47,7 @@ func cmdChange(args []string) int {
 	}
 
 	provider := llm.NewAnthropic(key, os.Getenv("ORION_MODEL"))
-	res, err := conductor.ChangeAndProve(ctx, root, nil, provider, intent)
+	res, err := conductor.ChangeAndProve(ctx, root, nil, provider, intent, cases)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion change:", err)
 		return 1
@@ -50,10 +58,38 @@ func cmdChange(args []string) int {
 		fmt.Printf("  files:  %s\n", strings.Join(res.FilesChanged, ", "))
 	}
 	fmt.Printf("  regression: green-before=%v green-after=%v held=%v\n", res.Regression.Before.Passed, res.Regression.After.Passed, res.Regression.Held)
+	if res.NewBehavior != nil {
+		fmt.Printf("  new-behavior: pass=%v (%d case(s))\n", res.NewBehavior.Pass, len(res.NewBehavior.Obligations))
+	}
 	if res.Committed {
 		fmt.Printf("  COMMITTED ✓ — review with: git diff main..%s\n", res.Branch)
 		return 0
 	}
 	fmt.Printf("  NOT committed — %s\n", res.Reason)
 	return 1
+}
+
+// extractCases pulls "--cases <file.json>" out of args (a ratified new-behavior case
+// list) and returns the remaining args (the intent) plus the parsed cases.
+func extractCases(args []string) ([]string, []newbehavior.Case, error) {
+	var rest []string
+	var cases []newbehavior.Case
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--cases" {
+			if i+1 >= len(args) {
+				return nil, nil, fmt.Errorf("--cases needs a file path")
+			}
+			data, err := os.ReadFile(args[i+1])
+			if err != nil {
+				return nil, nil, fmt.Errorf("read --cases: %w", err)
+			}
+			if err := json.Unmarshal(data, &cases); err != nil {
+				return nil, nil, fmt.Errorf("parse --cases: %w", err)
+			}
+			i++
+			continue
+		}
+		rest = append(rest, args[i])
+	}
+	return rest, cases, nil
 }

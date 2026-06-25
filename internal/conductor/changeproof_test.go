@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/revelara-ai/orion/internal/llm"
+	"github.com/revelara-ai/orion/internal/proof/newbehavior"
 )
 
 // gitInitGreenRepo makes a temp git repo (branch main) with a GREEN Go module committed,
@@ -72,7 +73,7 @@ func TestChangeAndProveCommitsRegressionSafeChange(t *testing.T) {
 		endTurn("added Mul"),
 	}}
 
-	res, err := ChangeAndProve(context.Background(), repo, nil, prov, "add a Mul helper")
+	res, err := ChangeAndProve(context.Background(), repo, nil, prov, "add a Mul helper", nil)
 	if err != nil {
 		t.Fatalf("change: %v", err)
 	}
@@ -108,7 +109,7 @@ func TestChangeAndProveRejectsRegression(t *testing.T) {
 		endTurn("changed Add"),
 	}}
 
-	res, err := ChangeAndProve(context.Background(), repo, nil, prov, "tweak Add")
+	res, err := ChangeAndProve(context.Background(), repo, nil, prov, "tweak Add", nil)
 	if err != nil {
 		t.Fatalf("change: %v", err)
 	}
@@ -117,5 +118,66 @@ func TestChangeAndProveRejectsRegression(t *testing.T) {
 	}
 	if res.Reason == "" {
 		t.Fatal("a rejected change should explain why")
+	}
+}
+
+// TestChangeAndProveProvesNewBehavior: a regression-safe change whose ratified case is
+// satisfied is proven (new-behavior Accept) AND committed.
+func TestChangeAndProveProvesNewBehavior(t *testing.T) {
+	if testing.Short() {
+		t.Skip("git worktree + go test + LLM loop")
+	}
+	repo := gitInitGreenRepo(t)
+	prov := &fakeLLM{resp: []*llm.ChatResponse{
+		tuResp("1", "write_file", `{"path":"extra.go","content":"package t\n\nfunc Mul(a, b int) int { return a * b }\n"}`),
+		endTurn("added Mul"),
+	}}
+	cases := []newbehavior.Case{
+		{Modality: "synth_test", Synth: &newbehavior.SynthTest{Pkg: ".", Call: "Mul(2, 3)", Want: "6"}},
+	}
+
+	res, err := ChangeAndProve(context.Background(), repo, nil, prov, "add a Mul helper", cases)
+	if err != nil {
+		t.Fatalf("change: %v", err)
+	}
+	if !res.Regression.Held {
+		t.Fatalf("regression should hold: %+v", res)
+	}
+	if res.NewBehavior == nil || !res.NewBehavior.Pass {
+		t.Fatalf("new-behavior proof should pass for a correct case: %+v", res.NewBehavior)
+	}
+	if !res.Committed {
+		t.Fatalf("a regression-safe, behavior-proven change should commit; reason: %s", res.Reason)
+	}
+}
+
+// TestChangeAndProveRejectsUnprovenNewBehavior: a change that preserves existing tests
+// but whose ratified case asserts the WRONG result is NOT committed — do-no-harm is not
+// enough; the asked-for behavior must be proven.
+func TestChangeAndProveRejectsUnprovenNewBehavior(t *testing.T) {
+	if testing.Short() {
+		t.Skip("git worktree + go test + LLM loop")
+	}
+	repo := gitInitGreenRepo(t)
+	prov := &fakeLLM{resp: []*llm.ChatResponse{
+		tuResp("1", "write_file", `{"path":"extra.go","content":"package t\n\nfunc Mul(a, b int) int { return a * b }\n"}`),
+		endTurn("added Mul"),
+	}}
+	cases := []newbehavior.Case{
+		{Modality: "synth_test", Synth: &newbehavior.SynthTest{Pkg: ".", Call: "Mul(2, 3)", Want: "7"}}, // wrong oracle
+	}
+
+	res, err := ChangeAndProve(context.Background(), repo, nil, prov, "add a Mul helper", cases)
+	if err != nil {
+		t.Fatalf("change: %v", err)
+	}
+	if !res.Regression.Held {
+		t.Fatalf("regression should still hold (the change does not break existing tests): %+v", res)
+	}
+	if res.NewBehavior == nil || res.NewBehavior.Pass {
+		t.Fatalf("new-behavior proof must NOT pass for a wrong oracle: %+v", res.NewBehavior)
+	}
+	if res.Committed {
+		t.Fatalf("a change whose new behavior is not proven must NOT commit: %+v", res)
 	}
 }

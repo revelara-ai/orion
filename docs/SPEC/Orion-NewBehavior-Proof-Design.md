@@ -100,8 +100,10 @@ func Test_obl_<id>(t *testing.T) {
 }
 ```
 
-Run via `proofexec.GoToolchain(ctx, dir, "test", "-run", "Test_obl_<id>", "./<Pkg>")` in the
-sandbox; parse the markers. This **generalizes `testsynth` beyond HTTP** — a plain call, not
+Run `go test -run Test_orionNB_<id> ./<Pkg>` under **`safeenv`** (host secrets scrubbed), like
+the brownfield regression gate — so the existing module's deps resolve (the greenfield
+`proofexec.GoToolchain` forces `GOPROXY=off`/fresh-GOPATH and cannot). Parse the markers. This
+**generalizes `testsynth` beyond HTTP** — a plain call, not
 `entry(w,req)`. The harness authors the test (proof domain); the generator wrote the code
 (generation domain) → the wall holds. *Proves `Verdict.String()`.*
 
@@ -130,8 +132,10 @@ Accept**; otherwise it leaves the change uncommitted with the reason.
 1. Oracle = ratified case (`Want`/`ExpectStdout`/`ExpectExit`), never the generator.
 2. The harness authors every synth test and runs every command — the generation agent supplies
    neither the test nor the assertion.
-3. Generated code executes **only** inside the sandbox: bwrap, egress denied (loopback
-   excepted), secrets scrubbed (`safeenv`).
+3. Generated code executes under the **same isolation as the brownfield regression gate** —
+   `safeenv` (host secrets scrubbed) so the module's deps resolve; the greenfield path's full
+   bwrap is a separate hardening (the regression gate doesn't bwrap either). The `command`
+   modality adds loopback-only networking with external egress denied.
 4. A test asserts the generator cannot supply the proof oracle (cases come from the ratified
    change-spec, a separate input).
 
