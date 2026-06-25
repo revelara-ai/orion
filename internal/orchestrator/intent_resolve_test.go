@@ -28,9 +28,9 @@ func TestIntentStatedDecisionsAssembleNotUnresolved(t *testing.T) {
 	if rc.Format() != "json" {
 		t.Errorf("ResponseContract.Format = %q, want json", rc.Format())
 	}
-	if rc.TimeZone != "UTC" {
-		t.Errorf("ResponseContract.TimeZone = %q, want UTC", rc.TimeZone)
-	}
+	// TimeZone is no longer a universal http-service decision (it was a time-service
+	// leftover); a time service expresses its zone as a behavioral requirement and
+	// codegen defaults UTC, so the intent's "in UTC" is not elicited here.
 }
 
 // An explicit answer still wins over the intent-stated value (intent is only a

@@ -12,7 +12,6 @@ func TestIntentValuesExtractsStatedDecisions(t *testing.T) {
 		"response_format": "json",
 		"port":            "8080",
 		"route":           "/time",
-		"timezone":        "UTC",
 	}
 	for k, v := range want {
 		if got[k] != v {
