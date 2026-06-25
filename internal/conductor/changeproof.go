@@ -36,12 +36,14 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	m := brownfield.ScanRepoMap(repoRoot)
 
 	mgr := worktree.New(repoRoot, store)
-	issueID := "orion-change-" + slugFromIntent(intent)
+	// Fresh, non-colliding worktree per run (or-3p5.7): re-running the same intent must
+	// not collide on the slug's path/branch, and must never clobber a prior committed
+	// change branch. A fresh id (suffix -2/-3 on collision) replaces the old broken
+	// Create→CreateResume fallback, which couldn't recover from a pre-existing directory.
+	issueID := freshChangeID(ctx, mgr, repoRoot, "orion-change-"+slugFromIntent(intent))
 	wt, err := mgr.Create(ctx, issueID, "HEAD")
 	if err != nil {
-		if wt, err = mgr.CreateResume(ctx, issueID, issueID); err != nil {
-			return ChangeResult{}, fmt.Errorf("worktree for change: %w", err)
-		}
+		return ChangeResult{}, fmt.Errorf("worktree for change: %w", err)
 	}
 	res := ChangeResult{Branch: wt.Branch, Path: wt.Path}
 
@@ -80,6 +82,31 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	}
 	res.Committed = true
 	return res, nil
+}
+
+// freshChangeID returns a worktree id derived from base that does not collide with an
+// existing worktree directory or git branch (or-3p5.7). The base is used as-is when free;
+// otherwise a numeric suffix is appended (base-2, base-3, …). This keeps each `orion
+// change` run isolated and idempotent — re-running the same intent never wedges on a
+// stale worktree, and a prior committed change branch is preserved (not clobbered).
+func freshChangeID(ctx context.Context, mgr *worktree.Manager, repoRoot, base string) string {
+	taken := func(id string) bool {
+		if _, err := os.Stat(mgr.PathFor(id)); err == nil {
+			return true // worktree directory already exists
+		}
+		if _, err := gitIn(ctx, repoRoot, "rev-parse", "--verify", "--quiet", "refs/heads/"+id); err == nil {
+			return true // branch already exists
+		}
+		return false
+	}
+	if !taken(base) {
+		return base
+	}
+	for i := 2; ; i++ {
+		if id := fmt.Sprintf("%s-%d", base, i); !taken(id) {
+			return id
+		}
+	}
 }
 
 // changedFiles returns the paths the change touched in the worktree (git status).
