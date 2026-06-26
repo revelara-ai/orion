@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
     heat             REAL NOT NULL DEFAULT 0,
     visit_count      INTEGER NOT NULL DEFAULT 0,
     created_at       TEXT NOT NULL,
-    last_accessed_at TEXT NOT NULL
+    last_accessed_at TEXT NOT NULL,
+    promotion_id     TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_memory_tier ON memory_items(tier, pinned, heat);

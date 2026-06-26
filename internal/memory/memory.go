@@ -151,6 +151,7 @@ func Open(dir string) (*Store, error) {
 	migrations := []struct{ col, ddl string }{
 		{"visit_count", `ALTER TABLE memory_items ADD COLUMN visit_count INTEGER NOT NULL DEFAULT 0`},
 		{"security_relevant", `ALTER TABLE memory_items ADD COLUMN security_relevant INTEGER NOT NULL DEFAULT 0`},
+		{"promotion_id", `ALTER TABLE memory_items ADD COLUMN promotion_id TEXT NOT NULL DEFAULT ''`},
 	}
 	for _, m := range migrations {
 		if existing[m.col] {
@@ -179,7 +180,12 @@ func (s *Store) Write(ctx context.Context, it Item) (string, error) {
 	if it.Tier == "" {
 		it.Tier = MTM
 	}
-	id := it.Hash[:16] + string(it.Tier)
+	// Content-addressed id (or-hd3.6 review): the id is the content hash ALONE, not
+	// hash+tier. Tier is a mutable column (Promote moves an item between tiers), so binding
+	// the id to the tier would make a promoted item's id lie about its tier and could create
+	// a same-content duplicate across tiers. One content ⇒ one item; its tier is whatever
+	// column it currently holds.
+	id := it.Hash[:16]
 	pinned := 0
 	if it.Pinned {
 		pinned = 1
@@ -392,9 +398,9 @@ func (s *Store) summarizeForEviction(ctx context.Context, tier Tier, keep int) (
 				sum := sha256.Sum256([]byte(content))
 				sumHash := hex.EncodeToString(sum[:])
 				// Namespaced id ("sum_" prefix): a summary id can never collide with a raw
-				// page id (raw ids are 16 hex chars + tier), so phase 1 can never overwrite a
-				// raw page that phase 2 then deletes.
-				sumID := "sum_" + sumHash[:16] + string(tier)
+				// page id (raw ids are 16 hex chars), so phase 1 can never overwrite a raw
+				// page that phase 2 then deletes.
+				sumID := "sum_" + sumHash[:16]
 				// A summary is never fresher than its source: inherit the raw's recency so it
 				// ages out cleanly instead of looking artificially hot and starving raws.
 				la := nowStr
@@ -448,6 +454,81 @@ func (s *Store) EvictToCapacity(ctx context.Context, tier Tier, keep int) error 
 		}
 	}
 	return tx.Commit()
+}
+
+// Promotion thresholds (or-hd3.6): an MTM item earns durable LTM status once it is both hot
+// and repeatedly useful. Config-driven tuning is a later refinement (like the heat weights).
+const (
+	promoteHeatThreshold = 1.5 // effective heat above which an item is durable
+	promoteMinVisits     = 3   // and retrieved-as-relevant at least this often
+)
+
+// Promote moves qualifying MTM items to LTM — durable, within-project cross-run patterns.
+// An item qualifies when its effective heat exceeds promoteHeatThreshold AND it has been
+// retrieved-as-relevant at least promoteMinVisits times. Each promotion is tagged with the
+// returned promotionID so the whole batch can be undone (ReversePromotion). Trust tier is
+// PRESERVED — a promoted generation item stays quarantined and can never reach a proof
+// prompt. The item id (content hash + original tier) is a stable opaque key and is left
+// unchanged; only the tier column moves. Returns the promotionID and the count promoted.
+func (s *Store) Promote(ctx context.Context) (string, int, error) {
+	// Pinned items are anti-erosion anchors held in their tier on purpose — they are not
+	// promotion candidates (moving them between tiers is needless churn).
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, heat, visit_count, last_accessed_at FROM memory_items WHERE tier=? AND pinned=0`, string(MTM))
+	if err != nil {
+		return "", 0, fmt.Errorf("memory promote scan: %w", err)
+	}
+	now := time.Now().UTC()
+	var ids []string
+	for rows.Next() {
+		var id, la string
+		var heat float64
+		var vc int
+		if err := rows.Scan(&id, &heat, &vc, &la); err != nil {
+			_ = rows.Close()
+			return "", 0, err
+		}
+		if vc >= promoteMinVisits && effectiveHeat(heat, parseTS(la), vc, now) > promoteHeatThreshold {
+			ids = append(ids, id)
+		}
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return "", 0, err
+	}
+	if len(ids) == 0 {
+		return "", 0, nil
+	}
+	promotionID := "promo-" + now.Format("20060102T150405.000000000")
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", 0, fmt.Errorf("memory promote: %w", err)
+	}
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE memory_items SET tier=?, promotion_id=? WHERE id=?`, string(LTM), promotionID, id); err != nil {
+			_ = tx.Rollback()
+			return "", 0, fmt.Errorf("memory promote: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return "", 0, fmt.Errorf("memory promote commit: %w", err)
+	}
+	return promotionID, len(ids), nil
+}
+
+// ReversePromotion undoes a promotion batch: every item tagged with promotionID is moved
+// back to MTM and its tag cleared. Only MTM→LTM promotion exists, so reversal targets MTM.
+func (s *Store) ReversePromotion(ctx context.Context, promotionID string) error {
+	if promotionID == "" {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE memory_items SET tier=?, promotion_id='' WHERE promotion_id=? AND tier=?`,
+		string(MTM), promotionID, string(LTM)); err != nil {
+		return fmt.Errorf("memory reverse promotion: %w", err)
+	}
+	return nil
 }
 
 // Count returns the number of items in a tier (including pins).

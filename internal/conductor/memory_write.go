@@ -11,10 +11,15 @@ import (
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 )
 
-// memMTMCapacity bounds the MTM tier after each task — the context-degradation
-// defense (colder cognition is evicted; pins are never evicted). Fixed in slice 1
-// (or-hd3.2); heat-driven tuning is slice 2 (or-hd3.3).
-const memMTMCapacity = 200
+// memMTMCapacity / memLTMCapacity bound the tiers after each task — the
+// context-degradation defense (colder cognition is summarized-then-evicted; pins are never
+// evicted). LTM is larger (durable cross-run patterns) but still bounded so promotion
+// (or-hd3.6) can't grow it without limit. Fixed caps; config-driven tuning is a later
+// refinement (like the heat weights).
+const (
+	memMTMCapacity = 200
+	memLTMCapacity = 1000
+)
 
 // rememberOutcome writes a proof-tier pattern memory item summarizing a proven
 // task, so a LATER task recalls what was proven. The fact is harness-derived, so
