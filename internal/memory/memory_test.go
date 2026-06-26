@@ -48,20 +48,29 @@ func TestPinnedSpecItemNeverEvicted(t *testing.T) {
 		t.Fatalf("retrieve: %v", err)
 	}
 	foundPinned := false
-	nonPinned := 0
+	nonPinnedFull := 0 // full (non-summary) non-pinned pages retained
+	summaries := 0
 	for _, it := range got {
 		if it.Pinned && it.Kind == KindSpec {
 			foundPinned = true
 		}
-		if !it.Pinned {
-			nonPinned++
+		if !it.Pinned && it.Kind != KindSummary {
+			nonPinnedFull++
+		}
+		if it.Kind == KindSummary {
+			summaries++
 		}
 	}
 	if !foundPinned {
 		t.Fatal("pinned spec item was evicted under pressure")
 	}
-	if nonPinned > 5 {
-		t.Fatalf("eviction kept %d non-pinned items, want <= 5", nonPinned)
+	// Summarize-then-evict (or-hd3.4): cold pages become summaries, not hard-drops — so the
+	// FULL non-pinned pages are bounded by keep, while summaries preserve the evicted content.
+	if nonPinnedFull > 5 {
+		t.Fatalf("eviction kept %d full non-pinned pages, want <= 5", nonPinnedFull)
+	}
+	if summaries == 0 {
+		t.Fatal("summarize-then-evict should leave summaries for evicted pages (no hard-drop)")
 	}
 }
 

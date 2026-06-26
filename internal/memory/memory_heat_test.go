@@ -30,7 +30,8 @@ func TestHeatRetrieveBumpsAndEvictionKeepsHotter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Write(ctx, Item{Tier: MTM, Kind: KindPattern, Content: "beta topic", TrustTier: TrustProof, Heat: 1}); err != nil {
+	idB, err := s.Write(ctx, Item{Tier: MTM, Kind: KindPattern, Content: "beta topic", TrustTier: TrustProof, Heat: 1})
+	if err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
@@ -55,8 +56,26 @@ func TestHeatRetrieveBumpsAndEvictionKeepsHotter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rem) != 1 || rem[0].ID != idA {
-		t.Fatalf("eviction should keep hotter A; remaining first=%s (n=%d)", firstID(rem), len(rem))
+	// Hotter A survives in full; colder B is summarized away (raw dropped, summary kept).
+	var haveA, haveBraw, haveSummary bool
+	for _, it := range rem {
+		switch {
+		case it.ID == idA:
+			haveA = true
+		case it.ID == idB:
+			haveBraw = true
+		case it.Kind == KindSummary:
+			haveSummary = true
+		}
+	}
+	if !haveA {
+		t.Fatalf("hotter A should survive eviction in full; remaining n=%d", len(rem))
+	}
+	if haveBraw {
+		t.Fatal("colder B's raw page should be evicted")
+	}
+	if !haveSummary {
+		t.Fatal("evicted B should leave a summary (no hard-drop)")
 	}
 }
 

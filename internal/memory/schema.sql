@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
     content          TEXT NOT NULL,
     content_hash     TEXT NOT NULL,
     pinned           INTEGER NOT NULL DEFAULT 0,
+    security_relevant INTEGER NOT NULL DEFAULT 0,
     trust_tier       TEXT NOT NULL DEFAULT 'generation',
     heat             REAL NOT NULL DEFAULT 0,
     visit_count      INTEGER NOT NULL DEFAULT 0,
