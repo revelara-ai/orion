@@ -174,8 +174,13 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	if memDir := filepath.Join(store.Dir(), "memory"); os.MkdirAll(memDir, 0o700) == nil {
 		if m, merr := memory.Open(memDir); merr == nil {
 			mem = m
+			// or-hd3.7: opt-in semantic recall — wire an embedder from env (default off →
+			// keyword+heat recall, no model file needed).
+			if e, ok := embedderFromEnv(); ok {
+				mem.SetEmbedder(e)
+			}
 			eng = contextengine.New(store, mem)
-			defer mem.Close()
+			defer func() { _ = mem.Close() }()
 		}
 	}
 
@@ -430,6 +435,9 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		_, _, _ = mem.Promote(ctx)
 		_ = mem.EvictToCapacity(ctx, memory.MTM, memMTMCapacity)
 		_ = mem.EvictToCapacity(ctx, memory.LTM, memLTMCapacity)
+		// or-hd3.7: batched (re-)embed of surviving items for semantic recall. No-op unless
+		// an embedder is configured (ORION_MEMORY_EMBEDDER); kept off the per-item write path.
+		_, _ = mem.Reindex(ctx)
 	}
 
 	return taskResult{
