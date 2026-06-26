@@ -102,7 +102,7 @@ func TestPersistsAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 	got, err := s2.Retrieve(ctx, "", LTM)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("expected 1 LTM item after reopen, got %d err=%v", len(got), err)
