@@ -16,6 +16,7 @@
 package newbehavior
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -23,6 +24,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/proof/safeenv"
@@ -38,11 +41,24 @@ type SynthTest struct {
 	Want string // e.g. `"OK: x"`
 }
 
+// Command is the command modality payload (slice 1b): prove a binary/endpoint/CLI by
+// running ratified argv and asserting the exit code + stdout. Setup steps run first
+// (e.g. `go build`); the Assert argv's exit/stdout is the obligation. ExpectStdout is a
+// substring, or a regexp when wrapped in /slashes/; an empty ExpectStdout checks only the
+// exit code.
+type Command struct {
+	Setup        [][]string
+	Assert       []string
+	ExpectExit   int
+	ExpectStdout string
+}
+
 // Case is one ratified new-behavior obligation.
 type Case struct {
 	ID       string // content-addressed; derived from the payload when empty
 	Modality string // "synth_test" (slice 1a) | "command" (slice 1b)
 	Synth    *SynthTest
+	Command  *Command
 }
 
 const synthTestFile = "orion_newbehavior_test.go"
@@ -52,7 +68,14 @@ func (c Case) withID() Case {
 	if c.ID != "" {
 		return c
 	}
-	h := sha256.Sum256([]byte(c.Modality + "\x00" + c.Synth.Pkg + "\x00" + c.Synth.Call + "\x00" + c.Synth.Want))
+	var payload string
+	switch {
+	case c.Synth != nil:
+		payload = "synth\x00" + c.Synth.Pkg + "\x00" + c.Synth.Call + "\x00" + c.Synth.Want
+	case c.Command != nil:
+		payload = "command\x00" + strings.Join(c.Command.Assert, " ") + "\x00" + c.Command.ExpectStdout + "\x00" + strconv.Itoa(c.Command.ExpectExit)
+	}
+	h := sha256.Sum256([]byte(c.Modality + "\x00" + payload))
 	c.ID = hex.EncodeToString(h[:])[:12]
 	return c
 }
@@ -64,19 +87,32 @@ func (c Case) withID() Case {
 func ProveNewBehavior(ctx context.Context, artifactDir string, cases []Case) (truthalign.ModeResult, error) {
 	mr := truthalign.ModeResult{Mode: "new_behavior", Obligations: map[string]truthalign.ObligationStatus{}}
 
-	// Group synth_test cases by package (one synthesized file + one `go test` per pkg).
+	// synth_test cases are grouped by package (one synthesized file + one `go test` per
+	// pkg); command cases are run directly here.
 	byPkg := map[string][]Case{}
 	var ids []string
+	var out strings.Builder
 	for _, c := range cases {
-		if c.Modality != "synth_test" || c.Synth == nil {
-			continue // command modality is slice 1b
+		switch c.Modality {
+		case "synth_test":
+			if c.Synth == nil {
+				continue
+			}
+			c = c.withID()
+			byPkg[c.Synth.Pkg] = append(byPkg[c.Synth.Pkg], c)
+			ids = append(ids, c.ID)
+		case "command":
+			if c.Command == nil {
+				continue
+			}
+			c = c.withID()
+			ids = append(ids, c.ID)
+			st, diag := proveCommand(ctx, artifactDir, *c.Command)
+			mr.Obligations[c.ID] = st
+			fmt.Fprintf(&out, "command %s: %s\n", c.ID, diag)
 		}
-		c = c.withID()
-		byPkg[c.Synth.Pkg] = append(byPkg[c.Synth.Pkg], c)
-		ids = append(ids, c.ID)
 	}
 
-	var out strings.Builder
 	for pkg, pcases := range byPkg {
 		pkgDir := filepath.Join(artifactDir, pkg)
 		pkgName, err := packageName(pkgDir)
@@ -125,6 +161,66 @@ func runGoTest(ctx context.Context, moduleRoot, pkg string) (string, error) {
 	cmd.Env = safeenv.Build()
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// proveCommand runs the command modality's Setup steps then the Assert argv under safeenv
+// (same isolation as the brownfield regression gate — secrets scrubbed, module cache
+// available; loopback-only bwrap networking is a later hardening), and reports whether the
+// Assert's exit code and stdout satisfy the ratified expectation. A failed Setup is
+// executed-but-not-passed (the change could not even be exercised).
+func proveCommand(ctx context.Context, dir string, c Command) (truthalign.ObligationStatus, string) {
+	for _, s := range c.Setup {
+		if stdout, stderr, exit := runArgv(ctx, dir, s); exit != 0 {
+			return truthalign.ObligationStatus{Executed: true, Passed: false},
+				fmt.Sprintf("setup %v failed (exit %d): %s", s, exit, clip(stdout+stderr, 500))
+		}
+	}
+	stdout, stderr, exit := runArgv(ctx, dir, c.Assert)
+	passed := exit == c.ExpectExit && stdoutMatches(stdout, c.ExpectStdout)
+	return truthalign.ObligationStatus{Executed: true, Passed: passed},
+		fmt.Sprintf("assert %v exit=%d(want %d) stdout=%q stderr=%q", c.Assert, exit, c.ExpectExit, clip(stdout, 300), clip(stderr, 300))
+}
+
+// runArgv runs a single argv under safeenv, returning stdout, stderr, and the exit code.
+func runArgv(ctx context.Context, dir string, argv []string) (string, string, int) {
+	if len(argv) == 0 {
+		return "", "", -1
+	}
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = dir
+	cmd.Env = safeenv.Build()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	_ = cmd.Run()
+	exit := -1
+	if cmd.ProcessState != nil {
+		exit = cmd.ProcessState.ExitCode()
+	}
+	return stdout.String(), stderr.String(), exit
+}
+
+// stdoutMatches reports whether got satisfies want: a regexp when want is wrapped in
+// /slashes/, otherwise a substring. An empty want matches anything (exit-code-only check).
+func stdoutMatches(got, want string) bool {
+	if want == "" {
+		return true
+	}
+	if len(want) >= 2 && strings.HasPrefix(want, "/") && strings.HasSuffix(want, "/") {
+		re, err := regexp.Compile(want[1 : len(want)-1])
+		if err != nil {
+			return false
+		}
+		return re.MatchString(got)
+	}
+	return strings.Contains(got, want)
+}
+
+func clip(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
 }
 
 // synthSource renders an in-package Go test file with one call/assert obligation per
