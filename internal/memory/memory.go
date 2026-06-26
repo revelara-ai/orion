@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/revelara-ai/orion/internal/embed"
 	_ "modernc.org/sqlite"
 )
 
@@ -108,8 +109,14 @@ var schemaSQL string
 
 // Store is the memory store, backed by its own SQLite DB.
 type Store struct {
-	db *sql.DB
+	db   *sql.DB
+	emb  embed.Embedder // active embedder for semantic recall (nil = keyword+heat only)
+	vidx VectorIndex    // vector persistence + search (swap point: brute-force → sqlite-vec/ANN)
 }
+
+// SetEmbedder configures the active embedder for semantic recall (or-hd3.7). nil leaves the
+// store in keyword+heat mode. Call Reindex after changing it to (re-)embed existing items.
+func (s *Store) SetEmbedder(e embed.Embedder) { s.emb = e }
 
 // Open opens (creating if needed) the memory store under dir/memory.db.
 func Open(dir string) (*Store, error) {
@@ -162,7 +169,7 @@ func Open(dir string) (*Store, error) {
 			return nil, fmt.Errorf("memory migrate %s: %w", m.col, err)
 		}
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, vidx: newBruteForceIndex(db)}, nil
 }
 
 // Close closes the store.

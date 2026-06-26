@@ -3,13 +3,38 @@ package conductor
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"os"
 	"sort"
 	"strings"
 
+	"github.com/revelara-ai/orion/internal/embed"
 	"github.com/revelara-ai/orion/internal/memory"
 	"github.com/revelara-ai/orion/internal/proof"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 )
+
+// embedderFromEnv builds the memory embedder from env — opt-in semantic recall (or-hd3.7).
+// ORION_MEMORY_EMBEDDER (e.g. "local") selects the in-process GoMLX embedder;
+// ORION_MEMORY_EMBEDDING_MODEL + ORION_MEMORY_MODEL_PATH point at the ONNX model. Unset →
+// keyword+heat recall (no embedder, no model file needed). A misconfiguration logs and falls
+// back to keyword recall — it never fails a build.
+func embedderFromEnv() (embed.Embedder, bool) {
+	provider := os.Getenv("ORION_MEMORY_EMBEDDER")
+	if provider == "" {
+		return nil, false
+	}
+	e, err := embed.New(embed.Config{
+		Provider:  provider,
+		Model:     os.Getenv("ORION_MEMORY_EMBEDDING_MODEL"),
+		ModelPath: os.Getenv("ORION_MEMORY_MODEL_PATH"),
+	})
+	if err != nil {
+		slog.Warn("memory embedder disabled; falling back to keyword+heat recall", "err", err)
+		return nil, false
+	}
+	return e, true
+}
 
 // memMTMCapacity / memLTMCapacity bound the tiers after each task — the
 // context-degradation defense (colder cognition is summarized-then-evicted; pins are never
