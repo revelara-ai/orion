@@ -287,8 +287,8 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		TaskID: taskID, Verdict: string(aggregateVerdict), Closed: rep.Closed,
 		OutputDir: outputDir,
 		Tier:      string(tier), Delivery: string(res.Decision), Reason: res.Reason, BuildDir: buildDir,
-		Git:         gitDelivery,
-		Alignment:   rep.Alignment, Attempts: rep.Attempts, FailureAnalysis: rep.FailureAnalysis,
+		Git:       gitDelivery,
+		Alignment: rep.Alignment, Attempts: rep.Attempts, FailureAnalysis: rep.FailureAnalysis,
 		TaskResults: results,
 	}, nil
 }
@@ -424,7 +424,12 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		// returns only the artifact today (no agent self-report), so the narrative is empty
 		// until that source is wired (or-7mr); the trusted failure fact is written now.
 		_ = rememberFailure(ctx, mem, taskID, report, "")
+		// or-hd3.6: promote hot, frequently-recalled MTM patterns to durable LTM FIRST (so
+		// eviction can't drop a promotion-eligible item), then bound BOTH tiers. Promotion is
+		// within-project + trust-preserving; all three are best-effort.
+		_, _, _ = mem.Promote(ctx)
 		_ = mem.EvictToCapacity(ctx, memory.MTM, memMTMCapacity)
+		_ = mem.EvictToCapacity(ctx, memory.LTM, memLTMCapacity)
 	}
 
 	return taskResult{
