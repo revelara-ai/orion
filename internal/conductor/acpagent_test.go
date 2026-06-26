@@ -20,7 +20,9 @@ func TestConductorSpeaksACPAgent(t *testing.T) {
 	clientEnd, agentEnd := net.Pipe()
 	defer clientEnd.Close()
 	defer agentEnd.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Generous budget: this is a hang-guard, not a latency SLO. It covers the full ACP
+	// handshake + a prompt turn, so under machine load 5s flaked at Initialize (or-cx8).
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	ca := NewConductorAgent(RoleTemplate{Project: "demo", Tier: "standard"}, orchestrator.NewWithStore(openStore(t)))
