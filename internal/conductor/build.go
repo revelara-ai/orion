@@ -419,6 +419,11 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	// write miss never fails an otherwise-green build.
 	if mem != nil {
 		_ = rememberOutcome(ctx, mem, taskID, report)
+		// or-hd3.5: on a non-Accept verdict, capture WHY it failed so the next attempt
+		// avoids it — proof facts trusted, any agent narrative quarantined. The Generator
+		// returns only the artifact today (no agent self-report), so the narrative is empty
+		// until that source is wired (or-7mr); the trusted failure fact is written now.
+		_ = rememberFailure(ctx, mem, taskID, report, "")
 		_ = mem.EvictToCapacity(ctx, memory.MTM, memMTMCapacity)
 	}
 

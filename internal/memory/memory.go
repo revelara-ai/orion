@@ -52,6 +52,7 @@ const (
 	KindSummary   = "summary"
 	KindPattern   = "pattern"
 	KindProcedure = "procedure"
+	KindFailure   = "failure" // why a task failed (proof facts) / agent narrative (quarantined)
 )
 
 // Item is a memory item.

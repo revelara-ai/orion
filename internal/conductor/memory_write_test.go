@@ -22,7 +22,7 @@ func TestBuildRecallsAndQuarantinesGenerationMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mem.Close()
+	defer func() { _ = mem.Close() }()
 
 	// A proven task outcome (harness-derived ⇒ proof-tier) is remembered.
 	rep := proof.Report{Outcome: truthalign.Outcome{Verdict: truthalign.Accept}}
