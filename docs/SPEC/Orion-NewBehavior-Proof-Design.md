@@ -109,15 +109,18 @@ the brownfield regression gate — so the existing module's deps resolve (the gr
 
 ## 5. `command` modality
 
-The harness runs the `Setup` argv(s), then the `Assert` argv, via `sandbox.Run` (bwrap,
-scrubbed env), asserting `exit == ExpectExit` and stdout matches `ExpectStdout`. It emits the
-`RUN`/`PASS` markers harness-side around the run. *Proves the build-binary-and-curl example and
-CLI checks.*
+The harness runs the `Setup` argv(s), then the `Assert` argv, under **`safeenv`** (same
+isolation as the brownfield regression gate — secrets scrubbed, module cache available so a
+build resolves deps), asserting `exit == ExpectExit` and stdout matches `ExpectStdout`
+(substring, or a regexp in `/slashes/`). The harness runs the command and records the
+obligation directly (no synthesized-test markers). *Proves CLIs and the build-binary-and-curl
+example — a service+curl is expressed as an `sh -c "go build … && ./svc & … && curl …"` Assert.*
 
-**Networking: loopback-only (extensible).** `build && curl localhost:$PORT` needs loopback;
-external egress stays denied. V1 enables loopback only (reuse the empirical run's port/loopback
-handling) — sufficient for most cases. If a future case needs more, the `AllowNet` seam extends
-it; not built now.
+**Networking (deferred hardening).** V1 runs at the regression-gate isolation level — network
+is not yet sandbox-restricted (the regression gate already runs brownfield code under `safeenv`
+without a net restriction, so this is consistent). Loopback-only bwrap (external egress denied)
+is the same deferred hardening as for the synth_test exec; the `AllowNet`/bwrap seam extends it
+later. (Accepted: "loopback-only fine for now, extend later.")
 
 ## 6. Verdict & gate
 

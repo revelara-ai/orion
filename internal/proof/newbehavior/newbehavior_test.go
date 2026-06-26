@@ -86,3 +86,60 @@ func TestProveNewBehavior_LeavesNoArtifact(t *testing.T) {
 		t.Fatalf("synth test artifact leaked into the package: %v", matches)
 	}
 }
+
+func TestProveNewBehavior_CommandModality(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs subprocesses")
+	}
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	cmdCase := func(cmd *Command) []Case { return []Case{{Modality: "command", Command: cmd}} }
+
+	// exit 0 + stdout substring → pass
+	if mr, _ := ProveNewBehavior(ctx, dir, cmdCase(&Command{Assert: []string{"echo", "answer=42"}, ExpectStdout: "answer=42"})); !mr.Pass {
+		t.Fatalf("echo command should pass: %+v", mr)
+	}
+	// wrong stdout → reject (executed, not passed)
+	if mr, _ := ProveNewBehavior(ctx, dir, cmdCase(&Command{Assert: []string{"echo", "answer=42"}, ExpectStdout: "nope"})); mr.Pass {
+		t.Fatalf("wrong stdout must not pass: %+v", mr)
+	}
+	// regexp match
+	if mr, _ := ProveNewBehavior(ctx, dir, cmdCase(&Command{Assert: []string{"echo", "count=7"}, ExpectStdout: `/count=\d+/`})); !mr.Pass {
+		t.Fatalf("regex should match: %+v", mr)
+	}
+	// nonzero exit vs ExpectExit=0 → reject
+	if mr, _ := ProveNewBehavior(ctx, dir, cmdCase(&Command{Assert: []string{"sh", "-c", "exit 3"}, ExpectExit: 0})); mr.Pass {
+		t.Fatalf("nonzero exit must not pass when ExpectExit=0: %+v", mr)
+	}
+}
+
+// TestProveNewBehavior_CommandBuildAndRun proves the build-the-binary-and-run shape (the
+// motivating example; build+loopback-curl is the same with a curl in the Assert).
+func TestProveNewBehavior_CommandBuildAndRun(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go build + subprocess")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module svcmod\n\ngo 1.21\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"),
+		[]byte("package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"answer=42\") }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mr, err := ProveNewBehavior(context.Background(), dir, []Case{
+		{Modality: "command", Command: &Command{
+			Setup:        [][]string{{"go", "build", "-o", "svc", "."}},
+			Assert:       []string{"./svc"},
+			ExpectExit:   0,
+			ExpectStdout: "answer=42",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mr.Pass {
+		t.Fatalf("build+run command should prove the new behavior: %+v\n%s", mr, mr.Output)
+	}
+}
