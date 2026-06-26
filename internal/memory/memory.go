@@ -79,6 +79,16 @@ const (
 	heatFreqWeight = 0.5                // weight on log(1+visits)
 )
 
+// Hybrid-fusion weights (or-hd3.8): semantic recall blended with the keyword signal. A
+// PRINCE-style default of ≈0.7 semantic / 0.3 keyword; without an embedder the semantic term
+// is zero and recall degrades to the keyword path. Tunable; config-driven weights are a later
+// refinement (like the heat weights).
+const (
+	memSemWeight = 0.7
+	memKwWeight  = 0.3
+	semSearchK   = 256 // semantic candidates fused per retrieval
+)
+
 // effectiveHeat is the live retention signal for ranking + eviction.
 func effectiveHeat(baseHeat float64, lastAccessed time.Time, visits int, now time.Time) float64 {
 	// Unknown recency (zero/unparseable timestamp) is treated as COLD, not recent: a row
@@ -272,15 +282,44 @@ func (s *Store) Retrieve(ctx context.Context, query string, tiers ...Tier) ([]It
 	now := time.Now().UTC()
 	q := strings.ToLower(strings.TrimSpace(query))
 	matched := func(it Item) bool { return q != "" && strings.Contains(strings.ToLower(it.Content), q) }
-	// Tiered ranking: pins first, then query-relevance, then effective heat. A tiered order
-	// (not fragile additive bonuses) keeps "pin > relevant > hot" true for ANY heat
-	// magnitude; ID breaks ties so the ordering is deterministic.
+
+	// or-hd3.8 hybrid fusion: when an embedder is configured and the query is non-empty, blend
+	// SEMANTIC similarity (vector cosine) with the KEYWORD signal so a paraphrase recalls what
+	// keyword alone misses. Without an embedder (or on any embed/search miss) sem stays empty
+	// and recall degrades to the keyword path — best-effort, never fatal. Trust is unchanged:
+	// items keep their TrustTier and the context engine quarantines generation hits downstream.
+	sem := map[string]float32{}
+	if q != "" && s.emb != nil {
+		if qv, eerr := s.emb.EmbedQueries(ctx, []string{strings.TrimSpace(query)}); eerr == nil && len(qv) == 1 {
+			if hits, serr := s.vidx.Search(ctx, qv[0], s.emb.ID(), semSearchK); serr == nil {
+				for _, h := range hits {
+					if h.Score > sem[h.ID] {
+						sem[h.ID] = h.Score
+					}
+				}
+			}
+		}
+	}
+	relevance := func(it Item) float64 {
+		var kw float64
+		if matched(it) {
+			kw = 1
+		}
+		semScore := float64(sem[it.ID]) // cosine; treat negatives as no signal
+		if semScore < 0 {
+			semScore = 0
+		}
+		return memSemWeight*semScore + memKwWeight*kw
+	}
+	// Ranking: pins first, then fused relevance (semantic+keyword), then effective heat; ID
+	// breaks ties for deterministic output. An empty query → relevance 0 for all → pure heat
+	// order (unchanged). No embedder → relevance is the keyword signal only (unchanged).
 	less := func(a, b Item) bool {
 		if a.Pinned != b.Pinned {
 			return a.Pinned
 		}
-		if am, bm := matched(a), matched(b); am != bm {
-			return am
+		if ra, rb := relevance(a), relevance(b); ra != rb {
+			return ra > rb
 		}
 		ha := effectiveHeat(a.Heat, a.LastAccessed, a.VisitCount, now)
 		hb := effectiveHeat(b.Heat, b.LastAccessed, b.VisitCount, now)
