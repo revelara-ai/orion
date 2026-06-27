@@ -77,40 +77,8 @@ func cmdLogin(args []string) int {
 	return 0
 }
 
-// cmdStatus reports the Polaris connection.
-func cmdStatus(_ []string) int {
-	dir, err := credentialsDir()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "orion status:", err)
-		return 1
-	}
-	store, err := polaris.NewTokenStore(dir)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "orion status:", err)
-		return 1
-	}
-	tok, ok, err := store.Load()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "orion status:", err)
-		return 1
-	}
-	if !ok {
-		fmt.Println("Polaris: not logged in")
-		return 1
-	}
-	id, err := polaris.NewClient(tok.BaseURL).Me(context.Background(), tok.AccessToken)
-	if err != nil {
-		// Offline-tolerant: a cached credential exists but the server is unreachable.
-		fmt.Printf("Polaris: cached credential present for %s (server unreachable)\n", tok.BaseURL)
-		return 0
-	}
-	who := id.Email
-	if who == "" {
-		who = "authenticated"
-	}
-	fmt.Printf("Polaris: connected as %s (%s)\n", who, tok.BaseURL)
-	return 0
-}
+// cmdStatus moved to status.go (or-gik.4): `orion status` now prints the full init banner with
+// a live Polaris probe. The Polaris reachability logic lives there as livePolarisCheck.
 
 // cmdLogout erases the cached credential.
 func cmdLogout(_ []string) int {
