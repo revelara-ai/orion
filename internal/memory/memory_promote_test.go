@@ -18,8 +18,8 @@ func TestPromotionPromotesHotItem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 3; i++ { // make alpha both hot and frequently used
-		if _, err := s.Retrieve(ctx, "alpha", MTM); err != nil {
+	for i := 0; i < 3; i++ { // make the item both hot and frequently used
+		if err := s.RecordAccess(ctx, hotID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -56,7 +56,7 @@ func TestPromotionPreservesTrustTier(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
-		if _, err := s.Retrieve(ctx, "alpha", MTM); err != nil {
+		if err := s.RecordAccess(ctx, genID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -84,7 +84,7 @@ func TestPromotionReversible(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
-		if _, err := s.Retrieve(ctx, "alpha", MTM); err != nil {
+		if err := s.RecordAccess(ctx, id); err != nil {
 			t.Fatal(err)
 		}
 	}

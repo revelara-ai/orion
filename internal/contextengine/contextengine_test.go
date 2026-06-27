@@ -132,3 +132,44 @@ func TestProofDomainExcludesGenerationMemory(t *testing.T) {
 		}
 	}
 }
+
+// TestRecordAccessOnGenerationNotProof (or-vx8): the GENERATION assemble records access on the
+// items it used (once, not once-per-Retrieve), while the PROOF assemble records nothing — so
+// proof-domain reads never heat the generation model and access is not double-counted.
+func TestRecordAccessOnGenerationNotProof(t *testing.T) {
+	ctx := context.Background()
+	mem := openMem(t)
+	id, err := mem.Write(ctx, memory.Item{Tier: memory.MTM, Kind: memory.KindPattern, Content: "alpha pattern", TrustTier: memory.TrustProof, Heat: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := New(nil, mem)
+
+	// Proof-domain assemble must NOT record access.
+	if _, err := eng.AssembleForProof(ctx, "", "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := mem.Retrieve(ctx, "", memory.MTM); len(got) != 1 || got[0].VisitCount != 0 {
+		t.Fatalf("proof assemble must not record access; VisitCount=%d", got[0].VisitCount)
+	}
+
+	// Generation-domain assemble records access ONCE on the used item (despite two internal
+	// Retrieve calls).
+	if _, err := eng.Assemble(ctx, "", "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := mem.Retrieve(ctx, "", memory.MTM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != id || got[0].VisitCount != 1 {
+		t.Fatalf("generation assemble should record access exactly once; got id=%s VisitCount=%d", firstIDc(got), got[0].VisitCount)
+	}
+}
+
+func firstIDc(items []memory.Item) string {
+	if len(items) == 0 {
+		return "(none)"
+	}
+	return items[0].ID
+}

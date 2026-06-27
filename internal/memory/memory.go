@@ -330,35 +330,37 @@ func (s *Store) Retrieve(ctx context.Context, query string, tiers ...Tier) ([]It
 	}
 	sort.SliceStable(items, func(i, j int) bool { return less(items[i], items[j]) })
 
-	// Recency/frequency feedback: an item surfaced as RELEVANT to a non-empty query is
-	// "accessed" — bump visit_count + last_accessed so heat reflects use (the MemoryOS
-	// loop). Pinned items are anti-erosion anchors, left untouched. The updates run in one
-	// transaction (the single-conn pool + WAL would otherwise fsync per row), and the
-	// in-memory items are updated so the returned slice matches the persisted state.
-	if q != "" {
-		nowStr := now.Format(time.RFC3339Nano)
-		tx, err := s.db.BeginTx(ctx, nil)
-		if err != nil {
-			return nil, fmt.Errorf("memory retrieve bump: %w", err)
-		}
-		for i := range items {
-			if !matched(items[i]) || items[i].Pinned {
-				continue
-			}
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE memory_items SET visit_count=visit_count+1, last_accessed_at=? WHERE id=?`,
-				nowStr, items[i].ID); err != nil {
-				_ = tx.Rollback()
-				return nil, fmt.Errorf("memory retrieve bump: %w", err)
-			}
-			items[i].VisitCount++
-			items[i].LastAccessed = now
-		}
-		if err := tx.Commit(); err != nil {
-			return nil, fmt.Errorf("memory retrieve bump commit: %w", err)
+	// Retrieve is READ-ONLY (or-vx8): the recency/frequency "access" bump is recorded
+	// explicitly by the caller (RecordAccess) on the items it actually USED — so access is
+	// counted once per consumer, not once per Retrieve call (the context engine issues two),
+	// and proof-domain reads never heat the generation model. Semantic-only recalls are
+	// rewarded too, since the caller records the used bundle, not just keyword matches.
+	return items, nil
+}
+
+// RecordAccess marks the given items as accessed — bumping visit_count + last_accessed so
+// heat reflects use (the MemoryOS recency/frequency loop, or-vx8). The caller decides what
+// was actually used and records it ONCE, in a single transaction (the single-conn pool + WAL
+// would otherwise fsync per row). Pinned anti-erosion anchors are never bumped. Unknown ids
+// are no-ops. Best-effort heat feedback — callers may ignore the error.
+func (s *Store) RecordAccess(ctx context.Context, ids ...string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("memory record access: %w", err)
+	}
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE memory_items SET visit_count=visit_count+1, last_accessed_at=? WHERE id=? AND pinned=0`,
+			now, id); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("memory record access: %w", err)
 		}
 	}
-	return items, nil
+	return tx.Commit()
 }
 
 // summaryContent produces a deterministic, model-free summary string for a raw item: the

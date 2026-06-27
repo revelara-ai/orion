@@ -124,6 +124,24 @@ func (e *Engine) assemble(ctx context.Context, taskID, query string, domain Doma
 		b.Trusted = append(b.Trusted, it)
 		budget--
 	}
+
+	// or-vx8: record access ONCE on the items actually used in this GENERATION bundle — the
+	// caller-controlled heat feedback that replaces the per-Retrieve bump. Proof-domain reads
+	// never heat the model (we skip DomainProof); pins are skipped inside RecordAccess. This
+	// counts access once per assembly (not once per Retrieve) and rewards semantic-only recalls
+	// (whatever made it into the bundle), not just keyword matches.
+	if domain == DomainGeneration && query != "" {
+		used := make([]string, 0, len(b.Trusted)+len(b.Untrusted))
+		for _, it := range b.Trusted {
+			used = append(used, it.ID)
+		}
+		for _, it := range b.Untrusted {
+			used = append(used, it.ID)
+		}
+		if len(used) > 0 {
+			_ = e.mem.RecordAccess(ctx, used...) // best-effort: heat feedback never fails assembly
+		}
+	}
 	return b, nil
 }
 
