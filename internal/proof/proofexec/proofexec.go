@@ -14,16 +14,28 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/revelara-ai/orion/internal/proof/safeenv"
 	"github.com/revelara-ai/orion/internal/sandbox"
 )
 
 // allowedTools is the verification-command allowlist for RunTool: argv[0] MUST be a key here.
-// `make` is permitted ONLY in dry-run (-n) form (a recipe is arbitrary shell and is never
-// executed); nothing else (no bash/sh) is allowed. The argv is constructed by Orion, never
-// lifted from a generated file.
-var allowedTools = map[string]bool{"go": true, "golangci-lint": true, "make": true}
+// `make` is intentionally NOT allowed — it is a dynamically-linked C binary that won't load in
+// the lib-less sandbox, and its $(shell ...) parse-time expansion (even under -n) is an exec
+// vector; Makefile targets are proven by static inspection (a "file" assertion), not execution.
+// The argv is constructed by Orion, never lifted from a generated file.
+var allowedTools = map[string]bool{"go": true, "golangci-lint": true}
+
+// goDeniedSubcommands are `go` subcommands that compile-and-RUN arbitrary code beyond the
+// sandboxed build/test (which already executes generated tests under isolation). They are
+// refused so a verify case can't smuggle arbitrary execution via the trusted go arm.
+var goDeniedSubcommands = map[string]bool{
+	"run": true, "generate": true, "get": true, "install": true, "tool": true,
+}
+
+// runToolTimeout bounds a single proof exec (build/test/lint of generated content).
+const runToolTimeout = 4 * time.Minute
 
 // isolation selects the sandbox backend. "auto" uses bwrap when available and
 // falls back to the (unisolated, logged) "none" backend otherwise. Overridable
@@ -70,6 +82,7 @@ func toolEnv(root, workdir string) map[string]string {
 	env["GOPATH"] = filepath.Join(workdir, ".orion-gopath")
 	env["GOTOOLCHAIN"] = "local" // never fetch a toolchain over the (denied) network
 	env["GOPROXY"] = "off"       // no module downloads under proof
+	env["GOENV"] = "off"         // never read/write the host go env file (no `go env -w` side effects)
 	env["GOFLAGS"] = ""
 	env["CGO_ENABLED"] = "0" // no C toolchain needed inside the sandbox
 	return env
@@ -88,9 +101,12 @@ func RunTool(ctx context.Context, workdir, tool string, args ...string) (stdout,
 	if !allowedTools[tool] {
 		return "", "", -1, fmt.Errorf("proofexec: tool %q is not on the verification allowlist", tool)
 	}
-	if tool == "make" && (len(args) == 0 || args[0] != "-n") {
-		return "", "", -1, fmt.Errorf("proofexec: make is allowed only in dry-run (-n) form; recipes are never executed")
+	if tool == "go" && len(args) > 0 && goDeniedSubcommands[args[0]] {
+		return "", "", -1, fmt.Errorf("proofexec: `go %s` is not allowed (it runs arbitrary code)", args[0])
 	}
+	// Bound every proof exec so generated code (an init() spin-loop, a hung tool) can't wedge.
+	ctx, cancel := context.WithTimeout(ctx, runToolTimeout)
+	defer cancel()
 	be, err := sandbox.New(isolation())
 	if err != nil {
 		return "", "", -1, err

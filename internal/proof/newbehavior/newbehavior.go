@@ -30,6 +30,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/proof/proofexec"
 	"github.com/revelara-ai/orion/internal/proof/safeenv"
+	"github.com/revelara-ai/orion/internal/proof/toolingcfg"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 )
 
@@ -62,8 +63,8 @@ type Command struct {
 // (proofexec.RunTool — go | golangci-lint | make -n only, secret-scrubbed, net+FS denied).
 // Unlike Command (a built binary's runtime behavior), this proves a tooling obligation.
 type VerifyCommand struct {
-	Tool string   // argv[0]; MUST be on proofexec's allowlist (go | golangci-lint | make)
-	Args []string // argv[1:]; for make, MUST start with -n (dry-run; recipes never execute)
+	Tool string   // "go" | "golangci-lint" (executed, sandboxed) | "file" (static assertion, no exec)
+	Args []string // for go/golangci-lint: argv[1:]. for "file": Args[0] is a worktree-relative path
 
 	MustExitZero bool // when set, pass requires exit == 0 (target works / lint clean)
 
@@ -74,6 +75,13 @@ type VerifyCommand struct {
 	ConfigValidates bool
 	ConfigOKRE      string // regexp that MUST match stdout+stderr
 	ConfigFailRE    string // regexp that must NOT match (config-load failure)
+
+	// CurateGolangci, when set, curates the worktree's generated .golangci.yml to an
+	// Orion-controlled .orion-golangci.yml (rejecting plugin/custom-linter keys) BEFORE the
+	// command runs — so a command that passes `--config .orion-golangci.yml` reads a vetted copy,
+	// never the generated file picked up from the CWD. A rejected/invalid config makes the
+	// obligation Executed=false (the change is not certified).
+	CurateGolangci bool
 }
 
 // Case is one ratified new-behavior obligation.
@@ -102,7 +110,7 @@ func (c Case) withID() Case {
 		v := c.Verify
 		payload = "verify\x00" + v.Tool + "\x00" + strings.Join(v.Args, " ") + "\x00" +
 			strconv.FormatBool(v.MustExitZero) + "\x00" + strconv.FormatBool(v.ConfigValidates) + "\x00" +
-			v.ConfigOKRE + "\x00" + v.ConfigFailRE
+			v.ConfigOKRE + "\x00" + v.ConfigFailRE + "\x00" + strconv.FormatBool(v.CurateGolangci)
 	}
 	h := sha256.Sum256([]byte(c.Modality + "\x00" + payload))
 	c.ID = hex.EncodeToString(h[:])[:12]
@@ -227,6 +235,25 @@ func proveCommand(ctx context.Context, dir string, c Command) (truthalign.Obliga
 // ignored) does NOT pass. A policy/launch failure (disallowed tool, no sandbox, missing binary)
 // is Executed=false: the obligation could not be exercised, so the change is not certified.
 func proveVerify(ctx context.Context, dir string, v VerifyCommand) (truthalign.ObligationStatus, string) {
+	// The "file" pseudo-tool is a static, sandbox-free assertion (no execution) — the safe way to
+	// prove a declarative artifact (a Makefile target is defined+wired, a config key present) that
+	// can't run under the sandbox.
+	if v.Tool == "file" {
+		return proveFileAssertion(dir, v)
+	}
+	if v.CurateGolangci {
+		// Vet the generated golangci config (reject plugin/custom-linter keys) into the
+		// Orion-controlled copy the command reads via --config. A rejected/invalid config means
+		// the obligation cannot be honestly exercised.
+		if _, err := toolingcfg.CurateGolangciConfig(filepath.Join(dir, ".golangci.yml"), dir); err != nil {
+			return truthalign.ObligationStatus{Executed: false}, "golangci config rejected: " + err.Error()
+		}
+		// The command MUST read the curated copy, never the CWD-picked generated file.
+		if !hasConfigArg(v.Args, toolingcfg.CuratedConfigName) {
+			return truthalign.ObligationStatus{Executed: false},
+				"golangci verify with curate_golangci must pass --config " + toolingcfg.CuratedConfigName
+		}
+	}
 	stdout, stderr, exit, err := proofexec.RunTool(ctx, dir, v.Tool, v.Args...)
 	if err != nil {
 		return truthalign.ObligationStatus{Executed: false}, "verifier refused/failed to launch: " + err.Error()
@@ -255,6 +282,49 @@ func reMatch(pattern, s string) bool {
 		return false
 	}
 	return re.MatchString(s)
+}
+
+// proveFileAssertion is the "file" pseudo-tool: a static, sandbox-free check that a file in the
+// worktree (Args[0], a path INSIDE the worktree) matches ConfigOKRE and does NOT match
+// ConfigFailRE. It proves a declarative artifact (e.g. a Makefile defines `lint:` invoking
+// golangci-lint) WITHOUT executing anything — the honest way to verify tooling that cannot run
+// safely under the sandbox (make). A missing file or unmet regex is a fail.
+func proveFileAssertion(dir string, v VerifyCommand) (truthalign.ObligationStatus, string) {
+	if len(v.Args) == 0 {
+		return truthalign.ObligationStatus{Executed: false}, "file assertion: no path given"
+	}
+	rel := filepath.Clean(v.Args[0])
+	if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return truthalign.ObligationStatus{Executed: false}, "file assertion: path must be inside the worktree"
+	}
+	data, err := os.ReadFile(filepath.Join(dir, rel))
+	if err != nil {
+		return truthalign.ObligationStatus{Executed: true, Passed: false}, "file assertion: " + err.Error()
+	}
+	content := string(data)
+	passed := true
+	if v.ConfigOKRE != "" && !reMatch(v.ConfigOKRE, content) {
+		passed = false
+	}
+	if v.ConfigFailRE != "" && reMatch(v.ConfigFailRE, content) {
+		passed = false
+	}
+	return truthalign.ObligationStatus{Executed: true, Passed: passed},
+		fmt.Sprintf("file %s assertion passed=%v", rel, passed)
+}
+
+// hasConfigArg reports whether args passes --config (or --config=) pointing at the given config
+// filename (by base name) — used to enforce that a curated-golangci verify reads the vetted copy.
+func hasConfigArg(args []string, name string) bool {
+	for i, a := range args {
+		if a == "--config" && i+1 < len(args) && filepath.Base(args[i+1]) == name {
+			return true
+		}
+		if v, ok := strings.CutPrefix(a, "--config="); ok && filepath.Base(v) == name {
+			return true
+		}
+	}
+	return false
 }
 
 // runArgv runs a single argv under safeenv, returning stdout, stderr, and the exit code.
