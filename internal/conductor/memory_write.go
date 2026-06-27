@@ -71,6 +71,33 @@ func summarizeOutcome(taskID string, report proof.Report) string {
 	return fmt.Sprintf("Proven task %s (verdict %s, %d modes converged)", taskID, report.Outcome.Verdict, len(report.Outcome.Modes))
 }
 
+// proposeCandidate writes a self-evolution CANDIDATE after a proof-passed task (or-ykz.8): a
+// generation-tier, active=false (Candidate) LTM item capturing the successful approach for
+// later reuse. This is the mechanism that GENERATES self-evolution candidates from passing
+// runs. It is doubly contained: TrustGeneration (an agent-proposed item, never a proof input)
+// AND Candidate (excluded from active recall + vector indexing) until the SkillEval/activation
+// lifecycle promotes it (default off; or-lrr). Best-effort: a write miss never fails a build.
+func proposeCandidate(ctx context.Context, mem *memory.Store, taskID string, report proof.Report) error {
+	if mem == nil || report.Outcome.Verdict != truthalign.Accept {
+		return nil
+	}
+	_, err := mem.Write(ctx, memory.Item{
+		Tier:      memory.LTM,
+		Kind:      memory.KindProcedure,
+		Content:   summarizeCandidate(taskID, report),
+		TrustTier: memory.TrustGeneration, // untrusted proposal until SkillEval activates it
+		Candidate: true,                   // active=false: not surfaced in recall yet
+		Heat:      0.5,
+	})
+	return err
+}
+
+// summarizeCandidate renders the candidate body. It is an agent-domain proposal ("what
+// worked"), not a proof fact — so it is written generation-tier and quarantined.
+func summarizeCandidate(taskID string, report proof.Report) string {
+	return fmt.Sprintf("candidate procedure from proven task %s: approach converged %d modes (verdict %s) — review for reuse", taskID, len(report.Outcome.Modes), report.Outcome.Verdict)
+}
+
 // rememberFailure writes failure-analysis memory on a non-Accept verdict so the NEXT
 // attempt can avoid the same mistake — WITHOUT poisoning. It splits the record across the
 // trust wall (Recall design §3): the structured proof FACTS (which modes dissented, key

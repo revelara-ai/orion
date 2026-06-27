@@ -429,6 +429,9 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		// returns only the artifact today (no agent self-report), so the narrative is empty
 		// until that source is wired (or-7mr); the trusted failure fact is written now.
 		_ = rememberFailure(ctx, mem, taskID, report, "")
+		// or-ykz.8: propose a self-evolution candidate from a passing run (generation-tier,
+		// active=false — quarantined AND excluded from recall until the lifecycle activates it).
+		_ = proposeCandidate(ctx, mem, taskID, report)
 		// or-hd3.6: promote hot, frequently-recalled MTM patterns to durable LTM FIRST (so
 		// eviction can't drop a promotion-eligible item), then bound BOTH tiers. Promotion is
 		// within-project + trust-preserving; all three are best-effort.
