@@ -13,6 +13,7 @@ import (
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/decomposer"
 	"github.com/revelara-ai/orion/internal/delivery"
+	"github.com/revelara-ai/orion/internal/lspcheck"
 	"github.com/revelara-ai/orion/internal/memory"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
@@ -352,6 +353,23 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		}
 		onPhase.emit("Generate", PhaseDone, genDetail)
 		attempts = attempt
+
+		// or-ykz.11: cheap pre-proof LSP diagnostics. A generated file with a type/compile
+		// error is caught here (gopls) and fed back to the generator BEFORE the expensive
+		// behavioral/empirical/hazard harness runs — cutting wasted proof passes. Skipped
+		// (no-op) if gopls is absent; the proof harness compiles anyway and stays the sole
+		// right-to-ship authority, so this only ever short-circuits a doomed attempt early.
+		if diag, derr := lspcheck.Diagnose(ctx, buildDir); derr == nil && !diag.OK() {
+			onPhase.emit("Diagnose", PhaseWarn, fmt.Sprintf("%d diagnostic(s) — refining before proof", len(diag.Diagnostics)))
+			failureAnalysis = diag.Feedback()
+			feedback = failureAnalysis
+			report = proof.Report{}
+			report.Outcome.Verdict = truthalign.Inconclusive
+			if attempt < maxBuildAttempts {
+				continue
+			}
+			break
+		}
 
 		// Proof is memoized by artifact content hash: an identical artifact (e.g. a
 		// sibling cluster building the same code) is proven once — the verdict is
