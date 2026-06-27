@@ -76,6 +76,86 @@ func TestVerifyConfigValidatesIndependentOfExit(t *testing.T) {
 	}
 }
 
+// TestVerifyCurateGolangciRejectsPlugin: a generated golangci config declaring a plugin makes
+// the obligation fail closed (Executed=false) — curation rejects it before the command runs, so
+// a malicious config can never certify (no sandbox needed: the reject precedes execution).
+func TestVerifyCurateGolangciRejectsPlugin(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, ".golangci.yml"), "version: \"2\"\nlinters-settings:\n  custom:\n    evil:\n      path: ./e.so\n")
+	mr, err := ProveNewBehavior(context.Background(), dir, []Case{
+		{Modality: "verify_command", Verify: &VerifyCommand{
+			Tool: "golangci-lint", Args: []string{"run", "--config", ".orion-golangci.yml"},
+			CurateGolangci: true, MustExitZero: true,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mr.Pass {
+		t.Fatal("a plugin golangci config must fail closed (curation reject), not certify")
+	}
+	for _, st := range mr.Obligations {
+		if st.Executed {
+			t.Fatal("curation reject must leave the obligation un-executed")
+		}
+	}
+}
+
+// TestVerifyFileAssertion: the "file" pseudo-tool statically proves a Makefile target is defined
+// and wired (no execution) — and fails on a missing target or a missing file.
+func TestVerifyFileAssertion(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "Makefile"), "lint:\n\tgolangci-lint run ./...\nvet:\n\tgo vet ./...\n")
+
+	mr, err := ProveNewBehavior(context.Background(), dir, []Case{
+		{Modality: "verify_command", Verify: &VerifyCommand{Tool: "file", Args: []string{"Makefile"},
+			ConfigOKRE: `(?m)^lint:`, ConfigFailRE: `TODO`}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mr.Pass {
+		t.Fatalf("a Makefile defining lint: should pass the file assertion: %+v", mr.Obligations)
+	}
+
+	mr2, _ := ProveNewBehavior(context.Background(), dir, []Case{
+		{Modality: "verify_command", Verify: &VerifyCommand{Tool: "file", Args: []string{"Makefile"}, ConfigOKRE: `(?m)^deploy:`}},
+	})
+	if mr2.Pass {
+		t.Fatal("asserting a target that isn't defined must fail")
+	}
+
+	mr3, _ := ProveNewBehavior(context.Background(), dir, []Case{
+		{Modality: "verify_command", Verify: &VerifyCommand{Tool: "file", Args: []string{"nope.mk"}, ConfigOKRE: `x`}},
+	})
+	if mr3.Pass {
+		t.Fatal("asserting on a missing file must fail")
+	}
+}
+
+// TestVerifyCurateRequiresConfigArg: curate_golangci without --config <curated> fails closed —
+// otherwise golangci-lint would CWD-pick the (uncurated) generated .golangci.yml. The check
+// precedes execution, so no sandbox is needed.
+func TestVerifyCurateRequiresConfigArg(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, ".golangci.yml"), "version: \"2\"\nlinters:\n  enable:\n    - staticcheck\n")
+	mr, err := ProveNewBehavior(context.Background(), dir, []Case{
+		{Modality: "verify_command", Verify: &VerifyCommand{Tool: "golangci-lint", Args: []string{"run", "./..."},
+			CurateGolangci: true, MustExitZero: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mr.Pass {
+		t.Fatal("curate_golangci without --config <curated> must fail closed")
+	}
+	for _, st := range mr.Obligations {
+		if st.Executed {
+			t.Fatal("missing --config must leave the obligation un-executed (checked before run)")
+		}
+	}
+}
+
 // TestVerifyEmptyInconclusive: no declared cases → Inconclusive, never a silent pass.
 func TestVerifyEmptyInconclusive(t *testing.T) {
 	mr, err := ProveNewBehavior(context.Background(), t.TempDir(), nil)

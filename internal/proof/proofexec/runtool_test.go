@@ -32,14 +32,23 @@ func TestRunToolRejectsDisallowedTool(t *testing.T) {
 	}
 }
 
-// TestRunToolRejectsNonDryRunMake: make is permitted only in dry-run (-n) form (recipes are
-// arbitrary shell and are never executed).
-func TestRunToolRejectsNonDryRunMake(t *testing.T) {
-	if _, _, _, err := RunTool(context.Background(), t.TempDir(), "make", "build"); err == nil {
-		t.Fatal("make without -n must be rejected")
+// TestRunToolRejectsMake: make is NOT on the allowlist — it can't load in the lib-less sandbox
+// and its $(shell ...) parse-time expansion is an exec vector; Makefiles are proven statically.
+func TestRunToolRejectsMake(t *testing.T) {
+	if _, _, _, err := RunTool(context.Background(), t.TempDir(), "make", "-n", "build"); err == nil ||
+		!strings.Contains(err.Error(), "allowlist") {
+		t.Fatal("make must be rejected as non-allowlisted")
 	}
-	if _, _, _, err := RunTool(context.Background(), t.TempDir(), "make"); err == nil {
-		t.Fatal("bare make must be rejected")
+}
+
+// TestRunToolRejectsGoRunGenerate: the go arm refuses subcommands that compile-and-run arbitrary
+// code (go run / go generate / go get / go install / go tool), even though `go` is allowlisted.
+func TestRunToolRejectsGoRunGenerate(t *testing.T) {
+	for _, sub := range []string{"run", "generate", "get", "install", "tool"} {
+		_, _, _, err := RunTool(context.Background(), t.TempDir(), "go", sub, "./...")
+		if err == nil || !strings.Contains(err.Error(), "not allowed") {
+			t.Errorf("`go %s` must be rejected, got %v", sub, err)
+		}
 	}
 }
 

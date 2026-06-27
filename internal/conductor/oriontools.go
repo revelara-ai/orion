@@ -12,6 +12,7 @@ import (
 	"github.com/revelara-ai/orion/internal/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
+	"github.com/revelara-ai/orion/internal/proof/newbehavior"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/internal/tools"
 )
@@ -310,6 +311,82 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 				out += fmt.Sprintf("\n\nCausal analysis (after %d refinement attempt(s)):\n%s", res.Attempts, res.FailureAnalysis)
 			}
 			return out, nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name: "change_repo",
+		Description: "Make a brownfield change to the EXISTING repo and PROVE it: generate the edit in a worktree off HEAD, prove it PRESERVES existing behavior (regression gate green-before→green-after), prove the asked-for change via ratified verification commands, and commit on a review branch only if both hold. Use for changes to an existing codebase — INCLUDING tooling/config changes that ship no service (e.g. add .golangci.yml + Makefile lint/vet targets). Not for greenfield (use build_service). The verify commands ARE the proof for a tooling change — author them yourself; the harness runs and judges them (you never grade your own work). Do NOT invent HTTP/service cases for a tooling change.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
+			`"intent":{"type":"string","description":"the developer's change intent"},` +
+			`"verify":{"type":"array","description":"ratified verification commands proving the change did what was asked (the oracle). For tooling/config changes these ARE the proof.","items":{"type":"object","properties":{` +
+			`"tool":{"type":"string","enum":["go","golangci-lint","file"],"description":"go/golangci-lint are executed under the sandbox; 'file' is a static no-exec assertion on a worktree file (e.g. a Makefile target)"},` +
+			`"args":{"type":"array","items":{"type":"string"},"description":"for go/golangci-lint: argv after the tool. for 'file': args[0] is the worktree-relative path to assert on"},` +
+			`"must_exit_zero":{"type":"boolean","description":"require exit 0 (target works / lint clean); ignored for 'file'"},` +
+			`"config_validates":{"type":"boolean","description":"require positive proof the tool parsed the intended config"},` +
+			`"config_ok_re":{"type":"string","description":"regexp that MUST match (the output for go/golangci-lint, the file content for 'file')"},` +
+			`"config_fail_re":{"type":"string","description":"regexp that must NOT match (config-load failure, or a mis-wire for 'file')"},` +
+			`"curate_golangci":{"type":"boolean","description":"for golangci-lint: vet the generated .golangci.yml into .orion-golangci.yml (reject plugins) before running; then pass --config .orion-golangci.yml"}` +
+			`},"required":["tool","args"]}}` +
+			`},"required":["intent"]}`),
+		Safety: tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct {
+				Intent string `json:"intent"`
+				Verify []struct {
+					Tool            string   `json:"tool"`
+					Args            []string `json:"args"`
+					MustExitZero    bool     `json:"must_exit_zero"`
+					ConfigValidates bool     `json:"config_validates"`
+					ConfigOKRE      string   `json:"config_ok_re"`
+					ConfigFailRE    string   `json:"config_fail_re"`
+					CurateGolangci  bool     `json:"curate_golangci"`
+				} `json:"verify"`
+			}
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			if strings.TrimSpace(p.Intent) == "" {
+				return "", fmt.Errorf("change_repo: intent is required")
+			}
+			if provider == nil {
+				return "", fmt.Errorf("changing the repo needs a model provider (offline mode cannot generate edits)")
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			root := GitRoot(ctx, cwd)
+			if root == "" {
+				return "", fmt.Errorf("not a git repository")
+			}
+			cases := make([]newbehavior.Case, 0, len(p.Verify))
+			for _, v := range p.Verify {
+				cases = append(cases, newbehavior.Case{Modality: "verify_command", Verify: &newbehavior.VerifyCommand{
+					Tool: v.Tool, Args: v.Args, MustExitZero: v.MustExitZero,
+					ConfigValidates: v.ConfigValidates, ConfigOKRE: v.ConfigOKRE, ConfigFailRE: v.ConfigFailRE,
+					CurateGolangci: v.CurateGolangci,
+				}})
+			}
+			res, cerr := ChangeAndProve(ctx, root, c.Store(), provider, p.Intent, cases)
+			if cerr != nil {
+				return "", cerr
+			}
+			var b strings.Builder
+			fmt.Fprintf(&b, "change_repo: %s\n  branch: %s\n", p.Intent, res.Branch)
+			if len(res.FilesChanged) > 0 {
+				fmt.Fprintf(&b, "  files: %s\n", strings.Join(res.FilesChanged, ", "))
+			}
+			fmt.Fprintf(&b, "  regression: do-no-harm held=%v\n", res.Regression.Held)
+			if res.NewBehavior != nil {
+				fmt.Fprintf(&b, "  verification: pass=%v inconclusive=%v\n", res.NewBehavior.Pass, res.NewBehavior.Inconclusive)
+			}
+			if res.Committed {
+				fmt.Fprintf(&b, "  COMMITTED on %s (review: git diff main..%s)\n", res.Branch, res.Branch)
+			} else {
+				fmt.Fprintf(&b, "  NOT committed — %s\n", res.Reason)
+			}
+			return b.String(), nil
 		},
 	})
 

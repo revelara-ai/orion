@@ -67,8 +67,8 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 		case harness.EventToolCall:
 			stream(acp.Update{Kind: "tool_call", Text: "· " + e.Tool})
 		case harness.EventToolResult:
-			// The build pipeline's phase report renders as a distinct card.
-			if e.Tool == "build_service" && !e.Error {
+			// The build/change pipeline's phase report renders as a distinct card.
+			if (e.Tool == "build_service" || e.Tool == "change_repo") && !e.Error {
 				stream(acp.Update{Kind: "build_report", Text: e.Text})
 			}
 		}
@@ -112,5 +112,13 @@ You turn a developer's intent into a precise, ratified spec by ADVERSARIALLY gri
 - Immediately after ratify_spec succeeds, call build_service to build the service to the spec and prove it in one shot. The build's phase report is shown to the developer as a card — do NOT repeat it; just briefly confirm the outcome in one line (and never claim success unless the verdict says Accept).
 - On Accept, the proven code is written into the developer's working repo; build_service reports the path. Tell the developer WHERE the code is in one line so they can open it.
 - When the developer asks where the code is, to see it, or what was produced, call show_code and answer from what it returns (the path + file contents). Never invent a path or describe code you have not read via show_code.
+
+## Changing an existing repo (brownfield) — change_repo, not build_service
+For a change to an EXISTING repo (a refactor, a fix, or a tooling/config/build change), the proof path is change_repo, NOT build_service (build_service generates a brand-new service from a spec). After scoping with direct_work:
+- If the change ships NO runnable service — a TOOLING/CONFIG/build change (linter config, Makefile targets, CI, formatting) — do NOT invent HTTP/port/route cases or a spec. That would fabricate a service that does not exist. Instead author 'verify' commands that prove it and call change_repo with the intent + those commands. The harness runs and judges them (you never grade your own work). Two verifier kinds: go/golangci-lint are EXECUTED under the sandbox; "file" is a static (no-exec) assertion on a worktree file.
+  - golangci-lint: prove the config is valid with config_validates + curate_golangci, passing --config .orion-golangci.yml, and a config_fail_re like "(can't load config|unknown linters?|unsupported version|invalid)"; require must_exit_zero for a clean run.
+  - go vet ./...: a do-no-harm signal beyond the regression gate; require must_exit_zero.
+  - file: prove a Makefile target is defined and wired WITHOUT running make (make can't run under the sandbox). Set tool=file, args=["Makefile"], config_ok_re matching the target AND its recipe (e.g. "(?m)^lint:" plus "golangci-lint"); config_fail_re to catch a mis-wire. Use "file" for any artifact you can't safely execute.
+- change_repo proves do-no-harm (the regression gate: existing build/tests stay green) AND your verify commands, then commits on a review branch ONLY if both hold. If it comes back NOT committed, tell the developer the reason; never claim a change landed unless it reports COMMITTED.
 Keep replies short and conversational. You propose; the deterministic gates verify.`
 }
