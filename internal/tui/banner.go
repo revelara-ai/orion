@@ -41,36 +41,51 @@ const (
 // wordmark and collapses to a single column on narrow terminals rather than overflowing. It
 // reuses the existing Revelara palette/glyph styles (it does not redefine colors).
 func Render(rep health.Report, id Identity, width int) string {
+	return render(rep, id, width, true)
+}
+
+// RenderInline renders the banner WITHOUT its own outer border, for embedding inside an
+// already-framed pane (the TUI transcript pane provides the frame — boxing again would
+// double-border). width is the available content width.
+func RenderInline(rep health.Report, id Identity, width int) string {
+	return render(rep, id, width, false)
+}
+
+func render(rep health.Report, id Identity, width int, boxed bool) string {
 	if width <= 0 {
 		width = 80
 	}
-	inner := max(min(width-2, 96), 20) // content width inside the border
-
 	full := width >= bannerFullWidth
-
-	var out strings.Builder
-	if full {
-		out.WriteString(bannerStyle.Render(orionWordmark))
-		out.WriteString("\n\n")
+	contentW := max(min(width-2, 96), 20) // inside the border, when boxed
+	if !boxed {
+		contentW = max(min(width, 96), 20)
 	}
 
 	title := orionLabel.Render(fmt.Sprintf("Orion %s · %s", id.Version, id.Branch))
 	left := lipgloss.NewStyle().Width(bannerLeftCol).Render(renderBannerIdentity(id))
 	right := lipgloss.NewStyle().Width(bannerRightCol).Render(renderBannerReadiness(rep))
 
-	var body string
+	var panel string
 	if full {
 		cols := lipgloss.JoinHorizontal(lipgloss.Top, left, lipgloss.NewStyle().Render("   "), right)
-		body = lipgloss.JoinVertical(lipgloss.Left, title, "", cols)
+		panel = lipgloss.JoinVertical(lipgloss.Left, title, "", cols)
 	} else {
-		body = lipgloss.JoinVertical(lipgloss.Left, title, "", right, "", left)
+		panel = lipgloss.JoinVertical(lipgloss.Left, title, "", right, "", left)
 	}
-
 	ok, warn, fail := rep.Summary()
 	summary := dimStyle.Render(fmt.Sprintf("%d/%d ready · %d warning(s) · %d failing · /help for commands", ok, ok+warn+fail, warn, fail))
-	body = lipgloss.JoinVertical(lipgloss.Left, body, "", summary)
+	panel = lipgloss.JoinVertical(lipgloss.Left, panel, "", summary)
 
-	out.WriteString(transPane.Width(inner).Render(body))
+	var out strings.Builder
+	if full {
+		out.WriteString(bannerStyle.Render(orionWordmark))
+		out.WriteString("\n\n")
+	}
+	if boxed {
+		out.WriteString(transPane.Width(contentW).Render(panel))
+	} else {
+		out.WriteString(lipgloss.NewStyle().Width(contentW).Render(panel))
+	}
 	out.WriteString("\n")
 	out.WriteString(orionText.Width(width).Render("Welcome to Orion. Describe an intent, or ask how the build works."))
 	out.WriteString("\n")

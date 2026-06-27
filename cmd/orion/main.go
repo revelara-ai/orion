@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/health"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/proc"
 	"github.com/revelara-ai/orion/internal/tui"
@@ -121,7 +122,15 @@ func run(args []string) int {
 		}
 	}
 
-	if err := tui.Run(orchestrator.NewWithStore(store)); err != nil {
+	// or-gik.3: the TUI launch banner is network-free — a cached (no-Me()) Polaris probe.
+	dataDir, _ := doctorDataDir()
+	bannerReport := health.Probe(health.Options{
+		DataDir:  dataDir,
+		LookPath: exec.LookPath,
+		AgentEnv: os.Getenv("ORION_AGENT"),
+		Polaris:  cachedPolarisCheck,
+	})
+	if err := tui.Run(orchestrator.NewWithStore(store), bannerReport, bannerIdentity()); err != nil {
 		fmt.Fprintln(os.Stderr, "orion:", err)
 		return 1
 	}
