@@ -61,14 +61,28 @@ func TestBannerWordmarkByWidth(t *testing.T) {
 	}
 }
 
-// TestBannerNoOverflow: no rendered line exceeds the requested width, at any width.
+// TestBannerNoOverflow: no rendered line exceeds the requested width, at any width, for both
+// the boxed (CLI) and inline (TUI) renderers.
 func TestBannerNoOverflow(t *testing.T) {
-	for _, w := range []int{50, 64, 80, 92, 100, 120} {
-		out := Render(sampleReport(), sampleIdentity(), w)
-		for _, line := range strings.Split(out, "\n") {
-			if lw := lipgloss.Width(line); lw > w {
-				t.Errorf("width %d: line overflows to %d cols: %q", w, lw, line)
+	for _, render := range []func(health.Report, Identity, int) string{Render, RenderInline} {
+		for _, w := range []int{50, 64, 80, 92, 100, 120} {
+			out := render(sampleReport(), sampleIdentity(), w)
+			for _, line := range strings.Split(out, "\n") {
+				if lw := lipgloss.Width(line); lw > w {
+					t.Errorf("width %d: line overflows to %d cols: %q", w, lw, line)
+				}
 			}
+		}
+	}
+}
+
+// TestRenderInlineContent: the inline (unboxed, for the TUI) banner carries the same content as
+// the boxed one — the only difference is the outer frame.
+func TestRenderInlineContent(t *testing.T) {
+	out := RenderInline(sampleReport(), sampleIdentity(), 100)
+	for _, want := range []string{"Orion 0.0.0-dev+abc1234 · main", "proof harness", "polaris", "Pipeline", "Subsystems", "4/6 ready"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("inline banner missing %q", want)
 		}
 	}
 }

@@ -31,6 +31,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/conductor"
+	"github.com/revelara-ai/orion/internal/health"
 	"github.com/revelara-ai/orion/internal/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 )
@@ -128,12 +129,18 @@ type Conversation struct {
 	pendingPerm   chan acp.PermissionResult
 	quitting      bool
 	brain         string // active brain label (native · model / offline …)
+
+	// Init status banner (or-gik.3): the readiness report + identity, supplied by the launcher
+	// (which owns version/branch + the cached Polaris probe). Rendered as the empty-state body.
+	bannerReport health.Report
+	bannerID     Identity
+	bannerSet    bool
 }
 
 // NewConversation builds the pane bound to a connected ACP client + session.
 func NewConversation(client *ACPClient, sid string, oc *orchestrator.Conductor, gate *programGate) Conversation {
 	ti := textinput.New()
-	ti.Placeholder = "your intent…"
+	ti.Placeholder = "" // blank: the banner already explains what to do (or-gik.3)
 	ti.Prompt = "› "
 	ti.PromptStyle = lipgloss.NewStyle().Foreground(cIndigo)
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(cLavender)
@@ -191,7 +198,7 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.msgs = append(m.msgs, msg{role: "orion", kind: t.u.Kind, text: t.u.Text})
 		if t.u.Kind == "plan" && strings.Contains(t.u.Text, "ratified") {
-			m.input.Placeholder = "new intent…"
+			m.input.Placeholder = ""
 		}
 		m.render()
 		return m, nil
@@ -388,18 +395,24 @@ func (m Conversation) View() string {
 		return "Goodbye.\n"
 	}
 	offline := strings.HasPrefix(m.brain, "offline")
-	body := m.vp.View()
-	if !m.ready || len(m.msgs) == 0 {
-		es := emptyState
-		if offline {
-			es = warnGlyph.Render("⚠ Offline mode (deterministic)") +
-				dimStyle.Render(" — records single values only; it cannot grill or capture conditional behavior.\n   Set ANTHROPIC_API_KEY and restart for the full conversational spec build.\n\n"+emptyState)
-		}
-		body = dimStyle.Render(es)
-	}
 	paneW := m.width - 2
 	if paneW < 1 {
 		paneW = 1 // tiny terminal: degrade narrow rather than overflow the width
+	}
+	body := m.vp.View()
+	if !m.ready || len(m.msgs) == 0 {
+		if m.bannerSet {
+			// or-gik.3: the branded init status banner is the empty-state body (rendered inline
+			// so the transcript pane provides the single frame).
+			body = RenderInline(m.bannerReport, m.bannerID, paneW)
+		} else {
+			es := emptyState
+			if offline {
+				es = warnGlyph.Render("⚠ Offline mode (deterministic)") +
+					dimStyle.Render(" — records single values only; it cannot grill or capture conditional behavior.\n   Set ANTHROPIC_API_KEY and restart for the full conversational spec build.\n\n"+emptyState)
+			}
+			body = dimStyle.Render(es)
+		}
 	}
 
 	// Header: the Polaris identity line + the active brain (amber when offline).
@@ -462,7 +475,7 @@ func (g *programGate) RequestPermission(ctx context.Context, req acp.PermissionR
 
 // Run launches the Conversation pane. It auto-starts the Conductor agent
 // in-process and drives it over an ACP session — no separate conductor command.
-func Run(oc *orchestrator.Conductor) error {
+func Run(oc *orchestrator.Conductor, bannerReport health.Report, bannerID Identity) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -493,6 +506,9 @@ func Run(oc *orchestrator.Conductor) error {
 
 	conv := NewConversation(client, sid, oc, gate)
 	conv.brain = brainLabel
+	conv.bannerReport = bannerReport
+	conv.bannerID = bannerID
+	conv.bannerSet = true
 	p := tea.NewProgram(conv, tea.WithAltScreen())
 	gate.setProgram(p)
 	_, err = p.Run()
