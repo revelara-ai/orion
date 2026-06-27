@@ -117,7 +117,7 @@ func (s *Store) Reindex(ctx context.Context) (int, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT mi.id, mi.content FROM memory_items mi
 		 LEFT JOIN memory_vectors mv ON mv.item_id = mi.id AND mv.embedder_id = ?
-		 WHERE mv.item_id IS NULL`, eid)
+		 WHERE mv.item_id IS NULL AND mi.candidate = 0`, eid)
 	if err != nil {
 		return 0, fmt.Errorf("memory reindex scan: %w", err)
 	}

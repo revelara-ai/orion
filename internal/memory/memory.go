@@ -70,6 +70,7 @@ type Item struct {
 	Heat             float64   // base importance set at write
 	VisitCount       int       // times retrieved-as-relevant (frequency signal)
 	LastAccessed     time.Time // recency signal
+	Candidate        bool      // self-evolution proposal (active=false): excluded from active recall (or-ykz.8)
 }
 
 // Heat model (or-hd3.3): effective heat = base importance decayed by recency since last
@@ -209,6 +210,7 @@ func Open(dir string) (*Store, error) {
 		{"visit_count", `ALTER TABLE memory_items ADD COLUMN visit_count INTEGER NOT NULL DEFAULT 0`},
 		{"security_relevant", `ALTER TABLE memory_items ADD COLUMN security_relevant INTEGER NOT NULL DEFAULT 0`},
 		{"promotion_id", `ALTER TABLE memory_items ADD COLUMN promotion_id TEXT NOT NULL DEFAULT ''`},
+		{"candidate", `ALTER TABLE memory_items ADD COLUMN candidate INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, m := range migrations {
 		if existing[m.col] {
@@ -251,6 +253,10 @@ func (s *Store) Write(ctx context.Context, it Item) (string, error) {
 	if it.SecurityRelevant {
 		secRel = 1
 	}
+	cand := 0
+	if it.Candidate {
+		cand = 1
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	// On conflict the id (= content hash + tier) means the SAME content already exists, so
 	// kind/content/content_hash are unchanged. We refresh only the dynamic signals (heat,
@@ -259,10 +265,10 @@ func (s *Store) Write(ctx context.Context, it Item) (string, error) {
 	// anti-erosion status — that would be a poisoning vector at the trust wall. Intentional
 	// pinning uses Pin(); first-writer-wins for classification.
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO memory_items (id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, created_at, last_accessed_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?)
+		`INSERT INTO memory_items (id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, created_at, last_accessed_at, candidate)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET heat=excluded.heat, last_accessed_at=excluded.last_accessed_at`,
-		id, string(it.Tier), it.Kind, it.Content, it.Hash, pinned, secRel, it.TrustTier, it.Heat, now, now)
+		id, string(it.Tier), it.Kind, it.Content, it.Hash, pinned, secRel, it.TrustTier, it.Heat, now, now, cand)
 	if err != nil {
 		return "", fmt.Errorf("memory write: %w", err)
 	}
@@ -297,7 +303,7 @@ func (s *Store) Retrieve(ctx context.Context, query string, tiers ...Tier) ([]It
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, visit_count, last_accessed_at
-		 FROM memory_items WHERE tier IN (`+strings.Join(placeholders, ",")+`)`, args...)
+		 FROM memory_items WHERE candidate=0 AND tier IN (`+strings.Join(placeholders, ",")+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -631,4 +637,42 @@ func (s *Store) Count(ctx context.Context, tier Tier) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM memory_items WHERE tier=?`, string(tier)).Scan(&n)
 	return n, err
+}
+
+// ListCandidates returns the inactive self-evolution candidates (candidate=true / active=false)
+// in the given tiers — proposals awaiting the SkillEval/activation lifecycle (or-ykz.8, or-lrr).
+// They are excluded from active recall (Retrieve); this is how the lifecycle enumerates them.
+// Trust tier is carried through, so a generation candidate stays quarantined after activation.
+func (s *Store) ListCandidates(ctx context.Context, tiers ...Tier) ([]Item, error) {
+	if len(tiers) == 0 {
+		tiers = []Tier{STM, MTM, LTM}
+	}
+	placeholders := make([]string, len(tiers))
+	args := make([]any, len(tiers))
+	for i, t := range tiers {
+		placeholders[i] = "?"
+		args[i] = string(t)
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, visit_count, last_accessed_at
+		 FROM memory_items WHERE candidate=1 AND tier IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("memory candidates: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var items []Item
+	for rows.Next() {
+		var it Item
+		var pinned, secRel int
+		var la string
+		if err := rows.Scan(&it.ID, &it.Tier, &it.Kind, &it.Content, &it.Hash, &pinned, &secRel, &it.TrustTier, &it.Heat, &it.VisitCount, &la); err != nil {
+			return nil, err
+		}
+		it.Pinned = pinned == 1
+		it.SecurityRelevant = secRel == 1
+		it.Candidate = true
+		it.LastAccessed = parseTS(la)
+		items = append(items, it)
+	}
+	return items, rows.Err()
 }
