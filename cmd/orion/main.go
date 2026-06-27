@@ -130,7 +130,7 @@ func run(args []string) int {
 		AgentEnv: os.Getenv("ORION_AGENT"),
 		Polaris:  cachedPolarisCheck,
 	})
-	if err := tui.Run(orchestrator.NewWithStore(store), bannerReport, bannerIdentity()); err != nil {
+	if err := tui.Run(orchestrator.NewWithStore(store), bannerReport, bannerIdentity(), tuiCommands()); err != nil {
 		fmt.Fprintln(os.Stderr, "orion:", err)
 		return 1
 	}

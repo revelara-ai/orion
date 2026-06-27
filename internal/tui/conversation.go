@@ -135,6 +135,9 @@ type Conversation struct {
 	bannerReport health.Report
 	bannerID     Identity
 	bannerSet    bool
+
+	// commands are the injected admin/management slash-commands (or-dz9).
+	commands []Command
 }
 
 // NewConversation builds the pane bound to a connected ACP client + session.
@@ -264,6 +267,12 @@ func (m *Conversation) handleEnter() tea.Cmd {
 	if text == "" {
 		return nil
 	}
+	// Slash-commands are the always-on admin surface: intercept them BEFORE the in-flight /
+	// permission routing so /status, /doctor, etc. work even mid-turn or while a ratification
+	// is pending (a "/" line must never be read as a y/n answer or a conversational intent).
+	if strings.HasPrefix(text, "/") {
+		return m.handleCommand(text)
+	}
 	// A turn is still processing (and no permission is awaiting an answer): keep
 	// the typed text in the box rather than resetting + silently dropping it. The
 	// spinner already signals "working"; the developer can re-send when it clears.
@@ -362,6 +371,8 @@ func (m Conversation) renderMsg(mm msg, w int) string {
 	case "build_report":
 		card := buildTitle.Render("build — proof") + "\n" + colorizeReport(mm.text)
 		return label + buildCard.Width(cw-4).MarginLeft(2).Render(card)
+	case "command":
+		return label + specCard.Width(cw-4).MarginLeft(2).Render(mm.text)
 	default:
 		return label + orionText.Width(cw).MarginLeft(2).Render(mm.text)
 	}
@@ -475,7 +486,7 @@ func (g *programGate) RequestPermission(ctx context.Context, req acp.PermissionR
 
 // Run launches the Conversation pane. It auto-starts the Conductor agent
 // in-process and drives it over an ACP session — no separate conductor command.
-func Run(oc *orchestrator.Conductor, bannerReport health.Report, bannerID Identity) error {
+func Run(oc *orchestrator.Conductor, bannerReport health.Report, bannerID Identity, commands []Command) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -509,6 +520,7 @@ func Run(oc *orchestrator.Conductor, bannerReport health.Report, bannerID Identi
 	conv.bannerReport = bannerReport
 	conv.bannerID = bannerID
 	conv.bannerSet = true
+	conv.commands = commands
 	p := tea.NewProgram(conv, tea.WithAltScreen())
 	gate.setProgram(p)
 	_, err = p.Run()
