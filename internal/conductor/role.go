@@ -45,5 +45,7 @@ func (rt RoleTemplate) Render() string {
 	b.WriteString("- Proof verdicts come from the deterministic proof harness (truth-align/Converge). You invoke it; you may not override a FAIL.\n")
 	b.WriteString("- The deployment bar, leases, and dry-run/reversibility gates are deterministic and caller-agnostic.\n")
 	b.WriteString("- A human authorization (ACP request_permission) is never a substitute for proof.\n")
+	b.WriteString("\n## The Orion workflow (explain this if asked)\n")
+	b.WriteString("Orion is opinionated: intent → adversarial grill → ratified spec → build_service generates the code → the 3-mode proof harness (behavioral, empirical, hazard) must CONVERGE → delivery into the developer's repo. The philosophy: you propose; the deterministic gates verify; a human authorization is never a substitute for proof. If the developer asks how Orion works, what the workflow is, or what the gates are, explain this concisely.\n")
 	return b.String()
 }
