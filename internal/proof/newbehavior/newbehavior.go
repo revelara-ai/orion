@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/revelara-ai/orion/internal/proof/proofexec"
 	"github.com/revelara-ai/orion/internal/proof/safeenv"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 )
@@ -53,12 +54,35 @@ type Command struct {
 	ExpectStdout string
 }
 
+// VerifyCommand is the verify_command modality: prove a DECLARED verification command (e.g.
+// `golangci-lint config verify`, `make -n lint`, `go vet ./...`) runs and demonstrably did what
+// it claimed — for changes that ship NO runnable service (tooling/config: linter config,
+// Makefile targets, CI). The argv is RATIFIED INPUT (the oracle), authored by the conductor and
+// never inferred from the generated files; it runs under the allowlisted, sandboxed verifier
+// (proofexec.RunTool — go | golangci-lint | make -n only, secret-scrubbed, net+FS denied).
+// Unlike Command (a built binary's runtime behavior), this proves a tooling obligation.
+type VerifyCommand struct {
+	Tool string   // argv[0]; MUST be on proofexec's allowlist (go | golangci-lint | make)
+	Args []string // argv[1:]; for make, MUST start with -n (dry-run; recipes never execute)
+
+	MustExitZero bool // when set, pass requires exit == 0 (target works / lint clean)
+
+	// ConfigValidates, when set, requires POSITIVE evidence the tool parsed + used the intended
+	// config (not a silent default fallback): ConfigOKRE MUST match the combined output and
+	// ConfigFailRE must NOT. Checked INDEPENDENTLY of the exit code, so a tool that ran clean
+	// while ignoring the config does NOT pass.
+	ConfigValidates bool
+	ConfigOKRE      string // regexp that MUST match stdout+stderr
+	ConfigFailRE    string // regexp that must NOT match (config-load failure)
+}
+
 // Case is one ratified new-behavior obligation.
 type Case struct {
 	ID       string // content-addressed; derived from the payload when empty
-	Modality string // "synth_test" (slice 1a) | "command" (slice 1b)
+	Modality string // "synth_test" | "command" | "verify_command"
 	Synth    *SynthTest
 	Command  *Command
+	Verify   *VerifyCommand
 }
 
 const synthTestFile = "orion_newbehavior_test.go"
@@ -74,6 +98,11 @@ func (c Case) withID() Case {
 		payload = "synth\x00" + c.Synth.Pkg + "\x00" + c.Synth.Call + "\x00" + c.Synth.Want
 	case c.Command != nil:
 		payload = "command\x00" + strings.Join(c.Command.Assert, " ") + "\x00" + c.Command.ExpectStdout + "\x00" + strconv.Itoa(c.Command.ExpectExit)
+	case c.Verify != nil:
+		v := c.Verify
+		payload = "verify\x00" + v.Tool + "\x00" + strings.Join(v.Args, " ") + "\x00" +
+			strconv.FormatBool(v.MustExitZero) + "\x00" + strconv.FormatBool(v.ConfigValidates) + "\x00" +
+			v.ConfigOKRE + "\x00" + v.ConfigFailRE
 	}
 	h := sha256.Sum256([]byte(c.Modality + "\x00" + payload))
 	c.ID = hex.EncodeToString(h[:])[:12]
@@ -110,6 +139,15 @@ func ProveNewBehavior(ctx context.Context, artifactDir string, cases []Case) (tr
 			st, diag := proveCommand(ctx, artifactDir, *c.Command)
 			mr.Obligations[c.ID] = st
 			fmt.Fprintf(&out, "command %s: %s\n", c.ID, diag)
+		case "verify_command":
+			if c.Verify == nil {
+				continue
+			}
+			c = c.withID()
+			ids = append(ids, c.ID)
+			st, diag := proveVerify(ctx, artifactDir, *c.Verify)
+			mr.Obligations[c.ID] = st
+			fmt.Fprintf(&out, "verify %s: %s\n", c.ID, diag)
 		}
 	}
 
@@ -179,6 +217,44 @@ func proveCommand(ctx context.Context, dir string, c Command) (truthalign.Obliga
 	passed := exit == c.ExpectExit && stdoutMatches(stdout, c.ExpectStdout)
 	return truthalign.ObligationStatus{Executed: true, Passed: passed},
 		fmt.Sprintf("assert %v exit=%d(want %d) stdout=%q stderr=%q", c.Assert, exit, c.ExpectExit, clip(stdout, 300), clip(stderr, 300))
+}
+
+// proveVerify runs a DECLARED verification command under the allowlisted, sandboxed verifier
+// (proofexec.RunTool — secret-scrubbed env, bwrap net+FS deny) and reports whether it satisfies
+// the ratified expectation. MustExitZero gates on the exit code; ConfigValidates INDEPENDENTLY
+// requires positive evidence (ConfigOKRE matched, ConfigFailRE not) that the tool actually
+// parsed the intended config — so a tool that silently fell back to defaults (exit 0, config
+// ignored) does NOT pass. A policy/launch failure (disallowed tool, no sandbox, missing binary)
+// is Executed=false: the obligation could not be exercised, so the change is not certified.
+func proveVerify(ctx context.Context, dir string, v VerifyCommand) (truthalign.ObligationStatus, string) {
+	stdout, stderr, exit, err := proofexec.RunTool(ctx, dir, v.Tool, v.Args...)
+	if err != nil {
+		return truthalign.ObligationStatus{Executed: false}, "verifier refused/failed to launch: " + err.Error()
+	}
+	out := stdout + stderr
+	passed := true
+	if v.MustExitZero && exit != 0 {
+		passed = false
+	}
+	if v.ConfigValidates {
+		if v.ConfigFailRE != "" && reMatch(v.ConfigFailRE, out) {
+			passed = false
+		}
+		if v.ConfigOKRE != "" && !reMatch(v.ConfigOKRE, out) {
+			passed = false
+		}
+	}
+	return truthalign.ObligationStatus{Executed: true, Passed: passed},
+		fmt.Sprintf("%s %v exit=%d configValidates=%v passed=%v: %s", v.Tool, v.Args, exit, v.ConfigValidates, passed, clip(out, 300))
+}
+
+// reMatch reports whether pattern (a regexp) matches s; a malformed pattern never matches.
+func reMatch(pattern, s string) bool {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return false
+	}
+	return re.MatchString(s)
 }
 
 // runArgv runs a single argv under safeenv, returning stdout, stderr, and the exit code.
