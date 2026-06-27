@@ -92,11 +92,13 @@ func TestInjectedInstructionRenderedInert(t *testing.T) {
 	if !strings.Contains(rendered, "UNTRUSTED") {
 		t.Fatalf("render lacks the untrusted quarantine marker:\n%s", rendered)
 	}
-	// The injection must appear only AFTER the untrusted marker, not before.
-	idxMarker := strings.Index(rendered, "UNTRUSTED")
-	idxInj := strings.Index(rendered, "IGNORE ALL PRIOR")
-	if idxInj < idxMarker {
-		t.Fatal("injected text appears before the untrusted quarantine marker")
+	// or-mkb: the injected instruction is ACTIVELY neutralized (redacted) in the rendered
+	// prompt, not merely wrapped — the verbatim instruction must not survive to the prompt.
+	if strings.Contains(rendered, "IGNORE ALL PRIOR") {
+		t.Fatalf("injected instruction was not neutralized in the rendered prompt:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "redacted") {
+		t.Fatalf("expected a redaction marker for the neutralized injection:\n%s", rendered)
 	}
 
 	// Proof domain must never receive the generation-domain item.
