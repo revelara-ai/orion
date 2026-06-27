@@ -12,6 +12,7 @@ import (
 	"github.com/revelara-ai/orion/internal/agentruntime"
 	"github.com/revelara-ai/orion/internal/conductor"
 	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/notify"
 	"github.com/revelara-ai/orion/internal/sandbox"
 )
 
@@ -42,6 +43,13 @@ func cmdRun(_ []string) int {
 		return 1
 	}
 	fmt.Printf("run: task %s verdict=%s closed=%v tier=%s delivery=%s\n", res.TaskID, res.Verdict, res.Closed, res.Tier, res.Delivery)
+	// or-ykz.18: fire an out-of-band notification on run completion/escalation (the 3 a.m.
+	// test). Fire-and-forget: a delivery miss is logged, never fails the run.
+	kind := "completed"
+	if res.Delivery == "escalate" {
+		kind = "escalated"
+	}
+	_ = notify.Notify(ctx, notify.Event{Kind: kind, Task: res.TaskID, Verdict: string(res.Verdict), Detail: res.Delivery})
 	return 0
 }
 
