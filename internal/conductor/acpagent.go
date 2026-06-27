@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -108,7 +109,8 @@ func (ca *ConductorAgent) handleAnswer(ctx context.Context, st *convoState, text
 		stream(acp.Update{Kind: "agent_message", Text: "That one needs an answer — " + od.Question})
 		return end
 	}
-	if err := ca.conductor.RecordAnswer(ctx, od.Key, text); err != nil {
+	answer := resolveChoice(od, text) // or-ykz.7: numbered/value choice → canonical option value
+	if err := ca.conductor.RecordAnswer(ctx, od.Key, answer); err != nil {
 		stream(acp.Update{Kind: "agent_message", Text: "couldn't record that — " + err.Error() + "\n(this offline conductor records single values only; set ANTHROPIC_API_KEY and restart for the full grill that captures conditional behavior like a tz parameter.)"})
 		return end
 	}
@@ -169,7 +171,38 @@ func (ca *ConductorAgent) handleReview(ctx context.Context, st *convoState, text
 // askOne streams the current question — one at a time, with guidance.
 func (ca *ConductorAgent) askOne(st *convoState, stream func(acp.Update)) {
 	od := st.pending[0]
-	stream(acp.Update{Kind: "agent_message", Text: fmt.Sprintf("[%s] %s   (%d to answer)", od.Dimension, od.Question, len(st.pending))})
+	msg := fmt.Sprintf("[%s] %s   (%d to answer)", od.Dimension, od.Question, len(st.pending))
+	// or-ykz.7: enumerable decisions render as a structured multiple-choice prompt.
+	if len(od.Options) > 0 {
+		var b strings.Builder
+		b.WriteString(msg)
+		for i, opt := range od.Options {
+			fmt.Fprintf(&b, "\n  %d) %s", i+1, opt)
+		}
+		b.WriteString("\n(reply with a number or the value)")
+		msg = b.String()
+	}
+	stream(acp.Update{Kind: "agent_message", Text: msg})
+}
+
+// resolveChoice maps a reply to an enumerable OpenDecision's canonical value (or-ykz.7): a
+// 1-based index ("2") selects that option; a reply matching an option (case-insensitively) is
+// canonicalized to it; anything else — or any free-text decision — is recorded verbatim, so
+// the downstream gate still validates/re-asks an out-of-range answer.
+func resolveChoice(od completeness.OpenDecision, reply string) string {
+	r := strings.TrimSpace(reply)
+	if len(od.Options) == 0 {
+		return r
+	}
+	if n, err := strconv.Atoi(r); err == nil && n >= 1 && n <= len(od.Options) {
+		return od.Options[n-1]
+	}
+	for _, opt := range od.Options {
+		if strings.EqualFold(r, opt) {
+			return opt
+		}
+	}
+	return r
 }
 
 // presentSpec assembles the spec (without accepting it) and streams it for
