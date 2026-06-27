@@ -79,6 +79,8 @@ func run(args []string) int {
 			return cmdSkills(args[1:])
 		case "agents":
 			return cmdAgents(args[1:])
+		case "evolve":
+			return cmdEvolve(args[1:])
 		default:
 			// Unknown subcommand. The non-interactive loop-control surface is
 			// implemented by later tasks; until then an unknown command is a hard
