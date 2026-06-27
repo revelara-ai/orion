@@ -38,13 +38,27 @@ type RequiredDecision struct {
 	Fallback  string // human-readable fallback/default when unspecified
 }
 
-// OpenDecision is an unresolved RequiredDecision surfaced to the developer.
+// OpenDecision is an unresolved RequiredDecision surfaced to the developer. When Options is
+// non-empty the decision is enumerable and is presented as a structured multiple-choice
+// prompt (or-ykz.7); otherwise it is free text.
 type OpenDecision struct {
 	Key       string    `json:"key"`
 	Dimension Dimension `json:"dimension"`
 	Question  string    `json:"question"`
 	Fallback  string    `json:"fallback,omitempty"`
+	Options   []string  `json:"options,omitempty"`
 }
+
+// enumerableOptions maps a decision key to its enumerable option set, driving the structured
+// multiple-choice clarify (or-ykz.7). A key absent here is free-text. Values are the canonical
+// recorded form (what the contract + proof pipeline consume), e.g. response_format ∈ {json,text}.
+var enumerableOptions = map[string][]string{
+	"response_format": {"json", "text"},
+	"scale_profile":   {"low", "medium", "high"},
+}
+
+// OptionsFor returns the enumerable option set for a decision key (nil if free-text).
+func OptionsFor(key string) []string { return enumerableOptions[key] }
 
 // Analyzer computes open decisions for a project type. It holds no LLM and no
 // state beyond its static checklist — the analysis is a pure function of
@@ -122,6 +136,7 @@ func (a *Analyzer) Analyze(intent string, answers map[string]string) []OpenDecis
 			Dimension: rd.Dimension,
 			Question:  rd.Question,
 			Fallback:  rd.Fallback,
+			Options:   enumerableOptions[rd.Key],
 		})
 	}
 	return open
