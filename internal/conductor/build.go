@@ -340,6 +340,7 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	var feedback string
 	attempts := 0
 	var lastHash string
+	var lastNarrative string // the latest attempt's agent self-report (or-7mr), quarantined on failure
 	for attempt := 1; attempt <= maxBuildAttempts; attempt++ {
 		genDetail := ""
 		if attempt > 1 {
@@ -358,6 +359,7 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 			break
 		}
 		lastHash = art.ContentHash
+		lastNarrative = art.Narrative
 		if _, perr := sandbox.PersistArtifact(ctx, store, taskID, art); perr != nil {
 			return taskResult{}, fmt.Errorf("persist artifact: %w", perr)
 		}
@@ -453,10 +455,10 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	if mem != nil {
 		_ = rememberOutcome(ctx, mem, taskID, report)
 		// or-hd3.5: on a non-Accept verdict, capture WHY it failed so the next attempt
-		// avoids it — proof facts trusted, any agent narrative quarantined. The Generator
-		// returns only the artifact today (no agent self-report), so the narrative is empty
-		// until that source is wired (or-7mr); the trusted failure fact is written now.
-		_ = rememberFailure(ctx, mem, taskID, report, "")
+		// avoids it — proof facts trusted, the agent's self-report quarantined. or-7mr: the
+		// last attempt's agent narrative (empty for the deterministic fixture) is the
+		// untrusted half; rememberFailure tags it generation-tier so it can never reach proof.
+		_ = rememberFailure(ctx, mem, taskID, report, lastNarrative)
 		// or-ykz.8: propose a self-evolution candidate from a passing run (generation-tier,
 		// active=false — quarantined AND excluded from recall until the lifecycle activates it).
 		_ = proposeCandidate(ctx, mem, taskID, report)

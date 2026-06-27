@@ -27,6 +27,11 @@ type GenRequest struct {
 type Artifact struct {
 	Dir   string
 	Files []string
+	// Narrative is the agent's own self-report (its streamed reasoning/messages) during the
+	// turn. It is an UNTRUSTED generation-domain artifact — when a build fails it is recorded
+	// quarantined (generation-tier) so the next attempt sees "what the agent thought went
+	// wrong" without it ever reaching a proof prompt (or-7mr / or-hd3.5).
+	Narrative string
 }
 
 // Generator turns a GenRequest into code on disk.
@@ -73,7 +78,17 @@ func (g AgentGenerator) Generate(ctx context.Context, req GenRequest, dir string
 	if err != nil {
 		return Artifact{}, fmt.Errorf("generator: session/new: %w", err)
 	}
-	if _, err := sess.Prompt(ctx, sid, RenderPrompt(req), func(acp.Update) {}); err != nil {
+	// Accumulate the agent's streamed text (its self-report) as the narrative — previously
+	// discarded with an empty callback (or-7mr).
+	var narrative strings.Builder
+	if _, err := sess.Prompt(ctx, sid, RenderPrompt(req), func(u acp.Update) {
+		if t := strings.TrimSpace(u.Text); t != "" {
+			if narrative.Len() > 0 {
+				narrative.WriteByte('\n')
+			}
+			narrative.WriteString(t)
+		}
+	}); err != nil {
 		return Artifact{}, fmt.Errorf("generator: prompt: %w", err)
 	}
 
@@ -84,7 +99,7 @@ func (g AgentGenerator) Generate(ctx context.Context, req GenRequest, dir string
 	if len(files) == 0 {
 		return Artifact{}, fmt.Errorf("generator: agent produced no files")
 	}
-	return Artifact{Dir: dir, Files: files}, nil
+	return Artifact{Dir: dir, Files: files, Narrative: narrative.String()}, nil
 }
 
 // RenderPrompt renders the GenRequest into agent instructions. The agent writes

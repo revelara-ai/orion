@@ -52,6 +52,9 @@ func (g GenSpec) Entry() string {
 type GeneratedArtifact struct {
 	Path        string
 	ContentHash string
+	// Narrative is the generator's untrusted self-report (empty for the deterministic fixture).
+	// On a failed build it is recorded quarantined (generation-tier) for the next attempt (or-7mr).
+	Narrative string
 }
 
 // GenerateTimeServiceFixture writes a real, compilable Go HTTP time-service into
