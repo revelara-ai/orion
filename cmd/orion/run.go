@@ -120,10 +120,16 @@ func generateService(ctx context.Context, gs sandbox.GenSpec, buildDir, feedback
 		Module:      "orion-generated/svc",
 		Route:       gs.Route, Port: gs.Port, Format: gs.Format, TimeZone: gs.TimeZone,
 	}
-	if _, err := gen.Generate(ctx, req, buildDir); err != nil {
+	agentArt, err := gen.Generate(ctx, req, buildDir)
+	if err != nil {
 		return sandbox.GeneratedArtifact{}, fmt.Errorf("agent generation: %w", err)
 	}
-	return sandbox.ArtifactFromDir(buildDir)
+	art, err := sandbox.ArtifactFromDir(buildDir)
+	if err != nil {
+		return art, err
+	}
+	art.Narrative = agentArt.Narrative // carry the agent's self-report (or-7mr)
+	return art, nil
 }
 
 // configuredAgent returns the opt-in vendor agent preset (ORION_AGENT=<name>) when
