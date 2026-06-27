@@ -206,4 +206,20 @@ func (r *Registry) Catalog() string {
 	return b.String()
 }
 
+// CatalogForGeneration renders the catalog for injection into a code generator's prompt: like
+// Catalog, but each line carries the skill's SKILL.md path so a file-read-capable generator can
+// ACTIVATE a skill (read its full instructions) per agentskills.io progressive disclosure.
+func (r *Registry) CatalogForGeneration() string {
+	skills := r.List()
+	if len(skills) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("# AVAILABLE SKILLS — read a skill's file for its full instructions only when its description matches the task\n")
+	for _, s := range skills {
+		fmt.Fprintf(&b, "- %s — %s (load: %s)\n", s.Name, oneLine(s.Description), s.Path)
+	}
+	return b.String()
+}
+
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }

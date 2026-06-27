@@ -319,6 +319,16 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		}
 	}
 
+	// Surface discovered skills (user-scope + self-evolved) to the generator as available
+	// capabilities, neutralized against injection (skill descriptions may be untrusted). The
+	// generator can read a skill's file to activate it (agentskills.io progressive disclosure).
+	if cat := skillCatalogForGen(store); cat != "" {
+		if gs.Context != "" {
+			gs.Context += "\n\n"
+		}
+		gs.Context += cat
+	}
+
 	// Bounded refinement loop (Manifesto): generate → prove → if the verdict is not
 	// Accept, run a CAUSAL analysis of the failing cases + feed it back so the next
 	// attempt FIXES the specific failures — repeating until Accept or the attempt
