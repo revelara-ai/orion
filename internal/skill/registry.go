@@ -21,10 +21,12 @@ const (
 // skipDirs are never descended during discovery.
 var skipDirs = map[string]bool{".git": true, "node_modules": true, "vendor": true}
 
-// Registry is an in-memory set of loaded skills keyed by name, plus the non-fatal diagnostics
-// gathered while loading (agentskills.io discovery + tier-1 catalog).
+// Registry is an in-memory set of loaded skills keyed by name, the discovery scopes it was
+// loaded from (so it can hot-reload), plus the non-fatal diagnostics gathered while loading
+// (agentskills.io discovery + tier-1 catalog).
 type Registry struct {
 	skills   map[string]Skill
+	scopes   []Scope
 	warnings []string
 }
 
@@ -38,6 +40,13 @@ func New() *Registry { return &Registry{skills: map[string]Skill{}} }
 // project scope last to get the standard project-over-user precedence. A missing root is not
 // an error (just no skills there); per-skill parse failures are recorded as warnings.
 func (r *Registry) LoadDir(root string, trust Trust) (int, error) {
+	r.scopes = append(r.scopes, Scope{Root: root, Trust: trust})
+	return r.scan(root, trust)
+}
+
+// scan loads skills under root at the given trust WITHOUT recording the scope, so Reload can
+// re-run an already-recorded scope without duplicating it.
+func (r *Registry) scan(root string, trust Trust) (int, error) {
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() {
 		return 0, nil
@@ -75,6 +84,12 @@ func (r *Registry) LoadDir(root string, trust Trust) (int, error) {
 			return nil
 		}
 		if existing, exists := r.skills[sk.Name]; exists {
+			// A proof-trust skill is immutable and cannot be shadowed by a generation skill of
+			// the same name (invariant 8) — regardless of load order.
+			if existing.Trust == TrustProof && sk.Trust != TrustProof {
+				r.warnings = append(r.warnings, fmt.Sprintf("skill %q at %s ignored — a proof-trust skill of that name is immutable", sk.Name, sk.Path))
+				return nil
+			}
 			r.warnings = append(r.warnings, fmt.Sprintf("skill %q at %s shadows earlier load at %s", sk.Name, sk.Path, existing.Path))
 		}
 		r.skills[sk.Name] = sk
@@ -147,6 +162,32 @@ func (r *Registry) List() []Skill {
 
 // Warnings returns the non-fatal diagnostics accumulated during loading.
 func (r *Registry) Warnings() []string { return r.warnings }
+
+// Reload hot-reloads the registry IN PLACE (or-ykz.3, the Pi /reload analogue): it re-scans
+// the recorded GENERATION-trust scopes — picking up edited, added, and removed generation
+// skills — while preserving proof-trust skills untouched. Proof skills are immutable and are
+// never re-read (invariant 8). The *Registry instance is preserved, so any session state that
+// holds it keeps working; only the generation skill set is refreshed. Diagnostics are reset to
+// reflect the fresh scan.
+func (r *Registry) Reload() error {
+	kept := make(map[string]Skill, len(r.skills))
+	for name, s := range r.skills {
+		if s.Trust == TrustProof {
+			kept[name] = s
+		}
+	}
+	r.skills = kept
+	r.warnings = nil
+	for _, sc := range r.scopes {
+		if sc.Trust == TrustProof {
+			continue // proof scopes are immutable — never re-scanned
+		}
+		if _, err := r.scan(sc.Root, sc.Trust); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // Catalog renders the tier-1 progressive-disclosure catalog — one "name: description" line
 // per skill (~50-100 tokens each) — for injection into the model's context so it knows which

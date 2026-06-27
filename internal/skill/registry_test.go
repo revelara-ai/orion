@@ -117,11 +117,13 @@ func TestCollisionPrecedence(t *testing.T) {
 	writeSkillDir(t, projRoot, "dup", md("dup", "project version"))
 
 	r := New()
-	_, _ = r.LoadDir(userRoot, TrustProof)      // user/built-in scope first
+	// Same trust tier on both scopes: precedence is pure last-wins (the cross-tier proof-wins
+	// rule is covered by TestProofSkillNotShadowedByGeneration).
+	_, _ = r.LoadDir(userRoot, TrustGeneration) // user scope first
 	_, _ = r.LoadDir(projRoot, TrustGeneration) // project scope last → wins
 	s, _ := r.Get("dup")
-	if s.Description != "project version" || s.Trust != TrustGeneration {
-		t.Fatalf("project scope should win the collision, got desc=%q trust=%q", s.Description, s.Trust)
+	if s.Description != "project version" {
+		t.Fatalf("project scope should win the collision, got desc=%q", s.Description)
 	}
 	found := false
 	for _, w := range r.Warnings() {
