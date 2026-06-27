@@ -35,7 +35,7 @@ func TestHeatRetrieveBumpsAndEvictionKeepsHotter(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
-		if _, err := s.Retrieve(ctx, "alpha", MTM); err != nil {
+		if err := s.RecordAccess(ctx, idA); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -89,25 +89,31 @@ func firstID(items []Item) string {
 // TestRetrieveReturnsBumpedValuesSameCall (or-hd3.3 review F1): the Item values returned
 // by the SAME matching Retrieve that records the access must reflect the bump, not the
 // stale pre-bump state.
-func TestRetrieveReturnsBumpedValuesSameCall(t *testing.T) {
+// TestRecordAccessBumpsVisitCount (or-vx8): Retrieve is read-only; RecordAccess is what bumps
+// visit_count + last_accessed (the caller-controlled heat feedback).
+func TestRecordAccessBumpsVisitCount(t *testing.T) {
 	ctx := context.Background()
 	s := openMem(t)
 	id, err := s.Write(ctx, Item{Tier: MTM, Kind: KindPattern, Content: "alpha topic", Heat: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Retrieve(ctx, "alpha", MTM)
+	// Retrieve must NOT bump.
+	if got, _ := s.Retrieve(ctx, "alpha", MTM); len(got) != 1 || got[0].VisitCount != 0 {
+		t.Fatalf("Retrieve must be read-only (no bump); got VisitCount=%d", got[0].VisitCount)
+	}
+	if err := s.RecordAccess(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Retrieve(ctx, "", MTM)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].ID != id {
-		t.Fatalf("want 1 item %s, got first=%s (n=%d)", id, firstID(got), len(got))
-	}
-	if got[0].VisitCount != 1 {
-		t.Fatalf("returned VisitCount must reflect the bump applied this call; want 1, got %d", got[0].VisitCount)
+	if len(got) != 1 || got[0].VisitCount != 1 {
+		t.Fatalf("RecordAccess should bump visit_count to 1; got %d", got[0].VisitCount)
 	}
 	if got[0].LastAccessed.IsZero() {
-		t.Fatal("returned LastAccessed must be set after the bump")
+		t.Fatal("RecordAccess should set last_accessed")
 	}
 }
 
@@ -134,7 +140,8 @@ func TestRankRelevanceBeatsHugeBaseHeat(t *testing.T) {
 
 // TestBumpSkipsPinnedItems (or-hd3.3 review F8): pinned anti-erosion items are never
 // mutated by the retrieve bump.
-func TestBumpSkipsPinnedItems(t *testing.T) {
+// TestRecordAccessSkipsPinned (or-vx8): RecordAccess never bumps a pinned anti-erosion item.
+func TestRecordAccessSkipsPinned(t *testing.T) {
 	ctx := context.Background()
 	s := openMem(t)
 	id, err := s.Write(ctx, Item{Tier: LTM, Kind: KindSpec, Content: "alpha spec", Heat: 1, Pinned: true})
@@ -142,7 +149,7 @@ func TestBumpSkipsPinnedItems(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
-		if _, err := s.Retrieve(ctx, "alpha", LTM); err != nil {
+		if err := s.RecordAccess(ctx, id); err != nil {
 			t.Fatal(err)
 		}
 	}
