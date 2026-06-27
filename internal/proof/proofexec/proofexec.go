@@ -7,6 +7,7 @@ package proofexec
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -17,6 +18,12 @@ import (
 	"github.com/revelara-ai/orion/internal/proof/safeenv"
 	"github.com/revelara-ai/orion/internal/sandbox"
 )
+
+// allowedTools is the verification-command allowlist for RunTool: argv[0] MUST be a key here.
+// `make` is permitted ONLY in dry-run (-n) form (a recipe is arbitrary shell and is never
+// executed); nothing else (no bash/sh) is allowed. The argv is constructed by Orion, never
+// lifted from a generated file.
+var allowedTools = map[string]bool{"go": true, "golangci-lint": true, "make": true}
 
 // isolation selects the sandbox backend. "auto" uses bwrap when available and
 // falls back to the (unisolated, logged) "none" backend otherwise. Overridable
@@ -51,32 +58,11 @@ func goRoot() string {
 	return goRootCached
 }
 
-// GoToolchain runs `go <goArgs...>` for proof with workdir as the cwd (and the
-// only writable path under isolation), returning combined stdout+stderr and the
-// process exit code. A non-zero exit is returned via exitCode, not err; err is
-// reserved for failures to launch the toolchain at all.
-//
-// Inside the sandbox the toolchain gets: a read-only bind of GOROOT (the `go`
-// binary + stdlib + tools), GOCACHE/GOPATH redirected INTO the writable workdir,
-// GOTOOLCHAIN=local + GOPROXY=off + CGO_ENABLED=0 (no network, no C toolchain),
-// and a scrubbed env (no host secrets). Network egress is denied by default, so
-// untrusted code under proof can neither phone home nor pull an unverified
-// dependency.
-func GoToolchain(ctx context.Context, workdir string, goArgs ...string) (output string, exitCode int, err error) {
-	be, err := sandbox.New(isolation())
-	if err != nil {
-		return "", 0, err
-	}
-	if be.Name() == "none" {
-		warnNoneOnce.Do(func() {
-			slog.Warn("proofexec: no namespace sandbox available; proof execs run with a scrubbed env but WITHOUT network/filesystem isolation",
-				"backend", be.Name())
-		})
-	}
-
-	root := goRoot()
+// toolEnv builds the hermetic, secret-scrubbed environment shared by every sandboxed tool
+// exec. GOPROXY=off + GOTOOLCHAIN=local + the scrubbed allowlist mean no network and no host
+// secrets; GOCACHE/GOPATH/HOME land inside the writable workdir.
+func toolEnv(root, workdir string) map[string]string {
 	env := safeenv.Map() // scrubbed allowlist (no secrets)
-	// Toolchain must be self-contained and hermetic inside the sandbox.
 	env["PATH"] = filepath.Join(root, "bin") + ":/usr/bin:/bin"
 	env["HOME"] = workdir
 	env["GOROOT"] = root
@@ -86,13 +72,73 @@ func GoToolchain(ctx context.Context, workdir string, goArgs ...string) (output 
 	env["GOPROXY"] = "off"       // no module downloads under proof
 	env["GOFLAGS"] = ""
 	env["CGO_ENABLED"] = "0" // no C toolchain needed inside the sandbox
+	return env
+}
+
+// RunTool runs an ALLOWLISTED verification tool (go | golangci-lint | make -n) over workdir
+// under the same sandbox posture as the go toolchain: a scrubbed/hermetic env (toolEnv), a
+// read-only bind of GOROOT, caches inside the writable workdir, and default-deny network +
+// filesystem isolation. For a non-go tool it resolves the binary from the TRUSTED host
+// (exec.LookPath) and read-only-binds it — never trusting a generated file — and FAILS CLOSED
+// under the unisolated "none" backend (running an external tool over generated content without
+// namespace isolation is refused). A non-zero exit is returned via exitCode; err is reserved
+// for policy violations (non-allowlisted tool, non-dry-run make, missing binary/sandbox) and
+// launch failures.
+func RunTool(ctx context.Context, workdir, tool string, args ...string) (stdout, stderr string, exitCode int, err error) {
+	if !allowedTools[tool] {
+		return "", "", -1, fmt.Errorf("proofexec: tool %q is not on the verification allowlist", tool)
+	}
+	if tool == "make" && (len(args) == 0 || args[0] != "-n") {
+		return "", "", -1, fmt.Errorf("proofexec: make is allowed only in dry-run (-n) form; recipes are never executed")
+	}
+	be, err := sandbox.New(isolation())
+	if err != nil {
+		return "", "", -1, err
+	}
+
+	root := goRoot()
+	roBinds := []string{root}
+	var argv []string
+	if tool == "go" {
+		if be.Name() == "none" {
+			warnNoneOnce.Do(func() {
+				slog.Warn("proofexec: no namespace sandbox available; proof execs run with a scrubbed env but WITHOUT network/filesystem isolation",
+					"backend", be.Name())
+			})
+		}
+		argv = append([]string{filepath.Join(root, "bin", "go")}, args...)
+	} else {
+		// A non-go tool runs over GENERATED, untrusted content: require a real namespace
+		// sandbox, and bind the binary resolved on the trusted host (never from the worktree).
+		if be.Name() == "none" {
+			return "", "", -1, fmt.Errorf("proofexec: refusing to run %q without a namespace sandbox (install bwrap or set ORION_SANDBOX_ISOLATION=bwrap)", tool)
+		}
+		bin, lerr := exec.LookPath(tool)
+		if lerr != nil {
+			return "", "", -1, fmt.Errorf("proofexec: %q not found on host: %w", tool, lerr)
+		}
+		if real, serr := filepath.EvalSymlinks(bin); serr == nil {
+			bin = real
+		}
+		roBinds = append(roBinds, bin)
+		argv = append([]string{bin}, args...)
+	}
 
 	res, runErr := be.Run(ctx, sandbox.Spec{
 		Workdir:  workdir,
-		Argv:     append([]string{filepath.Join(root, "bin", "go")}, goArgs...),
-		Env:      env,
-		ROBinds:  []string{root},
-		AllowNet: false, // default-deny egress — the security property of this path
+		Argv:     argv,
+		Env:      toolEnv(root, workdir),
+		ROBinds:  roBinds,
+		AllowNet: false, // default-deny egress — never true on this path
 	})
-	return res.Stdout + res.Stderr, res.ExitCode, runErr
+	return res.Stdout, res.Stderr, res.ExitCode, runErr
+}
+
+// GoToolchain runs `go <goArgs...>` for proof with workdir as the cwd (and the only writable
+// path under isolation), returning combined stdout+stderr and the process exit code. It is a
+// thin wrapper over RunTool's "go" arm (sandboxed, scrubbed, network-denied). A non-zero exit
+// is returned via exitCode, not err; err is reserved for failures to launch the toolchain.
+func GoToolchain(ctx context.Context, workdir string, goArgs ...string) (output string, exitCode int, err error) {
+	stdout, stderr, code, err := RunTool(ctx, workdir, "go", goArgs...)
+	return stdout + stderr, code, err
 }
