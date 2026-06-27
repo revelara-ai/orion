@@ -244,6 +244,11 @@ func (s *Store) Write(ctx context.Context, it Item) (string, error) {
 	// the id to the tier would make a promoted item's id lie about its tier and could create
 	// a same-content duplicate across tiers. One content ⇒ one item; its tier is whatever
 	// column it currently holds.
+	//
+	// The 16-hex (64-bit) truncation is an INTENTIONAL trade-off (or-wq5): a 64-bit space has a
+	// birthday-collision probability of ~10^-9 at ~190k distinct items — far beyond the bounded
+	// tier capacities (MTM 200, LTM 1000) — so a collision (two different contents sharing an id,
+	// silently coalescing) is negligible. Widen the prefix if the corpus ever grows unbounded.
 	id := it.Hash[:16]
 	pinned := 0
 	if it.Pinned {
@@ -447,27 +452,28 @@ func (s *Store) summarizeForEviction(ctx context.Context, tier Tier, keep int) (
 		keep = 0
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, kind, content, content_hash, trust_tier, heat, visit_count, last_accessed_at
+		`SELECT id, kind, content, content_hash, trust_tier, heat, visit_count, last_accessed_at, created_at
 		 FROM memory_items WHERE tier=? AND pinned=0 AND security_relevant=0`, string(tier))
 	if err != nil {
 		return nil, fmt.Errorf("memory summarize scan: %w", err)
 	}
 	type cand struct {
-		it  Item
-		eff float64
+		it      Item
+		eff     float64
+		created string // source created_at (or-wq5: inherited by the summary)
 	}
 	now := time.Now().UTC()
 	var cands []cand
 	for rows.Next() {
 		var it Item
-		var la string
-		if err := rows.Scan(&it.ID, &it.Kind, &it.Content, &it.Hash, &it.TrustTier, &it.Heat, &it.VisitCount, &la); err != nil {
+		var la, ca string
+		if err := rows.Scan(&it.ID, &it.Kind, &it.Content, &it.Hash, &it.TrustTier, &it.Heat, &it.VisitCount, &la, &ca); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
 		it.Tier = tier
 		it.LastAccessed = parseTS(la)
-		cands = append(cands, cand{it, effectiveHeat(it.Heat, it.LastAccessed, it.VisitCount, now)})
+		cands = append(cands, cand{it: it, eff: effectiveHeat(it.Heat, it.LastAccessed, it.VisitCount, now), created: ca})
 	}
 	_ = rows.Close()
 	if err := rows.Err(); err != nil {
@@ -508,13 +514,19 @@ func (s *Store) summarizeForEviction(ctx context.Context, tier Tier, keep int) (
 				if !c.it.LastAccessed.IsZero() {
 					la = c.it.LastAccessed.Format(time.RFC3339Nano)
 				}
+				// or-wq5: inherit the source raw's created_at so the summary preserves the
+				// original first-written time (provenance) rather than resetting to now.
+				created := c.created
+				if created == "" {
+					created = nowStr
+				}
 				// Trust tier is PRESERVED (a generation summary stays quarantined, never a
 				// proof input).
 				if _, err := tx.ExecContext(ctx,
 					`INSERT INTO memory_items (id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, created_at, last_accessed_at)
 					 VALUES (?,?,?,?,?,0,0,?,?,?,?)
 					 ON CONFLICT(id) DO UPDATE SET last_accessed_at=excluded.last_accessed_at`,
-					sumID, string(tier), KindSummary, content, sumHash, c.it.TrustTier, c.it.Heat, nowStr, la); err != nil {
+					sumID, string(tier), KindSummary, content, sumHash, c.it.TrustTier, c.it.Heat, created, la); err != nil {
 					_ = tx.Rollback()
 					return nil, fmt.Errorf("memory summarize write: %w", err)
 				}
