@@ -140,6 +140,59 @@ func TestDecodeVecRejectsCorruptBlob(t *testing.T) {
 	}
 }
 
+// countingEmbedder wraps an embedder and counts EmbedQueries calls (for the cache test).
+type countingEmbedder struct {
+	inner   embed.Embedder
+	queries int
+}
+
+func (c *countingEmbedder) EmbedDocuments(ctx context.Context, t []string) ([][]float32, error) {
+	return c.inner.EmbedDocuments(ctx, t)
+}
+func (c *countingEmbedder) EmbedQueries(ctx context.Context, t []string) ([][]float32, error) {
+	c.queries++
+	return c.inner.EmbedQueries(ctx, t)
+}
+func (c *countingEmbedder) Dim() int   { return c.inner.Dim() }
+func (c *countingEmbedder) ID() string { return c.inner.ID() }
+
+// TestQueryVectorCacheDedupsEmbed (or-f45): two same-query Retrieves embed the query ONCE
+// (the cache), a different query re-embeds, and changing the embedder invalidates the cache.
+func TestQueryVectorCacheDedupsEmbed(t *testing.T) {
+	ctx := context.Background()
+	s := openMem(t)
+	if _, err := s.Write(ctx, Item{Tier: MTM, Kind: KindPattern, Content: "alpha"}); err != nil {
+		t.Fatal(err)
+	}
+	ce := &countingEmbedder{inner: embed.NewStub(16, "stub@16")}
+	s.SetEmbedder(ce)
+	if _, err := s.Reindex(ctx); err != nil { // EmbedDocuments, not counted as a query
+		t.Fatal(err)
+	}
+	if _, err := s.Retrieve(ctx, "the same query", MTM); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Retrieve(ctx, "the same query", MTM); err != nil {
+		t.Fatal(err)
+	}
+	if ce.queries != 1 {
+		t.Fatalf("two same-query retrieves should embed once (cache); got %d", ce.queries)
+	}
+	if _, err := s.Retrieve(ctx, "a different query", MTM); err != nil {
+		t.Fatal(err)
+	}
+	if ce.queries != 2 {
+		t.Fatalf("a different query should re-embed; got %d", ce.queries)
+	}
+	s.SetEmbedder(ce) // invalidates the cache
+	if _, err := s.Retrieve(ctx, "a different query", MTM); err != nil {
+		t.Fatal(err)
+	}
+	if ce.queries != 3 {
+		t.Fatalf("SetEmbedder should invalidate the cache; got %d", ce.queries)
+	}
+}
+
 // TestHybridFusionSemanticRecall (or-hd3.8): with an embedder configured, a reordered query
 // (NOT a substring → keyword misses) still recalls the item via semantic similarity. Uses the
 // stub (bag-of-words), so it's deterministic without the real model.

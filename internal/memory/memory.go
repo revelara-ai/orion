@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/revelara-ai/orion/internal/embed"
@@ -122,11 +123,50 @@ type Store struct {
 	db   *sql.DB
 	emb  embed.Embedder // active embedder for semantic recall (nil = keyword+heat only)
 	vidx VectorIndex    // vector persistence + search (swap point: brute-force → sqlite-vec/ANN)
+
+	// query-vector cache (or-f45): the context engine issues two same-query Retrieves per
+	// assembly; cache the last query embedding so the query is embedded once, not twice.
+	// Cleared whenever the embedder changes.
+	qcMu    sync.Mutex
+	qcQuery string
+	qcEID   string
+	qcVec   []float32
 }
 
 // SetEmbedder configures the active embedder for semantic recall (or-hd3.7). nil leaves the
 // store in keyword+heat mode. Call Reindex after changing it to (re-)embed existing items.
-func (s *Store) SetEmbedder(e embed.Embedder) { s.emb = e }
+func (s *Store) SetEmbedder(e embed.Embedder) {
+	s.emb = e
+	s.qcMu.Lock()
+	s.qcQuery, s.qcEID, s.qcVec = "", "", nil // invalidate the query-vector cache (or-f45)
+	s.qcMu.Unlock()
+}
+
+// queryVector embeds the query for ranking, caching the last (query, embedder) result so the
+// context engine's two same-query Retrieves per assembly embed the query once (or-f45).
+// Returns (nil, false) if no embedder is set or the embed fails — recall then degrades to the
+// keyword path.
+func (s *Store) queryVector(ctx context.Context, query string) ([]float32, bool) {
+	if s.emb == nil {
+		return nil, false
+	}
+	eid := s.emb.ID()
+	s.qcMu.Lock()
+	if s.qcVec != nil && s.qcQuery == query && s.qcEID == eid {
+		v := s.qcVec
+		s.qcMu.Unlock()
+		return v, true
+	}
+	s.qcMu.Unlock()
+	qv, err := s.emb.EmbedQueries(ctx, []string{query})
+	if err != nil || len(qv) != 1 {
+		return nil, false
+	}
+	s.qcMu.Lock()
+	s.qcQuery, s.qcEID, s.qcVec = query, eid, qv[0]
+	s.qcMu.Unlock()
+	return qv[0], true
+}
 
 // Open opens (creating if needed) the memory store under dir/memory.db.
 func Open(dir string) (*Store, error) {
@@ -235,9 +275,16 @@ func (s *Store) Pin(ctx context.Context, id string) error {
 	return err
 }
 
-// Retrieve returns items in the given tiers, ranked by relevance to query then
-// heat. Pinned items always rank first (they are intent-anchoring). An empty
-// query ranks purely by pin/heat. The query is matched case-insensitively.
+// Retrieve returns items in the given tiers, ranked by hybrid relevance (semantic + keyword)
+// then effective heat, under pin priority. An empty query ranks purely by pin/heat. Retrieve
+// is READ-ONLY — recency/frequency access is recorded separately via RecordAccess.
+//
+// Scale (or-f45): Retrieve loads + Go-ranks the full candidate set for the queried tiers.
+// That set is BOUNDED by the per-tier capacity caps (the context-degradation defense:
+// MTM/LTM are summarize-evicted to fixed caps), so the scan + cosine is sub-millisecond at
+// the configured scale. If the caps are ever raised for large-corpus indexing, swap the
+// brute-force VectorIndex for an ANN index (the interface is the swap point) — don't remove
+// the caps.
 func (s *Store) Retrieve(ctx context.Context, query string, tiers ...Tier) ([]Item, error) {
 	if len(tiers) == 0 {
 		tiers = []Tier{STM, MTM, LTM}
@@ -290,8 +337,8 @@ func (s *Store) Retrieve(ctx context.Context, query string, tiers ...Tier) ([]It
 	// items keep their TrustTier and the context engine quarantines generation hits downstream.
 	sem := map[string]float32{}
 	if q != "" && s.emb != nil {
-		if qv, eerr := s.emb.EmbedQueries(ctx, []string{strings.TrimSpace(query)}); eerr == nil && len(qv) == 1 {
-			if hits, serr := s.vidx.Search(ctx, qv[0], s.emb.ID(), semSearchK); serr == nil {
+		if qvec, ok := s.queryVector(ctx, strings.TrimSpace(query)); ok {
+			if hits, serr := s.vidx.Search(ctx, qvec, s.emb.ID(), semSearchK); serr == nil {
 				for _, h := range hits {
 					if h.Score > sem[h.ID] {
 						sem[h.ID] = h.Score
