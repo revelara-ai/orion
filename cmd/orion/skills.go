@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/skill"
@@ -29,11 +30,16 @@ func cmdSkills(args []string) int {
 	}
 }
 
-// loadSkills builds a registry from the default discovery scopes (project = cwd).
+// loadSkills builds a registry from the default discovery scopes (project = cwd) plus the
+// data-dir skills scope where `orion evolve` writes self-evolved skills (or-qau).
 func loadSkills() (*skill.Registry, error) {
 	r := skill.New()
 	cwd, _ := os.Getwd()
-	if err := r.LoadScopes(skill.DefaultScopes(cwd)); err != nil {
+	scopes := skill.DefaultScopes(cwd)
+	if dataDir, err := doctorDataDir(); err == nil { // non-creating resolver
+		scopes = append(scopes, skill.Scope{Root: filepath.Join(dataDir, "skills"), Trust: skill.TrustGeneration})
+	}
+	if err := r.LoadScopes(scopes); err != nil {
 		return nil, err
 	}
 	return r, nil
