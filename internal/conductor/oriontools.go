@@ -24,8 +24,9 @@ import (
 // tools are the only way it touches the store, and the completeness/compile/
 // accept gates stay the deterministic truth source — the agent proposes, the
 // gates verify (no agent grades its own homework).
-func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry {
+func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSession) *tools.Registry {
 	r := tools.NewRegistry()
+	registerChangeTools(r, cs, c, provider)
 
 	r.Register(tools.Tool{
 		Name:        "submit_intent",
@@ -374,28 +375,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 			if cerr != nil {
 				return "", cerr
 			}
-			var b strings.Builder
-			fmt.Fprintf(&b, "change_repo: %s\n  branch: %s\n", p.Intent, res.Branch)
-			if len(res.FilesChanged) > 0 {
-				fmt.Fprintf(&b, "  files: %s\n", strings.Join(res.FilesChanged, ", "))
-			}
-			fmt.Fprintf(&b, "  regression: do-no-harm held=%v\n", res.Regression.Held)
-			if res.NewBehavior != nil {
-				fmt.Fprintf(&b, "  verification: pass=%v inconclusive=%v\n", res.NewBehavior.Pass, res.NewBehavior.Inconclusive)
-				// Surface the per-obligation transcript so a failure is DIAGNOSABLE — which check,
-				// its exit code, and the tool output — instead of leaving the brain to guess.
-				for _, line := range strings.Split(strings.TrimSpace(res.NewBehavior.Output), "\n") {
-					if strings.TrimSpace(line) != "" {
-						fmt.Fprintf(&b, "    %s\n", line)
-					}
-				}
-			}
-			if res.Committed {
-				fmt.Fprintf(&b, "  COMMITTED on %s (review: git diff main..%s)\n", res.Branch, res.Branch)
-			} else {
-				fmt.Fprintf(&b, "  NOT committed — %s\n", res.Reason)
-			}
-			return b.String(), nil
+			return renderChangeResult(p.Intent, res), nil
 		},
 	})
 

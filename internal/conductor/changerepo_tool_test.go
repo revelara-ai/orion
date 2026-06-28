@@ -11,7 +11,7 @@ import (
 // TestChangeRepoToolRegistered (slice 4): the change_repo tool is exposed to the brain with a
 // valid schema declaring the verify-command oracle (incl. curate_golangci) and marked Destructive.
 func TestChangeRepoToolRegistered(t *testing.T) {
-	r := specTools(orchestrator.NewWithStore(openStore(t)), nil)
+	r := specTools(orchestrator.NewWithStore(openStore(t)), nil, &changeSession{})
 	tool, ok := r.Get("change_repo")
 	if !ok {
 		t.Fatal("change_repo tool is not registered")
@@ -35,7 +35,7 @@ func TestChangeRepoToolRegistered(t *testing.T) {
 func TestSystemPromptHasBrownfieldChange(t *testing.T) {
 	a := &OrionAgent{role: RoleTemplate{Project: "demo"}}
 	p := a.systemPrompt()
-	for _, want := range []string{"change_repo", "TOOLING", "do-no-harm", "golangci-lint", "go vet", "file", "ff-only", "land"} {
+	for _, want := range []string{"change_repo", "TOOLING", "do-no-harm", "golangci-lint", "go vet", "file", "ff-only", "land", "submit_change_intent", "propose_cases", "ratify_cases", "build_change"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("systemPrompt missing brownfield-change guidance %q", want)
 		}

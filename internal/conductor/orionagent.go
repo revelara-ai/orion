@@ -25,11 +25,26 @@ type OrionAgent struct {
 
 	mu       sync.Mutex
 	sessions map[string][]llm.Message
+	changes  map[string]*changeSession // brownfield change-flow state, per session
 }
 
 // NewOrionAgent builds the native agent over the given model provider.
 func NewOrionAgent(p llm.Provider, c *orchestrator.Conductor, role RoleTemplate) *OrionAgent {
-	return &OrionAgent{provider: p, conductor: c, role: role, sessions: map[string][]llm.Message{}}
+	return &OrionAgent{provider: p, conductor: c, role: role, sessions: map[string][]llm.Message{}, changes: map[string]*changeSession{}}
+}
+
+// changeSessionFor returns the (persistent, cross-turn) brownfield change state for a session,
+// creating it on first use — the change-flow tools (submit_change_intent → … → build_change)
+// share it across turns since specTools is rebuilt each turn.
+func (a *OrionAgent) changeSessionFor(sessionID string) *changeSession {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	cs := a.changes[sessionID]
+	if cs == nil {
+		cs = &changeSession{}
+		a.changes[sessionID] = cs
+	}
+	return cs
 }
 
 // Serve runs Orion as an ACP agent over the transport (same shape as the
@@ -52,7 +67,7 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 
 	loop := harness.Loop{
 		Provider:   a.provider,
-		Tools:      specTools(a.conductor, a.provider),
+		Tools:      specTools(a.conductor, a.provider, a.changeSessionFor(sessionID)),
 		System:     a.systemPrompt(),
 		Supervisor: harness.Supervisor{MaxIterations: 16, Budget: a.conductor.Budget()},
 	}
@@ -68,7 +83,7 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 			stream(acp.Update{Kind: "tool_call", Text: "· " + e.Tool})
 		case harness.EventToolResult:
 			// The build/change pipeline's phase report renders as a distinct card.
-			if (e.Tool == "build_service" || e.Tool == "change_repo") && !e.Error {
+			if (e.Tool == "build_service" || e.Tool == "change_repo" || e.Tool == "build_change") && !e.Error {
 				stream(acp.Update{Kind: "build_report", Text: e.Text})
 			}
 		}
@@ -113,13 +128,23 @@ You turn a developer's intent into a precise, ratified spec by ADVERSARIALLY gri
 - On Accept, the proven code is written into the developer's working repo; build_service reports the path. Tell the developer WHERE the code is in one line so they can open it.
 - When the developer asks where the code is, to see it, or what was produced, call show_code and answer from what it returns (the path + file contents). Never invent a path or describe code you have not read via show_code.
 
-## Changing an existing repo (brownfield) — change_repo, not build_service
-For a change to an EXISTING repo (a refactor, a fix, or a tooling/config/build change), the proof path is change_repo, NOT build_service (build_service generates a brand-new service from a spec). After scoping with direct_work:
-- If the change ships NO runnable service — a TOOLING/CONFIG/build change (linter config, Makefile targets, CI, formatting) — do NOT invent HTTP/port/route cases or a spec. That would fabricate a service that does not exist. Author 'verify' commands that prove the ASKED-FOR change; the harness runs and judges them (you never grade your own work).
+## Changing an existing repo (brownfield) — NOT build_service
+For a change to an EXISTING repo the proof path is a CHANGE flow, NOT build_service (which generates a brand-new service from a spec). After scoping with direct_work, pick the flow by what the change ships:
+
+### A CODE change with runtime behavior — the change-spec flow
+A fix / refactor / feature on existing code (e.g. "add a Severity() method to Verdict returning critical|warn|ok"): elicit + ratify the behavioral oracle FIRST, then generate + prove. This mirrors the greenfield grill→ratify→build:
+- submit_change_intent — open the change; returns the codebase map to ground it.
+- propose_cases — draft behavioral cases (one per behavior/branch) from the intent + map; present them to the developer and refine with add_case / edit_case. These ARE the proof oracle — you never grade your own work.
+- ratify_cases — lock the cases BEFORE generation (the trust gate: the oracle predates the diff, so the proof is independent of the generated code). Only ratify once the developer confirms the cases capture what they asked.
+- build_change — generate + prove: regression gate (do-no-harm) + the ratified cases → commit on a review branch only if both hold.
+
+### A TOOLING/CONFIG change with NO runnable behavior — change_repo
+A linter config, Makefile targets, CI, or formatting ships no service and has no Go behavior to assert. Do NOT invent HTTP/port/route cases or a spec, and do NOT use the change-spec flow (there are no behavioral cases to author). Use change_repo with 'verify' commands that prove the ASKED-FOR change; the harness runs and judges them (you never grade your own work).
 - Do NOT use verify commands for do-no-harm — the regression gate already proves existing build/tests stay green; never duplicate it. And the verify sandbox is HERMETIC (no network, empty module cache), so a verify command must NOT compile the repo: 'go vet ./...', 'go build ./...', and 'golangci-lint run ./...' can't resolve dependencies there and WILL fail. Use only non-compiling checks:
   - golangci-lint config verify --config .orion-golangci.yml (with curate_golangci + must_exit_zero): proves the config is schema-valid WITHOUT compiling. The generated config MUST be golangci-lint v2 format (a top-level version: "2" line) — a v1 config fails with "unsupported version". State 'use golangci-lint v2 config format (version 2)' in your intent so the generator writes v2. Use config_fail_re "(can't load|unsupported version|unknown linter|invalid)".
   - file: a static (no-exec) assertion on a worktree file. Prove a Makefile target is defined+wired (tool=file, args=["Makefile"], config_ok_re "(?ms)^lint:.*golangci-lint"), or that the config enables a linter / excludes a path (args=[".golangci.yml"], config_ok_re "staticcheck"; a second case config_ok_re "archive"). Use "file" for anything you can't check without compiling — including the root vs nested path (assert the path you asked the generator to write, e.g. "Makefile" not "archive/Makefile").
-- change_repo proves do-no-harm (the regression gate) AND your verify commands, then commits on a review branch ONLY if both hold. If it comes back NOT committed, the report lists each verify obligation with its exit code and output — READ that transcript to see exactly which check failed and why, fix the intent/cases, and re-run. Never claim a change landed unless it reports COMMITTED.
+### Reading the result (both flows)
+build_change and change_repo each prove do-no-harm (the regression gate) AND the ratified oracle, then commit on a review branch ONLY if both hold. If it comes back NOT committed, the report lists each obligation with its exit code and output — READ that transcript to see exactly which check failed and why, fix the intent/cases, and re-run. Never claim a change landed unless it reports COMMITTED.
 
 ## Landing a proven change (you CAN do git)
 A proven change is committed on a REVIEW branch, not on the base branch (main) — the developer reviews, then decides. When they APPROVE landing it ("merge it", "commit to main", "land it"), you do it with the git tool — you are NOT limited to the review branch, and you do not tell them to run git themselves:
