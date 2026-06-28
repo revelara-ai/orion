@@ -3,8 +3,10 @@ package conductor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -398,6 +400,41 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 	})
 
 	r.Register(tools.Tool{
+		Name: "git",
+		Description: "Run a git operation in the developer's repo and return its output + exit code (status, diff, log, show, branch, checkout, merge, commit, add, stash, rev-parse, …). Use it to show the developer a diff, or to LAND a PROVEN change_repo branch into the base branch once they approve. Landing rule (keeps a landed change exactly what was proven): on the base branch run merge --ff-only <change-branch>; if that is NOT a fast-forward (the base moved since the change was proven), do NOT hand-merge or force — the proof is stale, so re-run change_repo off current HEAD to re-prove, then land. Operates on the LOCAL repo; `push` reaches a shared remote, so only push when the developer explicitly asks for it.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"args":{"type":"array","items":{"type":"string"},"description":"git arguments after 'git', e.g. [\"merge\",\"--ff-only\",\"orion-change-...\"] or [\"diff\",\"main..orion-change-...\"]"}},"required":["args"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct {
+				Args []string `json:"args"`
+			}
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			if len(p.Args) == 0 {
+				return "", fmt.Errorf("git: args is required (the git arguments to run)")
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			root := GitRoot(ctx, cwd)
+			if root == "" {
+				return "", fmt.Errorf("not a git repository")
+			}
+			out, exit := gitRun(ctx, root, p.Args...)
+			var b strings.Builder
+			fmt.Fprintf(&b, "git %s (exit %d)\n", strings.Join(p.Args, " "), exit)
+			if s := strings.TrimSpace(out); s != "" {
+				b.WriteString(s)
+			} else {
+				b.WriteString("(no output)")
+			}
+			return b.String(), nil
+		},
+	})
+
+	r.Register(tools.Tool{
 		Name:        "show_code",
 		Description: "Report WHERE the proven code for the current spec lives in the developer's working repo and return its contents. Use this whenever the developer asks where the code is, to see it, or to answer questions about what was produced. Read-only.",
 		Safety:      tools.Safety{ReadOnly: true},
@@ -441,4 +478,19 @@ func asJSON(v any) string {
 		return fmt.Sprintf("%v", v)
 	}
 	return string(b)
+}
+
+// gitRun runs `git -C dir <args...>` and returns the combined output and exit code, WITHOUT
+// turning a non-zero exit into a Go error — the `git` tool reports a failed op (e.g. a merge
+// that isn't a fast-forward) back to the brain as readable output, not a tool error.
+func gitRun(ctx context.Context, dir string, args ...string) (string, int) {
+	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	if err == nil {
+		return string(out), 0
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return string(out), ee.ExitCode()
+	}
+	return string(out) + err.Error(), -1
 }
