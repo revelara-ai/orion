@@ -92,7 +92,15 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		}
 	}
 
-	if _, err := gitIn(ctx, wt.Path, "add", "-A"); err != nil {
+	// Stage ONLY the intended change. res.FilesChanged was snapshotted right after the edit,
+	// before any verifier ran — so it excludes the sandbox scratch the verify step writes into
+	// the worktree (.orion-gocache/, .orion-gopath/, .config/, the curated .orion-golangci.yml).
+	// A blanket `git add -A` would commit that junk; staging the snapshot keeps the commit clean.
+	if len(res.FilesChanged) == 0 {
+		res.Reason = "the generator produced no file changes"
+		return res, nil
+	}
+	if _, err := gitIn(ctx, wt.Path, append([]string{"add", "-A", "--"}, res.FilesChanged...)...); err != nil {
 		return res, err
 	}
 	if _, err := gitIn(ctx, wt.Path,

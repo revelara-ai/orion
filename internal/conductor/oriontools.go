@@ -380,6 +380,13 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider) *tools.Registry
 			fmt.Fprintf(&b, "  regression: do-no-harm held=%v\n", res.Regression.Held)
 			if res.NewBehavior != nil {
 				fmt.Fprintf(&b, "  verification: pass=%v inconclusive=%v\n", res.NewBehavior.Pass, res.NewBehavior.Inconclusive)
+				// Surface the per-obligation transcript so a failure is DIAGNOSABLE — which check,
+				// its exit code, and the tool output — instead of leaving the brain to guess.
+				for _, line := range strings.Split(strings.TrimSpace(res.NewBehavior.Output), "\n") {
+					if strings.TrimSpace(line) != "" {
+						fmt.Fprintf(&b, "    %s\n", line)
+					}
+				}
 			}
 			if res.Committed {
 				fmt.Fprintf(&b, "  COMMITTED on %s (review: git diff main..%s)\n", res.Branch, res.Branch)
