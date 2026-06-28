@@ -1,4 +1,4 @@
-.PHONY:
+.PHONY: vet lint check
 
 default: build
 
@@ -10,3 +10,11 @@ test:
 
 install: build
 	cp bin/orion ~/.local/bin/orion
+
+vet:
+	go vet $$(go list ./... | grep -v /archive/)
+
+lint:
+	golangci-lint run
+
+check: vet lint

@@ -1,0 +1,10 @@
+version: "2"
+
+linters:
+  enable:
+    - staticcheck
+    - revive
+    - gosec
+  exclusions:
+    paths:
+      - archive
