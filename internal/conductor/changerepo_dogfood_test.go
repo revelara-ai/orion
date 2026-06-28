@@ -158,6 +158,18 @@ func TestChangeRepoDogfood_ToolingChange(t *testing.T) {
 	if !strings.Contains(files, ".golangci.yml") || !strings.Contains(files, "Makefile") {
 		t.Errorf("expected both artifacts changed, got: %s", files)
 	}
+	// Commit hygiene: the committed tree carries the change, NOT the verify sandbox scratch.
+	tree, _ := exec.Command("git", "-C", repo, "ls-tree", "-r", "--name-only", res.Branch).CombinedOutput()
+	for _, want := range []string{".golangci.yml", "Makefile"} {
+		if !strings.Contains(string(tree), want) {
+			t.Errorf("committed tree should contain %s, got:\n%s", want, tree)
+		}
+	}
+	for _, junk := range []string{".orion-golangci.yml", ".orion-gocache", ".orion-gopath", ".config"} {
+		if strings.Contains(string(tree), junk) {
+			t.Errorf("committed tree must NOT contain sandbox scratch %q:\n%s", junk, tree)
+		}
+	}
 }
 
 // TestChangeRepoDogfood_BlastScope: the same change under ORION_REGRESSION_SCOPE=blast — the path
@@ -196,6 +208,10 @@ func TestChangeRepoDogfood_RejectsPluginConfig(t *testing.T) {
 	if res.NewBehavior != nil && res.NewBehavior.Pass {
 		t.Error("the verify oracle must not pass on a plugin config")
 	}
+	// The failure transcript must explain WHY (diagnosable, not silent) — P1.
+	if res.NewBehavior == nil || !strings.Contains(strings.ToLower(res.NewBehavior.Output), "reject") {
+		t.Errorf("failure transcript should explain the plugin rejection, got: %q", res.NewBehavior.Output)
+	}
 }
 
 // TestChangeRepoDogfood_RejectsMiswiredMakefile: a Makefile missing the asked-for targets must
@@ -215,5 +231,9 @@ func TestChangeRepoDogfood_RejectsMiswiredMakefile(t *testing.T) {
 	}
 	if res.NewBehavior == nil || res.NewBehavior.Pass {
 		t.Error("the verify oracle must NOT pass when the Makefile is mis-wired")
+	}
+	// The transcript must name the failing file assertion — P1.
+	if res.NewBehavior == nil || !strings.Contains(res.NewBehavior.Output, "passed=false") {
+		t.Errorf("failure transcript should show the failing file assertion, got: %q", res.NewBehavior.Output)
 	}
 }
