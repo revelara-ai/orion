@@ -89,6 +89,101 @@ func TestRegressionGateScopedExcludesOutOfScopePackage(t *testing.T) {
 	}
 }
 
+// TestRegressionForcedFull: a module/dependency change forces the full suite; ordinary
+// source/config changes do not.
+func TestRegressionForcedFull(t *testing.T) {
+	for _, c := range []struct {
+		paths []string
+		want  bool
+	}{
+		{[]string{"go.mod"}, true},
+		{[]string{"go.sum"}, true},
+		{[]string{"go.work"}, true},
+		{[]string{"internal/foo/go.mod"}, true},
+		{[]string{"internal/foo/x.go", ".golangci.yml"}, false},
+		{[]string{"Makefile"}, false},
+	} {
+		if got := regressionForcedFull(c.paths); got != c.want {
+			t.Errorf("regressionForcedFull(%v) = %v, want %v", c.paths, got, c.want)
+		}
+	}
+}
+
+// TestScopeDirsForChange: .go files always scope to their dir (new or modified package);
+// non-.go files scope only when they live in an existing package (embed/testdata); files
+// outside any package (root config/docs) contribute nothing.
+func TestScopeDirsForChange(t *testing.T) {
+	m := RepoMap{Packages: []GoPackage{{Dir: "internal/foo"}, {Dir: "internal/bar"}}}
+	eq := func(got []string, want ...string) bool {
+		if len(got) != len(want) {
+			return false
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				return false
+			}
+		}
+		return true
+	}
+	if d := scopeDirsForChange([]string{".golangci.yml", "Makefile"}, m); len(d) != 0 {
+		t.Errorf("root config change should yield empty scope, got %v", d)
+	}
+	if d := scopeDirsForChange([]string{"internal/foo/x.go"}, m); !eq(d, "internal/foo") {
+		t.Errorf("go change scope = %v, want [internal/foo]", d)
+	}
+	if d := scopeDirsForChange([]string{"internal/foo/data.json"}, m); !eq(d, "internal/foo") {
+		t.Errorf("embedded-asset change scope = %v, want [internal/foo]", d)
+	}
+	if d := scopeDirsForChange([]string{"docs/readme.md"}, m); len(d) != 0 {
+		t.Errorf("non-package non-go change should be empty, got %v", d)
+	}
+	if d := scopeDirsForChange([]string{"internal/new/y.go"}, m); !eq(d, "internal/new") {
+		t.Errorf("new (unmapped) package scope = %v, want [internal/new]", d)
+	}
+}
+
+// TestRegressionGateScopedSkipsToolingChange: a change touching NO Go package holds vacuously
+// with zero tests run — even though the repo has a RED package (which the full suite would trip
+// on). This is the fix for a tooling/config change that used to run the whole suite.
+func TestRegressionGateScopedSkipsToolingChange(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go test")
+	}
+	repo := newScopeRepo(t) // b is intentionally RED
+	m := ScanRepoMap(repo)
+	r, err := RegressionGateScoped(context.Background(), repo, m, func() error {
+		return os.WriteFile(filepath.Join(repo, "Makefile"), []byte("lint:\n\t@echo lint\n"), 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Held {
+		t.Fatalf("a no-Go-package change must hold vacuously (not run the red package): %+v", r)
+	}
+	if r.Before.Skipped == "" || r.Before.Command != "" {
+		t.Errorf("skip case must run NO tests (Skipped set, Command empty): %+v", r.Before)
+	}
+}
+
+// TestRegressionGateScopedEscalatesOnGoMod: a go.mod change escalates to the FULL ./... suite
+// (the import graph can't capture a dependency change's runtime impact).
+func TestRegressionGateScopedEscalatesOnGoMod(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go test")
+	}
+	repo := newScopeRepo(t)
+	m := ScanRepoMap(repo)
+	r, err := RegressionGateScoped(context.Background(), repo, m, func() error {
+		return os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module testmod\n\ngo 1.21\n// dep bump\n"), 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Before.Command != "go test ./..." {
+		t.Errorf("a go.mod change must escalate to the full suite, got command %q (%+v)", r.Before.Command, r)
+	}
+}
+
 // TestRegressionGateScopedCatchesInScopeRegression: a change that breaks a test WITHIN
 // the scope is still rejected.
 func TestRegressionGateScopedCatchesInScopeRegression(t *testing.T) {

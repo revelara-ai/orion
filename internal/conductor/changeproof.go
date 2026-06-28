@@ -51,18 +51,20 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	res := ChangeResult{Branch: wt.Branch, Path: wt.Path}
 
 	// Regression gate: green-before (worktree == HEAD) → the generator edits the
-	// worktree → green-after. The generator IS the change being applied. Opt-in
-	// ORION_REGRESSION_SCOPE=blast scopes the gate to the changed packages + their
-	// blast radius (fast on big repos, e.g. Orion-on-Orion); default is the full suite
-	// (sound against out-of-import-graph regressions). See or-3p5.5.
+	// worktree → green-after. The generator IS the change being applied. The DEFAULT is the
+	// scoped gate (changed packages + blast radius; it auto-escalates to the full suite on a
+	// go.mod/go.sum change and holds vacuously when no Go package is touched) — fast on big
+	// repos like Orion-on-Orion. ORION_REGRESSION_SCOPE=full forces the whole suite as a
+	// manual safety hatch (e.g. a build-tag/codegen change with out-of-import-graph coupling).
+	// See or-3p5.5.
 	apply := func() error {
 		return DiffGenerator(ctx, provider, wt.Path, intent, m.Digest())
 	}
 	var reg brownfield.RegressionResult
-	if os.Getenv("ORION_REGRESSION_SCOPE") == "blast" {
-		reg, err = brownfield.RegressionGateScoped(ctx, wt.Path, m, apply)
-	} else {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("ORION_REGRESSION_SCOPE")), "full") {
 		reg, err = brownfield.RegressionGate(ctx, wt.Path, apply)
+	} else {
+		reg, err = brownfield.RegressionGateScoped(ctx, wt.Path, m, apply)
 	}
 	if err != nil {
 		return res, fmt.Errorf("regression gate: %w", err)

@@ -35,16 +35,22 @@ func BaselineScoped(ctx context.Context, repoDir string, patterns []string) (Tes
 	}, nil
 }
 
-// RegressionGateScoped restricts the regression gate to the changed packages + their
-// import-graph blast radius (or-3p5.5), so a change to a small corner of a large repo is
-// not gated on the whole suite. It applies the change first (so the scope is the ACTUAL
-// touched packages), then measures the before-baseline of that scope by stashing the
+// RegressionGateScoped is the DEFAULT regression gate (or-3p5.5): it restricts the suite to
+// the changed packages + their import-graph blast radius, so a change to a small corner of a
+// large repo is not gated on the whole suite. It applies the change first (so the scope is the
+// ACTUAL touched packages), then measures the before-baseline of that scope by stashing the
 // change to recover the clean HEAD state, restores it, and measures after.
 //
-// Sound for regressions within the import graph; regressions reached only via
-// runtime/reflection or shared test fixtures OUTSIDE the scope are not covered — keep the
-// full ./... gate (RegressionGate) as the default. A change touching no .go packages
-// falls back to the full suite.
+// Post-apply it picks the scope from what the change touched:
+//   - a module/dependency change (go.mod/go.sum/go.work) ESCALATES to the full ./... suite —
+//     repo-wide runtime impact the import graph can't capture;
+//   - a change touching NO Go package (pure config/docs/Makefile) holds vacuously with zero
+//     tests run: the do-no-harm surface is empty, so there is nothing to regress;
+//   - otherwise it scopes to the changed packages + their blast radius.
+//
+// Sound for regressions within the import graph; regressions reached only via build-tag/codegen
+// coupling OUTSIDE the import graph are not covered — set ORION_REGRESSION_SCOPE=full (which
+// routes to RegressionGate) when a change warrants the whole suite.
 func RegressionGateScoped(ctx context.Context, repoDir string, m RepoMap, apply func() error) (RegressionResult, error) {
 	if _, ok := DetectToolchain(repoDir); !ok {
 		return RegressionResult{Reason: "no test toolchain — cannot establish a regression baseline"}, nil
@@ -55,7 +61,20 @@ func RegressionGateScoped(ctx context.Context, repoDir string, m RepoMap, apply 
 		}
 	}
 
-	pats := scopePatterns(m, changedGoDirs(ctx, repoDir)) // nil → full ./... (safe fallback)
+	// Scope decision from the ACTUAL post-apply diff.
+	changed := changedPaths(ctx, repoDir)
+	var pats []string
+	switch {
+	case regressionForcedFull(changed):
+		pats = nil // nil → BaselineScoped runs the full ./... suite
+	default:
+		scope := scopeDirsForChange(changed, m)
+		if len(scope) == 0 {
+			skip := TestResult{Detected: true, Skipped: "no Go package affected — nothing to regress"}
+			return RegressionResult{Held: true, Before: skip, After: skip}, nil
+		}
+		pats = scopePatterns(m, scope)
+	}
 
 	// Before-of-scope: stash the applied change → clean HEAD → measure → restore.
 	stashed, err := gitStashPush(ctx, repoDir)
@@ -119,14 +138,14 @@ func dirPattern(dir string) string {
 	return "./" + dir
 }
 
-// changedGoDirs returns the distinct directories of changed .go files in repoDir (from
-// git status), relative to the repo root — the packages the diff touched.
-func changedGoDirs(ctx context.Context, repoDir string) []string {
+// changedPaths returns the distinct changed file paths in repoDir (from git status),
+// relative to the repo root.
+func changedPaths(ctx context.Context, repoDir string) []string {
 	out, err := gitOutput(ctx, repoDir, "status", "--porcelain")
 	if err != nil {
 		return nil
 	}
-	set := map[string]bool{}
+	var paths []string
 	// Porcelain v1 lines are "XY PATH": XY is a fixed 2-col status field (often
 	// space-padded, e.g. " M file"), then a space, then the path at index 3. Do NOT
 	// trim the leading column — that shifts the offset and corrupts the path.
@@ -139,11 +158,40 @@ func changedGoDirs(ctx context.Context, repoDir string) []string {
 		if i := strings.Index(path, " -> "); i >= 0 { // rename: "old -> new"
 			path = path[i+4:]
 		}
-		path = strings.Trim(path, `"`) // git quotes paths with special chars
-		if !strings.HasSuffix(path, ".go") {
-			continue
+		paths = append(paths, strings.Trim(path, `"`)) // git quotes paths with special chars
+	}
+	return paths
+}
+
+// regressionForcedFull reports whether any changed file forces a full-suite regression: a
+// module/dependency change (go.mod/go.sum/go.work[.sum]) has repo-wide runtime impact that the
+// internal import graph does not capture, so scoping is unsafe.
+func regressionForcedFull(paths []string) bool {
+	for _, p := range paths {
+		switch filepath.Base(p) {
+		case "go.mod", "go.sum", "go.work", "go.work.sum":
+			return true
 		}
-		set[filepath.Dir(path)] = true
+	}
+	return false
+}
+
+// scopeDirsForChange maps changed files to the package dirs to test: every changed .go file's
+// dir (a new or modified Go package), plus any EXISTING package dir that owns a changed non-.go
+// file (an embedded asset or testdata fixture). Files outside any Go package (root config, docs,
+// Makefile) contribute nothing — so a pure tooling change yields an empty scope (nothing to
+// regress).
+func scopeDirsForChange(paths []string, m RepoMap) []string {
+	pkg := make(map[string]bool, len(m.Packages))
+	for _, p := range m.Packages {
+		pkg[p.Dir] = true
+	}
+	set := map[string]bool{}
+	for _, p := range paths {
+		d := filepath.Dir(p)
+		if strings.HasSuffix(p, ".go") || pkg[d] {
+			set[d] = true
+		}
 	}
 	dirs := make([]string, 0, len(set))
 	for d := range set {
