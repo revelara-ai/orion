@@ -11,7 +11,7 @@ import (
 
 // TestGitToolRegistered: the conductor exposes a general git tool (Destructive) with an args schema.
 func TestGitToolRegistered(t *testing.T) {
-	r := specTools(orchestrator.NewWithStore(openStore(t)), nil)
+	r := specTools(orchestrator.NewWithStore(openStore(t)), nil, &changeSession{})
 	tool, ok := r.Get("git")
 	if !ok {
 		t.Fatal("git tool is not registered")
@@ -29,7 +29,7 @@ func TestGitToolRunsInRepo(t *testing.T) {
 	oc := orchestrator.NewWithStore(openStore(t))
 	repo := initDogfoodRepo(t)
 	t.Chdir(repo)
-	tool, _ := specTools(oc, nil).Get("git")
+	tool, _ := specTools(oc, nil, &changeSession{}).Get("git")
 	out, err := tool.Run(context.Background(), json.RawMessage(`{"args":["rev-parse","--show-toplevel"]}`))
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +46,7 @@ func TestGitToolReportsFailureAsExitNotError(t *testing.T) {
 	oc := orchestrator.NewWithStore(openStore(t))
 	repo := initDogfoodRepo(t)
 	t.Chdir(repo)
-	tool, _ := specTools(oc, nil).Get("git")
+	tool, _ := specTools(oc, nil, &changeSession{}).Get("git")
 	out, err := tool.Run(context.Background(), json.RawMessage(`{"args":["merge","--ff-only","does-not-exist"]}`))
 	if err != nil {
 		t.Fatalf("a failed git op must be reported as output, not a Go error: %v", err)
