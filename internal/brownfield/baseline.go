@@ -53,21 +53,41 @@ func DetectToolchain(repoDir string) (Toolchain, bool) {
 // offer a regression guarantee). The test exec runs with safeenv (never the host
 // env) because the target repo's code is untrusted.
 func Baseline(ctx context.Context, repoDir string) (TestResult, error) {
+	return baselineSkip(ctx, repoDir, nil)
+}
+
+// baselineSkip runs the full suite while SKIPPING the named tests — the regression-reconciliation
+// hook: a change that intentionally supersedes a behavior excludes that behavior's test from the
+// do-no-harm requirement, while every OTHER test must still pass. skip entries are go test name
+// regexps, OR-joined.
+func baselineSkip(ctx context.Context, repoDir string, skip []string) (TestResult, error) {
 	tc, ok := DetectToolchain(repoDir)
 	if !ok {
 		return TestResult{Skipped: "no known toolchain (looked for go.mod)"}, nil
 	}
-	cmd := exec.CommandContext(ctx, tc.TestCmd[0], tc.TestCmd[1:]...)
+	argv := withSkip(tc.TestCmd, skip)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = repoDir
 	cmd.Env = safeenv.Build() // untrusted repo code never sees host secrets
 	out, err := cmd.CombinedOutput()
 	return TestResult{
 		Detected:  true,
 		Toolchain: tc.Name,
-		Command:   strings.Join(tc.TestCmd, " "),
+		Command:   strings.Join(argv, " "),
 		Passed:    err == nil,
 		Output:    clip(string(out), 8000),
 	}, nil
+}
+
+// withSkip inserts `-skip <re>` right after the test subcommand (argv[1]) when skip is non-empty;
+// otherwise returns argv unchanged. The skip set is OR-joined into one regexp.
+func withSkip(argv, skip []string) []string {
+	if len(skip) == 0 || len(argv) < 2 {
+		return argv
+	}
+	out := append([]string{}, argv[:2]...)
+	out = append(out, "-skip", strings.Join(skip, "|"))
+	return append(out, argv[2:]...)
 }
 
 func exists(p string) bool {

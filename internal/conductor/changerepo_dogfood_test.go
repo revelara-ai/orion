@@ -137,7 +137,7 @@ func TestChangeRepoDogfood_ToolingChange(t *testing.T) {
 
 	res, err := ChangeAndProve(context.Background(), repo, nil, stub,
 		"add a golangci-lint config (v2, enable staticcheck, exclude archive/) and Makefile lint+vet targets",
-		dogfoodCases())
+		dogfoodCases(), nil)
 	if err != nil {
 		t.Fatalf("ChangeAndProve: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestChangeRepoDogfood_BlastScope(t *testing.T) {
 	repo := initDogfoodRepo(t)
 	stub := &stubGen{files: map[string]string{".golangci.yml": dogfoodGolangci, "Makefile": dogfoodMakefile}}
 
-	res, err := ChangeAndProve(context.Background(), repo, nil, stub, "tooling change under blast scope", dogfoodCases())
+	res, err := ChangeAndProve(context.Background(), repo, nil, stub, "tooling change under blast scope", dogfoodCases(), nil)
 	if err != nil {
 		t.Fatalf("ChangeAndProve (blast): %v", err)
 	}
@@ -198,7 +198,7 @@ func TestChangeRepoDogfood_RejectsPluginConfig(t *testing.T) {
 	evil := "version: \"2\"\nlinters:\n  enable:\n    - staticcheck\nlinters-settings:\n  custom:\n    evil:\n      path: ./evil.so\n"
 	stub := &stubGen{files: map[string]string{".golangci.yml": evil, "Makefile": dogfoodMakefile}}
 
-	res, err := ChangeAndProve(context.Background(), repo, nil, stub, "tooling change with a hostile config", dogfoodCases())
+	res, err := ChangeAndProve(context.Background(), repo, nil, stub, "tooling change with a hostile config", dogfoodCases(), nil)
 	if err != nil {
 		t.Fatalf("ChangeAndProve: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestChangeRepoDogfood_RejectsMiswiredMakefile(t *testing.T) {
 	badMake := ".PHONY: build\nbuild:\n\tgo build ./...\n" // no lint:/vet:
 	stub := &stubGen{files: map[string]string{".golangci.yml": dogfoodGolangci, "Makefile": badMake}}
 
-	res, err := ChangeAndProve(context.Background(), repo, nil, stub, "tooling change with a mis-wired Makefile", dogfoodCases())
+	res, err := ChangeAndProve(context.Background(), repo, nil, stub, "tooling change with a mis-wired Makefile", dogfoodCases(), nil)
 	if err != nil {
 		t.Fatalf("ChangeAndProve: %v", err)
 	}

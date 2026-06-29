@@ -50,32 +50,36 @@ func readFileTool(root string) tools.Tool {
 // surgical change to existing code, grounded in what's there + the codebase map. The
 // caller runs it inside a WORKTREE so the developer's working tree is untouched; the
 // regression gate then proves the change preserved existing behavior.
-func DiffGenerator(ctx context.Context, provider llm.Provider, repoDir, intent, repoContext string) error {
+func DiffGenerator(ctx context.Context, provider llm.Provider, repoDir, intent, repoContext string, supersedes []string) error {
 	reg := tools.NewRegistry()
 	reg.Register(writeFileTool(repoDir)) // reuse the path-guarded greenfield writer
 	reg.Register(readFileTool(repoDir))
 	loop := harness.Loop{
 		Provider:   provider,
 		Tools:      reg,
-		System:     diffGenRole(intent, repoContext),
+		System:     diffGenRole(intent, repoContext, supersedes),
 		Supervisor: harness.Supervisor{MaxIterations: 40},
 	}
 	start := []llm.Message{llm.TextMessage(llm.RoleUser,
-		"Make the change now. Read the files you need with read_file, then apply surgical edits with write_file (write the FULL updated file). Touch as few files as possible, and do not break existing behavior. End your turn when the change is complete.")}
+		"Make the change now. Read the files you need with read_file, then apply surgical edits with write_file (write the FULL updated file). Touch as few files as possible. End your turn when the change is complete.")}
 	if _, _, err := loop.Run(ctx, start, nil); err != nil {
 		return fmt.Errorf("diff generation: %w", err)
 	}
 	return nil
 }
 
-func diffGenRole(intent, repoContext string) string {
+func diffGenRole(intent, repoContext string, supersedes []string) string {
 	var b strings.Builder
 	b.WriteString("You are Orion's brownfield change generator. Make a SURGICAL change to an EXISTING Go codebase to satisfy the intent below, reusing the codebase's existing packages, APIs, and conventions.\n\n")
 	b.WriteString("Rules:\n")
 	b.WriteString("- Read existing files before editing them; match their style and conventions.\n")
 	b.WriteString("- Keep the change minimal — touch as few files as possible; do NOT rewrite unrelated code.\n")
 	b.WriteString("- PRESERVE existing behavior: do not break what works. An independent regression check will run the existing tests against your change.\n")
-	b.WriteString("- write_file writes the FULL updated file contents (not a patch); include the whole file.\n\n")
+	b.WriteString("- write_file writes the FULL updated file contents (not a patch); include the whole file.\n")
+	if len(supersedes) > 0 {
+		b.WriteString("- EXCEPTION — intentional behavior change: the change below DELIBERATELY changes behavior asserted by these existing tests: " + strings.Join(supersedes, ", ") + ". UPDATE those tests to assert the NEW behavior (do NOT preserve their old assertions). The regression check skips them; every OTHER test must still pass.\n")
+	}
+	b.WriteString("\n")
 	fmt.Fprintf(&b, "# Change intent\n%s\n\n", strings.TrimSpace(intent))
 	if repoContext != "" {
 		b.WriteString("# Codebase map (orient yourself here)\n")

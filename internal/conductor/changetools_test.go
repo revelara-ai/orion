@@ -112,7 +112,7 @@ func TestProposeCasesGroundsAndDrops(t *testing.T) {
 	if !strings.Contains(out, "proposed 1 case") || !strings.Contains(out, "dropped (ungrounded)") {
 		t.Fatalf("expected 1 grounded + 1 dropped, got:\n%s", out)
 	}
-	if _, cases, _ := cs.snapshot(); len(cases) != 1 {
+	if _, cases, _, _ := cs.snapshot(); len(cases) != 1 {
 		t.Fatalf("session should hold 1 grounded case, got %d", len(cases))
 	}
 }
@@ -145,7 +145,7 @@ func TestChangeFlowDogfoodSeverity(t *testing.T) {
 	r := specTools(orchestrator.NewWithStore(openStore(t)), stub, cs)
 	mustDispatch(t, r, "submit_change_intent", `{"intent":"add a Severity() method to Verdict returning critical|warn|ok"}`)
 	mustDispatch(t, r, "propose_cases", `{}`)
-	if _, cases, _ := cs.snapshot(); len(cases) != 3 {
+	if _, cases, _, _ := cs.snapshot(); len(cases) != 3 {
 		t.Fatalf("expected 3 grounded cases, got %d", len(cases))
 	}
 	mustDispatch(t, r, "ratify_cases", `{}`)

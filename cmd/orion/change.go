@@ -47,7 +47,7 @@ func cmdChange(args []string) int {
 	}
 
 	provider := llm.NewAnthropic(key, os.Getenv("ORION_MODEL"))
-	res, err := conductor.ChangeAndProve(ctx, root, nil, provider, intent, cases)
+	res, err := conductor.ChangeAndProve(ctx, root, nil, provider, intent, cases, nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion change:", err)
 		return 1

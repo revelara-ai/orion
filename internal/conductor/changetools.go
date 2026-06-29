@@ -20,16 +20,17 @@ import (
 // change-flow tools across turns (specTools is rebuilt per turn, so the state cannot live in a
 // tool closure) — one active change per session, mirroring the single active greenfield spec.
 type changeSession struct {
-	mu       sync.Mutex
-	intent   string
-	cases    []newbehavior.Case
-	ratified bool
+	mu         sync.Mutex
+	intent     string
+	cases      []newbehavior.Case
+	supersedes []string // existing tests whose old assertions this change intentionally voids
+	ratified   bool
 }
 
-func (s *changeSession) snapshot() (string, []newbehavior.Case, bool) {
+func (s *changeSession) snapshot() (string, []newbehavior.Case, []string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.intent, append([]newbehavior.Case(nil), s.cases...), s.ratified
+	return s.intent, append([]newbehavior.Case(nil), s.cases...), append([]string(nil), s.supersedes...), s.ratified
 }
 
 // caseInput is the model-/developer-facing shape of one behavioral case (shared by propose_cases,
@@ -123,7 +124,7 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 				return "", err
 			}
 			cs.mu.Lock()
-			cs.intent, cs.cases, cs.ratified = p.Intent, nil, false
+			cs.intent, cs.cases, cs.supersedes, cs.ratified = p.Intent, nil, nil, false
 			cs.mu.Unlock()
 			return fmt.Sprintf("change intent recorded: %s\n\n%s\n\nNext: propose_cases to draft the behavioral proof oracle.", p.Intent, clip(m.Digest(), 4000)), nil
 		},
@@ -134,7 +135,7 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 		Description: "Propose behavioral proof cases for the change (the ORACLE the proof checks): from the intent + codebase map, draft synth_test cases (assert a Go call's result: pkg+call+want) and/or command cases (run argv, assert exit+stdout). Each is GROUNDED against real packages; ungrounded proposals are dropped and surfaced. Review with the developer, refine via add_case/edit_case, then ratify_cases. Call after submit_change_intent.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
 		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
-			intent, _, _ := cs.snapshot()
+			intent, _, _, _ := cs.snapshot()
 			if strings.TrimSpace(intent) == "" {
 				return "", fmt.Errorf("propose_cases: call submit_change_intent first")
 			}
@@ -214,6 +215,29 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 	addOrEdit("edit_case", "Replace the behavioral case at 'index' (0-based) with refined fields. Re-opens ratification.", true)
 
 	r.Register(tools.Tool{
+		Name:        "supersede_test",
+		Description: "Declare an existing test whose OLD assertion this change INTENTIONALLY voids — for a behavior you are DELIBERATELY changing. The regression gate SKIPS it (so the intended change isn't blocked as a 'regression'), while every OTHER test must still pass AND the new behavior must be covered by a ratified case. Use ONLY for behavior you are deliberately changing — never to silence a real regression. The value is a Go test name or regexp (e.g. TestSeverity).",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"test":{"type":"string","description":"a go test name or -skip regexp whose old behavior this change supersedes"}},"required":["test"]}`),
+		Run: func(_ context.Context, in json.RawMessage) (string, error) {
+			var p struct {
+				Test string `json:"test"`
+			}
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			if strings.TrimSpace(p.Test) == "" {
+				return "", fmt.Errorf("supersede_test: a test name/regexp is required")
+			}
+			cs.mu.Lock()
+			cs.supersedes = append(cs.supersedes, strings.TrimSpace(p.Test))
+			cs.ratified = false
+			list := strings.Join(cs.supersedes, ", ")
+			cs.mu.Unlock()
+			return fmt.Sprintf("superseded (regression-skipped) tests now: %s — the new behavior must still be a ratified case. Ratification re-opened.", list), nil
+		},
+	})
+
+	r.Register(tools.Tool{
 		Name:        "ratify_cases",
 		Description: "Lock the behavioral cases as the proof ORACLE, BEFORE any code is generated — the trust gate: the oracle predates the diff, so the proof is independent of the generated code. Call once the developer has reviewed and confirmed the cases. Then call build_change.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
@@ -234,7 +258,7 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
 		Safety:      tools.Safety{Destructive: true},
 		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
-			intent, cases, ratified := cs.snapshot()
+			intent, cases, supersedes, ratified := cs.snapshot()
 			if !ratified {
 				return "", fmt.Errorf("build_change: ratify_cases first (the oracle must be locked before generation)")
 			}
@@ -245,7 +269,7 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 			if err != nil {
 				return "", err
 			}
-			res, cerr := ChangeAndProve(ctx, root, c.Store(), provider, intent, cases)
+			res, cerr := ChangeAndProve(ctx, root, c.Store(), provider, intent, cases, supersedes)
 			if cerr != nil {
 				return "", cerr
 			}

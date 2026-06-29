@@ -14,6 +14,12 @@ import (
 // (e.g. ["./a"]). Empty patterns ≡ the full suite (./...). Same untrusted-code isolation
 // (safeenv) as Baseline.
 func BaselineScoped(ctx context.Context, repoDir string, patterns []string) (TestResult, error) {
+	return baselineScopedSkip(ctx, repoDir, patterns, nil)
+}
+
+// baselineScopedSkip runs the scoped suite while SKIPPING the named tests (the supersession hook,
+// same as baselineSkip but restricted to the blast-radius patterns).
+func baselineScopedSkip(ctx context.Context, repoDir string, patterns, skip []string) (TestResult, error) {
 	tc, ok := DetectToolchain(repoDir)
 	if !ok {
 		return TestResult{Skipped: "no known toolchain (looked for go.mod)"}, nil
@@ -21,15 +27,15 @@ func BaselineScoped(ctx context.Context, repoDir string, patterns []string) (Tes
 	if len(patterns) == 0 {
 		patterns = []string{"./..."}
 	}
-	args := append([]string{"test"}, patterns...)
-	cmd := exec.CommandContext(ctx, tc.TestCmd[0], args...) // tc.TestCmd[0] == "go"
+	argv := withSkip(append([]string{tc.TestCmd[0], "test"}, patterns...), skip)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) // argv[0] == "go"
 	cmd.Dir = repoDir
 	cmd.Env = safeenv.Build() // untrusted repo code never sees host secrets
 	out, err := cmd.CombinedOutput()
 	return TestResult{
 		Detected:  true,
 		Toolchain: tc.Name,
-		Command:   "go " + strings.Join(args, " "),
+		Command:   strings.Join(argv, " "),
 		Passed:    err == nil,
 		Output:    clip(string(out), 8000),
 	}, nil
@@ -51,7 +57,8 @@ func BaselineScoped(ctx context.Context, repoDir string, patterns []string) (Tes
 // Sound for regressions within the import graph; regressions reached only via build-tag/codegen
 // coupling OUTSIDE the import graph are not covered — set ORION_REGRESSION_SCOPE=full (which
 // routes to RegressionGate) when a change warrants the whole suite.
-func RegressionGateScoped(ctx context.Context, repoDir string, m RepoMap, apply func() error) (RegressionResult, error) {
+// skip names tests whose old assertions a change INTENTIONALLY supersedes (see RegressionGate).
+func RegressionGateScoped(ctx context.Context, repoDir string, m RepoMap, skip []string, apply func() error) (RegressionResult, error) {
 	if _, ok := DetectToolchain(repoDir); !ok {
 		return RegressionResult{Reason: "no test toolchain — cannot establish a regression baseline"}, nil
 	}
@@ -81,7 +88,7 @@ func RegressionGateScoped(ctx context.Context, repoDir string, m RepoMap, apply 
 	if err != nil {
 		return RegressionResult{}, err
 	}
-	before, berr := BaselineScoped(ctx, repoDir, pats)
+	before, berr := baselineScopedSkip(ctx, repoDir, pats, skip)
 	if stashed {
 		if perr := gitStashPop(ctx, repoDir); perr != nil {
 			return RegressionResult{}, perr
@@ -96,7 +103,7 @@ func RegressionGateScoped(ctx context.Context, repoDir string, m RepoMap, apply 
 		return res, nil
 	}
 
-	after, err := BaselineScoped(ctx, repoDir, pats)
+	after, err := baselineScopedSkip(ctx, repoDir, pats, skip)
 	if err != nil {
 		return RegressionResult{}, err
 	}
