@@ -35,7 +35,7 @@ func TestChangeRepoToolRegistered(t *testing.T) {
 func TestSystemPromptHasBrownfieldChange(t *testing.T) {
 	a := &OrionAgent{role: RoleTemplate{Project: "demo"}}
 	p := a.systemPrompt()
-	for _, want := range []string{"change_repo", "TOOLING", "do-no-harm", "golangci-lint", "go vet", "file", "ff-only", "land", "submit_change_intent", "propose_cases", "ratify_cases", "build_change"} {
+	for _, want := range []string{"change_repo", "TOOLING", "do-no-harm", "golangci-lint", "go vet", "file", "ff-only", "land", "submit_change_intent", "propose_cases", "ratify_cases", "build_change", "supersede_test"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("systemPrompt missing brownfield-change guidance %q", want)
 		}

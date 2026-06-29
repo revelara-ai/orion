@@ -371,7 +371,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 					CurateGolangci: v.CurateGolangci,
 				}})
 			}
-			res, cerr := ChangeAndProve(ctx, root, c.Store(), provider, p.Intent, cases)
+			res, cerr := ChangeAndProve(ctx, root, c.Store(), provider, p.Intent, cases, nil)
 			if cerr != nil {
 				return "", cerr
 			}

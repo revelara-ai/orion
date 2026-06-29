@@ -67,7 +67,7 @@ func TestRegressionGateScopedExcludesOutOfScopePackage(t *testing.T) {
 	ctx := context.Background()
 
 	full := newScopeRepo(t)
-	fr, err := RegressionGate(ctx, full, nil)
+	fr, err := RegressionGate(ctx, full, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestRegressionGateScopedExcludesOutOfScopePackage(t *testing.T) {
 
 	scoped := newScopeRepo(t)
 	m := ScanRepoMap(scoped)
-	sr, err := RegressionGateScoped(ctx, scoped, m, func() error {
+	sr, err := RegressionGateScoped(ctx, scoped, m, nil, func() error {
 		return os.WriteFile(filepath.Join(scoped, "a/a.go"),
 			[]byte("package a\n\nfunc A() int { return 1 }\n\nfunc A2() int { return 2 }\n"), 0o644)
 	})
@@ -151,7 +151,7 @@ func TestRegressionGateScopedSkipsToolingChange(t *testing.T) {
 	}
 	repo := newScopeRepo(t) // b is intentionally RED
 	m := ScanRepoMap(repo)
-	r, err := RegressionGateScoped(context.Background(), repo, m, func() error {
+	r, err := RegressionGateScoped(context.Background(), repo, m, nil, func() error {
 		return os.WriteFile(filepath.Join(repo, "Makefile"), []byte("lint:\n\t@echo lint\n"), 0o644)
 	})
 	if err != nil {
@@ -173,7 +173,7 @@ func TestRegressionGateScopedEscalatesOnGoMod(t *testing.T) {
 	}
 	repo := newScopeRepo(t)
 	m := ScanRepoMap(repo)
-	r, err := RegressionGateScoped(context.Background(), repo, m, func() error {
+	r, err := RegressionGateScoped(context.Background(), repo, m, nil, func() error {
 		return os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module testmod\n\ngo 1.21\n// dep bump\n"), 0o644)
 	})
 	if err != nil {
@@ -193,7 +193,7 @@ func TestRegressionGateScopedCatchesInScopeRegression(t *testing.T) {
 	ctx := context.Background()
 	repo := newScopeRepo(t)
 	m := ScanRepoMap(repo)
-	r, err := RegressionGateScoped(ctx, repo, m, func() error {
+	r, err := RegressionGateScoped(ctx, repo, m, nil, func() error {
 		return os.WriteFile(filepath.Join(repo, "a/a.go"),
 			[]byte("package a\n\nfunc A() int { return 9 }\n"), 0o644)
 	})

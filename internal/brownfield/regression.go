@@ -22,8 +22,11 @@ type RegressionResult struct {
 //
 // The suite runs under safeenv (untrusted repo code); full fs/network isolation is the
 // sandbox (or-5ym).
-func RegressionGate(ctx context.Context, repoDir string, apply func() error) (RegressionResult, error) {
-	before, err := Baseline(ctx, repoDir)
+// skip names tests whose old assertions a change INTENTIONALLY supersedes — excluded from the
+// do-no-harm requirement (a declared, oracle-proven behavior change), while every other test must
+// still survive. nil/empty skip = the strict gate.
+func RegressionGate(ctx context.Context, repoDir string, skip []string, apply func() error) (RegressionResult, error) {
+	before, err := baselineSkip(ctx, repoDir, skip)
 	if err != nil {
 		return RegressionResult{}, err
 	}
@@ -44,7 +47,7 @@ func RegressionGate(ctx context.Context, repoDir string, apply func() error) (Re
 		}
 	}
 
-	after, err := Baseline(ctx, repoDir)
+	after, err := baselineSkip(ctx, repoDir, skip)
 	if err != nil {
 		return RegressionResult{}, err
 	}

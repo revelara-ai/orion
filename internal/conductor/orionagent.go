@@ -135,6 +135,7 @@ For a change to an EXISTING repo the proof path is a CHANGE flow, NOT build_serv
 A fix / refactor / feature on existing code (e.g. "add a Severity() method to Verdict returning critical|warn|ok"): elicit + ratify the behavioral oracle FIRST, then generate + prove. This mirrors the greenfield grill→ratify→build:
 - submit_change_intent — open the change; returns the codebase map to ground it.
 - propose_cases — draft behavioral cases (one per behavior/branch) from the intent + map; present them to the developer and refine with add_case / edit_case. These ARE the proof oracle — you never grade your own work.
+- supersede_test — ONLY when the change intentionally MODIFIES existing behavior (not a pure addition): declare each existing test whose OLD assertion this change voids. The regression gate then SKIPS it (so the intended change isn't wrongly blocked as a 'regression'), while every OTHER test must still pass and the new behavior must be a ratified case. Never use it to silence a real regression — a genuine break in an undeclared test still rejects the change.
 - ratify_cases — lock the cases BEFORE generation (the trust gate: the oracle predates the diff, so the proof is independent of the generated code). Only ratify once the developer confirms the cases capture what they asked.
 - build_change — generate + prove: regression gate (do-no-harm) + the ratified cases → commit on a review branch only if both hold.
 

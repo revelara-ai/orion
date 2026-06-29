@@ -35,7 +35,11 @@ type ChangeResult struct {
 // This is the "do no harm + deliver" spine of brownfield. The NEW-behavior proof
 // (harness-authored obligations targeting the changed surface) and STAMP-baseline
 // preservation are the next rigor layers on top of this regression-gated loop.
-func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.Store, provider llm.Provider, intent string, cases []newbehavior.Case) (ChangeResult, error) {
+// supersedes names existing tests whose OLD assertions this change INTENTIONALLY voids (a
+// deliberate behavior change); the regression gate skips them (so the intended change isn't
+// blocked as a "regression") while every other test must still survive, and the new behavior is
+// proven by the ratified cases. Empty = a pure do-no-harm change.
+func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.Store, provider llm.Provider, intent string, cases []newbehavior.Case, supersedes []string) (ChangeResult, error) {
 	m := brownfield.ScanRepoMap(repoRoot)
 
 	mgr := worktree.New(repoRoot, store)
@@ -58,13 +62,13 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	// manual safety hatch (e.g. a build-tag/codegen change with out-of-import-graph coupling).
 	// See or-3p5.5.
 	apply := func() error {
-		return DiffGenerator(ctx, provider, wt.Path, intent, m.Digest())
+		return DiffGenerator(ctx, provider, wt.Path, intent, m.Digest(), supersedes)
 	}
 	var reg brownfield.RegressionResult
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("ORION_REGRESSION_SCOPE")), "full") {
-		reg, err = brownfield.RegressionGate(ctx, wt.Path, apply)
+		reg, err = brownfield.RegressionGate(ctx, wt.Path, supersedes, apply)
 	} else {
-		reg, err = brownfield.RegressionGateScoped(ctx, wt.Path, m, apply)
+		reg, err = brownfield.RegressionGateScoped(ctx, wt.Path, m, supersedes, apply)
 	}
 	if err != nil {
 		return res, fmt.Errorf("regression gate: %w", err)
