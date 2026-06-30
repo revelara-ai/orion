@@ -3,6 +3,7 @@ package conductor
 import (
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // PhaseStatus is the outcome glyph of a build phase.
@@ -30,6 +31,20 @@ type PhaseSink func(PhaseEvent)
 func (s PhaseSink) emit(phase string, status PhaseStatus, detail string) {
 	if s != nil {
 		s(PhaseEvent{Phase: phase, Status: status, Detail: detail})
+	}
+}
+
+// syncSink wraps a PhaseSink so concurrent emits (from parallel cluster builds, or-tcs.1.4) are
+// serialized — the underlying sink (TUI/CLI) need not be thread-safe. nil in → nil out.
+func syncSink(s PhaseSink) PhaseSink {
+	if s == nil {
+		return nil
+	}
+	var mu sync.Mutex
+	return func(e PhaseEvent) {
+		mu.Lock()
+		defer mu.Unlock()
+		s(e)
 	}
 }
 
