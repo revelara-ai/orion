@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/contextengine"
@@ -185,13 +187,18 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		}
 	}
 
-	proofCache := map[string]proof.Report{}
-	results, err := runDAG(scheduleTasks, func(task orchestrator.PlanTask) (taskResult, error) {
+	// or-tcs.1.4: independent clusters build CONCURRENTLY (bounded by ORION_MAX_AGENTS, default 3),
+	// each in its own worktree; the shared store/memory writes serialize on stateMu and the phase
+	// sink is made concurrency-safe, so the only parallelism is the expensive generate+prove work.
+	maxConc := maxAgentsFromEnv()
+	safeSink := syncSink(onPhase)
+	var stateMu sync.Mutex
+	results, err := runClusterDAG(clusters, scheduleTasks, maxConc, func(task orchestrator.PlanTask, cache map[string]proof.Report) (taskResult, error) {
 		buildDir := clusterWT[clusterByTask[task.ID]]
 		if buildDir == "" {
 			return taskResult{}, fmt.Errorf("task %s has no cluster worktree", task.ID)
 		}
-		return buildOneTask(ctx, store, gen, aligner, onPhase, es, model, gs, contract, requiredIDs, buildDir, proofCache, eng, mem, task)
+		return buildOneTask(ctx, store, gen, aligner, safeSink, es, model, gs, contract, requiredIDs, buildDir, cache, eng, mem, &stateMu, task)
 	})
 	if err != nil {
 		return BuildResult{}, err
@@ -304,7 +311,11 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 // gate — into the task's own build dir. Each task is proven INDEPENDENTLY (the
 // generation⊥proof wall holds per node); the harness-authored corpus is never
 // readable to the generator. Returns the per-task outcome.
-func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink, es spec.ExecutableSpec, model stpa.Model, gs sandbox.GenSpec, contract testsynth.Contract, requiredIDs []string, buildDir string, proofCache map[string]proof.Report, eng *contextengine.Engine, mem *memory.Store, task orchestrator.PlanTask) (taskResult, error) {
+// stateMu (may be nil for the sequential path) serializes the SHARED-STATE touchpoints — the
+// context store + memory subsystem (Dolt is single-writer; neither has an internal lock) — so
+// clusters can build in parallel (or-tcs.1.4) while their store/memory writes stay race-free. The
+// expensive work (generation + proof.ProveAll, in the cluster's own worktree) runs OUTSIDE it.
+func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink, es spec.ExecutableSpec, model stpa.Model, gs sandbox.GenSpec, contract testsynth.Contract, requiredIDs []string, buildDir string, proofCache map[string]proof.Report, eng *contextengine.Engine, mem *memory.Store, stateMu *sync.Mutex, task orchestrator.PlanTask) (taskResult, error) {
 	taskID := task.ID
 	if err := os.MkdirAll(buildDir, 0o755); err != nil {
 		return taskResult{}, fmt.Errorf("build dir: %w", err)
@@ -314,9 +325,11 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	// memory, generation-tier memory quarantined as data-only) and prime the generator
 	// with it. Best-effort — a memory/recall miss simply yields spec-only context.
 	if eng != nil {
-		if bundle, aerr := eng.Assemble(ctx, taskID, es.Intent); aerr == nil {
-			gs.Context = bundle.Render(contextengine.DomainGeneration)
-		}
+		withLock(stateMu, func() {
+			if bundle, aerr := eng.Assemble(ctx, taskID, es.Intent); aerr == nil {
+				gs.Context = bundle.Render(contextengine.DomainGeneration)
+			}
+		})
 	}
 
 	// Surface discovered skills (user-scope + self-evolved) to the generator as available
@@ -444,33 +457,20 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		}
 	}
 
-	closed, err := New(store).ProveAndCloseReport(ctx, taskID, report)
-	if err != nil {
-		return taskResult{}, fmt.Errorf("gate: %w", err)
+	var closed bool
+	var gateErr error
+	withLock(stateMu, func() { closed, gateErr = New(store).ProveAndCloseReport(ctx, taskID, report) })
+	if gateErr != nil {
+		return taskResult{}, fmt.Errorf("gate: %w", gateErr)
 	}
 
 	// Slice 1 (or-hd3.2): populate memory so a LATER task recalls what was proven,
 	// then bound the tier — the context-degradation defense. Best-effort: a memory
 	// write miss never fails an otherwise-green build.
 	if mem != nil {
-		_ = rememberOutcome(ctx, mem, taskID, report)
-		// or-hd3.5: on a non-Accept verdict, capture WHY it failed so the next attempt
-		// avoids it — proof facts trusted, the agent's self-report quarantined. or-7mr: the
-		// last attempt's agent narrative (empty for the deterministic fixture) is the
-		// untrusted half; rememberFailure tags it generation-tier so it can never reach proof.
-		_ = rememberFailure(ctx, mem, taskID, report, lastNarrative)
-		// or-ykz.8: propose a self-evolution candidate from a passing run (generation-tier,
-		// active=false — quarantined AND excluded from recall until the lifecycle activates it).
-		_ = proposeCandidate(ctx, mem, taskID, report)
-		// or-hd3.6: promote hot, frequently-recalled MTM patterns to durable LTM FIRST (so
-		// eviction can't drop a promotion-eligible item), then bound BOTH tiers. Promotion is
-		// within-project + trust-preserving; all three are best-effort.
-		_, _, _ = mem.Promote(ctx)
-		_ = mem.EvictToCapacity(ctx, memory.MTM, memMTMCapacity)
-		_ = mem.EvictToCapacity(ctx, memory.LTM, memLTMCapacity)
-		// or-hd3.7: batched (re-)embed of surviving items for semantic recall. No-op unless
-		// an embedder is configured (ORION_MEMORY_EMBEDDER); kept off the per-item write path.
-		_, _ = mem.Reindex(ctx)
+		withLock(stateMu, func() {
+			memMaintenance(ctx, mem, taskID, report, lastNarrative)
+		})
 	}
 
 	return taskResult{
@@ -478,6 +478,50 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		Closed: closed, BuildDir: buildDir, Attempts: attempts,
 		FailureAnalysis: failureAnalysis, Alignment: alignment,
 	}, nil
+}
+
+// memMaintenance records the proven outcome into memory + bounds the tiers (or-hd3.*). Best-effort
+// (a memory miss never fails an otherwise-green build); called under stateMu so it is race-free
+// when clusters build in parallel.
+func memMaintenance(ctx context.Context, mem *memory.Store, taskID string, report proof.Report, lastNarrative string) {
+	_ = rememberOutcome(ctx, mem, taskID, report)
+	// or-hd3.5: on a non-Accept verdict, capture WHY it failed so the next attempt avoids it —
+	// proof facts trusted, the agent's self-report quarantined. or-7mr: the last attempt's agent
+	// narrative (empty for the deterministic fixture) is the untrusted half; rememberFailure tags
+	// it generation-tier so it can never reach proof.
+	_ = rememberFailure(ctx, mem, taskID, report, lastNarrative)
+	// or-ykz.8: propose a self-evolution candidate from a passing run (generation-tier,
+	// active=false — quarantined AND excluded from recall until the lifecycle activates it).
+	_ = proposeCandidate(ctx, mem, taskID, report)
+	// or-hd3.6: promote hot, frequently-recalled MTM patterns to durable LTM FIRST (so eviction
+	// can't drop a promotion-eligible item), then bound BOTH tiers — all best-effort.
+	_, _, _ = mem.Promote(ctx)
+	_ = mem.EvictToCapacity(ctx, memory.MTM, memMTMCapacity)
+	_ = mem.EvictToCapacity(ctx, memory.LTM, memLTMCapacity)
+	// or-hd3.7: batched (re-)embed of surviving items for semantic recall. No-op unless an
+	// embedder is configured (ORION_MEMORY_EMBEDDER); kept off the per-item write path.
+	_, _ = mem.Reindex(ctx)
+}
+
+// withLock runs f under mu when mu is non-nil (the parallel cluster path); with a nil mu it just
+// runs f (the sequential path). Serializes the shared store/memory touchpoints across clusters.
+func withLock(mu *sync.Mutex, f func()) {
+	if mu != nil {
+		mu.Lock()
+		defer mu.Unlock()
+	}
+	f()
+}
+
+// maxAgentsFromEnv is the bounded-parallelism cap for independent cluster builds (or-tcs.1.4):
+// ORION_MAX_AGENTS when set to a positive int, else 3.
+func maxAgentsFromEnv() int {
+	if v := strings.TrimSpace(os.Getenv("ORION_MAX_AGENTS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+			return n
+		}
+	}
+	return 3
 }
 
 // orderByClusters flattens clusters (already in dependency order) into their member
