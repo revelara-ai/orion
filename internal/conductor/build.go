@@ -204,16 +204,22 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		return BuildResult{}, err
 	}
 
-	// Aggregate the DAG outcome. The Epic is Accept only if every task Accepted; the
-	// lead (first topological) task's proven artifact is the representative build for
-	// the Epic-level delivery decision (combining separate trees is the integration
-	// slice; here every task builds the complete service).
-	rep := results[0]
-	for i := range results {
-		if results[i].Verdict == "Accept" {
-			rep = results[i]
-			break
+	// or-tcs.1.6: assemble the proven clusters. Each accepted cluster integrates ONE AT A TIME
+	// onto a fresh epic head, re-proving the merged tree (proof.ProveAll), so the DELIVERED
+	// artifact is the integrated whole — not one cluster's tree. A merge conflict or a red
+	// post-merge re-proof fails the epic. The Epic is Accept only if every task Accepted AND the
+	// assembly held.
+	reprove := func(ctx context.Context, dir string) (bool, error) {
+		r, perr := proof.ProveAll(ctx, dir, contract, model)
+		if perr != nil {
+			return false, perr
 		}
+		proof.EnforceObligations(requiredIDs, &r)
+		return string(r.Outcome.Verdict) == string(truthalign.Accept), nil
+	}
+	intDir, integrated, ierr := integrateEpic(ctx, wtMgr, clusters, clusterWT, results, managed.Base, reprove, onPhase)
+	if ierr != nil {
+		return BuildResult{}, fmt.Errorf("epic integration: %w", ierr)
 	}
 	aggregateVerdict := truthalign.Accept
 	for _, r := range results {
@@ -222,8 +228,30 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 			break
 		}
 	}
+	if !integrated {
+		aggregateVerdict = truthalign.Reject
+	}
+	// or-tcs.3: system-assembly proof — the per-task proofs do not imply the ASSEMBLED system is
+	// wired. On the integrated tree, every package must be reachable from a main; an orphan (built
+	// but unwired — the "6 orphan packages" lesson) REJECTS the epic even if every task Accepted.
+	if integrated {
+		if wired, orphans := systemWireupGate(intDir); !wired {
+			aggregateVerdict = truthalign.Reject
+			onPhase.emit("SystemValidate", PhaseWarn, fmt.Sprintf("orphan package(s) not wired into the system: %v", orphans))
+		} else {
+			onPhase.emit("SystemValidate", PhaseDone, "assembled wireup clean (no orphan packages)")
+		}
+	}
+	buildDir := intDir // the INTEGRATED tree is the single delivery artifact
+	// Representative task result for the epic-level report fields (id, attempts, alignment).
+	rep := results[0]
+	for _, r := range results {
+		if r.Verdict == "Accept" {
+			rep = r
+			break
+		}
+	}
 	taskID := rep.TaskID
-	buildDir := rep.BuildDir
 
 	// Reliability scan → tier → deployment bar → deliver or escalate (Epic-level, once).
 	findings, _ := reliabilityscan.ScanAndRecord(ctx, store, proj.ID, buildDir)
