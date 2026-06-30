@@ -238,6 +238,26 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	})
 
 	r.Register(tools.Tool{
+		Name:        "remove_requirement",
+		Description: "Remove a behavioral requirement from the DRAFT spec by its id (full or a unique prefix, from list_requirements). The spec is EDITABLE, not append-only: use this when the developer revises or drops a requirement during review. To CHANGE a requirement, remove it then add_requirement the corrected one. (A scalar decision is revised by calling record_answer again — last write wins; you don't remove decisions.)",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","description":"the requirement id to remove (full or unique prefix, from list_requirements)"}},"required":["id"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			if err := c.RemoveRequirement(ctx, p.ID); err != nil {
+				return "", err
+			}
+			reqs, _ := c.Requirements(ctx)
+			return fmt.Sprintf("removed requirement %s; %d requirement(s) remain", p.ID, len(reqs)), nil
+		},
+	})
+
+	r.Register(tools.Tool{
 		Name:        "preview_spec",
 		Description: "Assemble the spec WITHOUT accepting it (fallbacks resolved) and return it as a readable document for the developer to review. It surfaces an ASSUMPTIONS section — decisions resolved by a fallback default that the developer did NOT specify — which the developer should confirm or override before ratifying.",
 		Safety:      tools.Safety{ReadOnly: true},

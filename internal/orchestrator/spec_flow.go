@@ -74,6 +74,49 @@ func (c *Conductor) AddRequirement(ctx context.Context, req spec.Requirement) er
 	return nil
 }
 
+// RemoveRequirement drops the behavioral requirement whose ID matches id (its full content-
+// addressed id or a unique prefix) from the current DRAFT spec — so the developer can REVISE the
+// behavioral contract during the grill, not only append (or-tcs.5: an editable spec). To CHANGE a
+// requirement, remove it then add the corrected one. Errors on no match or an ambiguous prefix.
+func (c *Conductor) RemoveRequirement(ctx context.Context, id string) error {
+	if c.store == nil {
+		return errNoStore
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("requirement id is empty")
+	}
+	_, sp, err := c.currentProjectSpec(ctx)
+	if err != nil {
+		return fmt.Errorf("no current spec to edit: %w", err)
+	}
+	reqs := loadRequirements(sp.Requirements)
+	match := -1
+	for i, r := range reqs {
+		if r.ID == id || strings.HasPrefix(r.ID, id) {
+			if match >= 0 {
+				return fmt.Errorf("requirement id %q is an ambiguous prefix — use a longer id (from list_requirements)", id)
+			}
+			match = i
+		}
+	}
+	if match < 0 {
+		return fmt.Errorf("no requirement matches id %q", id)
+	}
+	reqs = append(reqs[:match], reqs[match+1:]...)
+	b, err := json.Marshal(reqs)
+	if err != nil {
+		return err
+	}
+	if err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+		return tx.Specs().SetRequirements(ctx, sp.ID, string(b))
+	}); err != nil {
+		return err
+	}
+	c.log.InfoContext(ctx, "requirement removed", "id", id)
+	return nil
+}
+
 // Requirements returns the structured behavioral requirements recorded on the
 // current draft spec (for review before ratifying).
 func (c *Conductor) Requirements(ctx context.Context) ([]spec.Requirement, error) {
