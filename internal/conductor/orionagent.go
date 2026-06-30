@@ -3,6 +3,8 @@ package conductor
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/revelara-ai/orion/internal/acp"
@@ -100,8 +102,36 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 	// Surface ratification as a plan signal (the TUI renders it distinctly).
 	if sv, e := a.conductor.SpecView(ctx); e == nil && sv.Status == "accepted" {
 		stream(acp.Update{Kind: "plan", Text: "Spec ratified ✓"})
+		// or-tcs.5: write the spec ARTIFACT — the durable record of the spec-definition phase
+		// (initial intent + the grilling Q&A + the final functional/testing/non-functional
+		// contract + assumptions), scaled by weight (PRD vs design doc). Best-effort: a write
+		// miss never fails the turn.
+		if path, aerr := a.writeSpecArtifact(ctx, convo); aerr == nil && path != "" {
+			stream(acp.Update{Kind: "agent_message", Text: "📄 Spec artifact written: " + path})
+		}
 	}
 	return end, nil
+}
+
+// writeSpecArtifact renders + persists the spec-definition artifact (or-tcs.5): the durable record
+// of the initial intent + the grilling Q&A + the final functional/testing/non-functional contract,
+// weight-scaled (PRD vs design doc). Returns the written path (empty when there is no store).
+func (a *OrionAgent) writeSpecArtifact(ctx context.Context, convo []llm.Message) (string, error) {
+	st := a.conductor.Store()
+	if st == nil {
+		return "", nil
+	}
+	es, err := a.conductor.RecallSpec(ctx)
+	if err != nil {
+		return "", err
+	}
+	dialogue := extractDialogue(convo)
+	doc := SpecArtifact(es, dialogue, specWeight(es, dialogue))
+	path := filepath.Join(st.Dir(), "spec-"+shortHash(es.Hash)+".md")
+	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // systemPrompt primes Orion: the role persona + invariants + how to use the spec
