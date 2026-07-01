@@ -67,6 +67,65 @@ func TestIntegrateEpicAssemblesClustersOntoHead(t *testing.T) {
 	}
 }
 
+// TestIntegrateEpicIsIdempotentOnReRun (or-d3w): a second integrateEpic on the same repo must not
+// crash on the epic-integration branch the first run left behind — it recreates a fresh head. This
+// is the `orion run` re-run case that failed with "a branch named epic-integration already exists".
+func TestIntegrateEpicIsIdempotentOnReRun(t *testing.T) {
+	ctx := context.Background()
+	repo := initManagedRepo(t)
+	mgr := worktree.New(repo, openStore(t)).WithBase("main")
+	clusters := []decomposer.TaskCluster{{Key: "clA", Members: []string{"a1"}}}
+	wt, err := mgr.Create(ctx, "clA", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dogWrite(t, filepath.Join(wt.Path, "clA.go"), "package svc\n\n// clA\n")
+	clusterWT := map[string]string{"clA": wt.Path}
+	results := []taskResult{{TaskID: "a1", Verdict: "Accept"}}
+	green := func(context.Context, string) (bool, error) { return true, nil }
+
+	// First run creates the epic-integration head + branch.
+	if _, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil); err != nil || !ok {
+		t.Fatalf("first run: ok=%v err=%v", ok, err)
+	}
+	// Second run (the re-run) must integrate cleanly despite the leftover epic-integration branch.
+	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil)
+	if err != nil || !ok {
+		t.Fatalf("re-run must integrate without an epic-integration collision: ok=%v err=%v", ok, err)
+	}
+	if _, err := os.Stat(filepath.Join(headDir, "clA.go")); err != nil {
+		t.Errorf("the re-run head must carry the assembled file: %v", err)
+	}
+}
+
+// TestClusterWorktreeSetIsIdempotentOnReRun (or-d3w): the re-run collision fires FIRST at cluster
+// allocation — clusterWorktreeSet must not collide on the cl.Key branches a prior run's cleanup left
+// behind (Remove drops the worktree, not the branch). Without the Recreate fix this crashes with
+// "a branch named scaffold already exists" before integrateEpic is ever reached.
+func TestClusterWorktreeSetIsIdempotentOnReRun(t *testing.T) {
+	ctx := context.Background()
+	repo := initManagedRepo(t)
+	mgr := worktree.New(repo, openStore(t)).WithBase("main")
+	clusters := []decomposer.TaskCluster{{Key: "scaffold", Members: []string{"a1"}}, {Key: "handler", Members: []string{"b1"}}}
+
+	// First run: allocate the cluster worktrees, then clean them up (leaving the branches behind).
+	if _, cleanup1, err := clusterWorktreeSet(ctx, mgr, clusters, "main"); err != nil {
+		t.Fatalf("first clusterWorktreeSet: %v", err)
+	} else {
+		cleanup1()
+	}
+
+	// Second run must NOT collide on the leftover scaffold/handler branches.
+	paths, cleanup2, err := clusterWorktreeSet(ctx, mgr, clusters, "main")
+	if err != nil {
+		t.Fatalf("re-run clusterWorktreeSet must not collide on leftover cluster branches: %v", err)
+	}
+	defer cleanup2()
+	if len(paths) != 2 {
+		t.Errorf("re-run should re-allocate both cluster worktrees, got %d", len(paths))
+	}
+}
+
 // TestIntegrateEpicRollsBackOnRedAssembly: a RED post-merge re-proof fails the epic — the assembly
 // gate is not a rubber stamp. Uses TWO clusters: the re-proof only runs for a non-trivial assembly
 // (a single cluster fast-forwards to its already-proven tree, so its re-proof is skipped).
