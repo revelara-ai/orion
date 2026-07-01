@@ -48,6 +48,7 @@ type BuildResult struct {
 	TaskID          string
 	Verdict         string // converged proof verdict (Accept/Reject); aggregate over the DAG
 	Closed          bool   // lead task closed (verification-gated done)
+	Partial         bool   // or-v9f.5: the proven subset was delivered; the remainder escalated
 	Tier            string
 	Delivery        string // "deliver" | "escalate"
 	Reason          string // escalation reason, if any
@@ -228,16 +229,6 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	if ierr != nil {
 		return BuildResult{}, fmt.Errorf("epic integration: %w", ierr)
 	}
-	aggregateVerdict := truthalign.Accept
-	for _, r := range results {
-		if r.Verdict != "Accept" {
-			aggregateVerdict = truthalign.Reject
-			break
-		}
-	}
-	if !integrated {
-		aggregateVerdict = truthalign.Reject
-	}
 	buildDir := intDir // the INTEGRATED tree is the single delivery artifact
 	// Representative task result (report fields + the assembled proof the drift check re-evaluates).
 	rep := results[0]
@@ -255,12 +246,11 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	//  - or-tcs.10 (drift REPORT): surface the spec↔build alignment (coverage + wireup) so drift is
 	//    visible to the developer, citing the artifact — the structured hook the scope-creep check
 	//    extends once builds produce distinct modules.
+	wired := true
 	var driftLine string // the SystemValidate re-evaluation, cited in the PR handoff (or-tcs.7)
 	if integrated {
-		wired, orphans := systemWireupGate(intDir)
-		if !wired {
-			aggregateVerdict = truthalign.Reject
-		}
+		var orphans []string
+		wired, orphans = systemWireupGate(intDir)
 		// Judge coverage against the assembled proof when the integrator re-proved it; for a
 		// single-cluster epic the integrator fast-forwards (no reprove) and the head is byte-identical
 		// to the already-proven cluster, so rep.Report is the assembled proof.
@@ -277,6 +267,14 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		onPhase.emit("SystemValidate", status, dr)
 	}
 
+	// or-v9f.5: the epic verdict stays honest (any failed task rejects it), but a
+	// proven, dependency-complete, WIRED subset is still deliverable — one failed
+	// task no longer suppresses its proven siblings. The bar and the PR speak for
+	// the artifact actually shipped (barVerdict); the remainder is escalated.
+	outcome := evaluateEpicOutcome(results, integrated, wired)
+	aggregateVerdict := outcome.aggregate
+	remainder := escalatedRemainder(results)
+
 	// Reliability scan → tier → deployment bar → deliver or escalate (Epic-level, once).
 	findings, _ := reliabilityscan.ScanAndRecord(ctx, store, proj.ID, buildDir)
 	tier := reliabilitytier.Classify(reliabilityscan.DeriveDimensions(findings))
@@ -286,7 +284,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		Assumptions:            assumptions(model),
 	}
 	securityOK := proof.SecurityClean(buildDir)
-	res := delivery.EvaluateBar(aggregateVerdict, []string{"behavioral", "empirical", "hazard"}, reliabilitytier.PolicyFor(tier), env, securityOK)
+	res := delivery.EvaluateBar(outcome.barVerdict, []string{"behavioral", "empirical", "hazard"}, reliabilitytier.PolicyFor(tier), env, securityOK)
 	// Red Button (or-utm): while engaged, autonomy is revoked — never auto-deliver.
 	if rb := (actuation.RedButton{Path: filepath.Join(store.Dir(), "red_button")}); res.Decision == delivery.Deliver && rb.AutonomyRevoked() {
 		res = delivery.Result{Decision: delivery.Escalate, Reason: "red button engaged: autonomy revoked, human delivery required"}
@@ -303,19 +301,32 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 			if _, e = tx.Deliveries().Create(ctx, epic.ID, string(envJSON), string(rbJSON)); e != nil {
 				return e
 			}
+			if outcome.partial {
+				// or-v9f.5: a PARTIAL delivery leaves the project active — the
+				// escalated remainder is still its work; the queue does not advance.
+				return nil
+			}
 			// or-v9f.1: a delivered project leaves the active slot so the next
 			// queued intent can start; recorded in the same tx as the delivery.
 			return tx.Projects().SetStatus(ctx, proj.ID, "delivered")
 		})
-		if next, promoted, perr := store.ActivateNextQueued(ctx); perr == nil && promoted {
+		if outcome.partial {
+			onPhase.emit("Deliver", PhaseWarn, "PARTIAL delivery — escalated remainder:\n"+remainder)
+		} else if next, promoted, perr := store.ActivateNextQueued(ctx); perr == nil && promoted {
 			onPhase.emit("Queue", PhaseDone, fmt.Sprintf("next intent activated: %s", next.Intent))
 		}
-	} else {
+	}
+	if res.Decision != delivery.Deliver || outcome.partial {
 		// or-v9f.4: one escalation per FAILING task, each carrying its causal
 		// analysis as the decision payload — never attributed to the
 		// representative task, which is by construction an ACCEPTED one. With
 		// every task green (bar/security/red-button escalations) the row is
-		// project-level (empty task_id) rather than misattributed.
+		// project-level (empty task_id) rather than misattributed. A partial
+		// delivery (or-v9f.5) escalates its remainder the same way.
+		reason := res.Reason
+		if outcome.partial && reason == "" {
+			reason = "partial delivery: task did not prove; proven siblings shipped"
+		}
 		_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
 			failed := 0
 			for _, r := range results {
@@ -323,12 +334,12 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 					continue
 				}
 				failed++
-				if _, e := tx.Escalations().CreateDetailed(ctx, proj.ID, r.TaskID, res.Reason, r.FailureAnalysis); e != nil {
+				if _, e := tx.Escalations().CreateDetailed(ctx, proj.ID, r.TaskID, reason, r.FailureAnalysis); e != nil {
 					return e
 				}
 			}
 			if failed == 0 {
-				_, e := tx.Escalations().CreateDetailed(ctx, proj.ID, "", res.Reason, driftLine)
+				_, e := tx.Escalations().CreateDetailed(ctx, proj.ID, "", reason, driftLine)
 				return e
 			}
 			return nil
@@ -349,7 +360,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	var outputDir string
 	var gitDelivery GitDelivery
 	var prResult PRResult
-	if aggregateVerdict == truthalign.Accept && outRoot != "" {
+	if outcome.barVerdict == truthalign.Accept && outRoot != "" {
 		dest := ServiceOutputDir(outRoot, es)
 		if files, eerr := ExportProvenCode(buildDir, dest, es); eerr != nil {
 			onPhase.emit("Deliver", PhaseWarn, "code proven but export failed: "+eerr.Error())
@@ -374,7 +385,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 					// Local review artifact always; a real PR only when opted in + remote + gh exist.
 					if res.Decision == delivery.Deliver {
 						runbook := delivery.GenerateRunbook(es, model, env)
-						if pr, perr := PRHandoff(ctx, root, store.Dir(), d, es, aggregateVerdict, driftLine, runbook); perr != nil {
+						if pr, perr := PRHandoff(ctx, root, store.Dir(), d, es, outcome.barVerdict, driftLine, remainder, runbook); perr != nil {
 							prResult = pr // still carries the artifact + commands even if push/gh failed
 							onPhase.emit("Deliver", PhaseWarn, "PR handoff: "+perr.Error())
 						} else {
@@ -395,6 +406,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 
 	return BuildResult{
 		TaskID: taskID, Verdict: string(aggregateVerdict), Closed: rep.Closed,
+		Partial:   outcome.partial,
 		OutputDir: outputDir,
 		Tier:      string(tier), Delivery: string(res.Decision), Reason: res.Reason, BuildDir: buildDir,
 		Git:       gitDelivery,

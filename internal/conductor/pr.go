@@ -51,7 +51,7 @@ func deliveryBase(ctx context.Context, repoRoot string) string {
 // remote AND gh is on PATH. Otherwise it records the exact push/PR commands and takes no outward
 // action. The integration step already produced the feature branch (GitDeliver); this is the PR
 // layer over it.
-func PRHandoff(ctx context.Context, repoRoot, storeDir string, d GitDelivery, es spec.ExecutableSpec, verdict truthalign.Verdict, driftLine string, rb delivery.Runbook) (PRResult, error) {
+func PRHandoff(ctx context.Context, repoRoot, storeDir string, d GitDelivery, es spec.ExecutableSpec, verdict truthalign.Verdict, driftLine, remainder string, rb delivery.Runbook) (PRResult, error) {
 	base := deliveryBase(ctx, repoRoot)
 	res := PRResult{Branch: d.Branch, Base: base}
 
@@ -64,7 +64,7 @@ func PRHandoff(ctx context.Context, repoRoot, storeDir string, d GitDelivery, es
 		}
 	}
 
-	body := prBody(es, verdict, driftLine, diffstat, rb)
+	body := prBody(es, verdict, driftLine, remainder, diffstat, rb)
 	artifactPath := filepath.Join(storeDir, "pr-"+serviceSlug(es)+".md")
 	if err := os.WriteFile(artifactPath, []byte(body), 0o600); err != nil {
 		return res, fmt.Errorf("write PR artifact: %w", err)
@@ -105,7 +105,7 @@ func PRHandoff(ctx context.Context, repoRoot, storeDir string, d GitDelivery, es
 // the reviewable handoff (or-tcs.7). It carries the epic's provenance so the developer can judge
 // the change without re-deriving it: the intent, the spec anchor, the proof verdict + evidence
 // classes, the SystemValidate drift/wireup re-evaluation (or-tcs.10), the diff, and the runbook.
-func prBody(es spec.ExecutableSpec, verdict truthalign.Verdict, driftLine, diffstat string, rb delivery.Runbook) string {
+func prBody(es spec.ExecutableSpec, verdict truthalign.Verdict, driftLine, remainder, diffstat string, rb delivery.Runbook) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %s\n\n", strings.TrimSpace(es.Intent))
 	b.WriteString("_Generated and independently proven by Orion._\n\n")
@@ -120,6 +120,14 @@ func prBody(es spec.ExecutableSpec, verdict truthalign.Verdict, driftLine, diffs
 		fmt.Fprintf(&b, "- System validation: %s\n", driftLine)
 	}
 	b.WriteString("\n")
+
+	if strings.TrimSpace(remainder) != "" {
+		// or-v9f.5: a PARTIAL delivery — the reviewer must see exactly what is NOT
+		// in this PR and why it was escalated instead of shipped.
+		b.WriteString("### Escalated remainder (NOT in this delivery)\n")
+		b.WriteString(strings.TrimRight(remainder, "\n"))
+		b.WriteString("\n\n")
+	}
 
 	if strings.TrimSpace(diffstat) != "" {
 		b.WriteString("### Changes\n```\n")

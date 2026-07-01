@@ -26,7 +26,7 @@ func TestPRBodyCapturesProvenance(t *testing.T) {
 	driftLine := "spec↔build drift check — aligned: coverage 2/2 spec obligations proven; wireup clean"
 	diffstat := " time-service/main.go | 42 ++++++\n 1 file changed, 42 insertions(+)"
 
-	body := prBody(es, truthalign.Accept, driftLine, diffstat, rb)
+	body := prBody(es, truthalign.Accept, driftLine, "", diffstat, rb)
 
 	for _, want := range []string{
 		"Build an HTTP service that returns the current time", // intent
@@ -74,6 +74,7 @@ func TestPRHandoffLocalFirstNoRemote(t *testing.T) {
 
 	res, err := PRHandoff(context.Background(), repoRoot, storeDir, d, es, truthalign.Accept,
 		"spec↔build drift check — aligned: coverage 1/1 spec obligations proven; wireup clean",
+		"- t-bad: empirical probe: port never opened\n",
 		delivery.Runbook{Sections: map[string]string{"Rollback": "revert the orion branch"}})
 	if err != nil {
 		t.Fatalf("PRHandoff: %v", err)
@@ -90,6 +91,10 @@ func TestPRHandoffLocalFirstNoRemote(t *testing.T) {
 	}
 	if !strings.Contains(string(got), "time service") || !strings.Contains(string(got), "drift check") {
 		t.Errorf("artifact missing provenance:\n%s", got)
+	}
+	// or-v9f.5: a partial delivery's PR must show the reviewer what is NOT in it.
+	if !strings.Contains(string(got), "Escalated remainder") || !strings.Contains(string(got), "t-bad") {
+		t.Errorf("artifact missing the escalated remainder section:\n%s", got)
 	}
 	if filepath.Dir(res.ArtifactPath) != storeDir {
 		t.Errorf("artifact should live in the store dir %q, got %q", storeDir, res.ArtifactPath)
