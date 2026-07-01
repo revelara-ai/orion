@@ -46,7 +46,7 @@ func TestIndependentClustersRunInParallelBounded(t *testing.T) {
 		return taskResult{TaskID: task.ID, Verdict: "Accept"}, nil
 	}
 
-	results, err := runClusterDAG(clusters, tasks, N, runTask)
+	results, err := runClusterDAG(clusters, tasks, N, runTask, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestClusterBlockedWhenDependencyRejects(t *testing.T) {
 		}
 		return taskResult{TaskID: task.ID, Verdict: v}, nil
 	}
-	results, err := runClusterDAG(clusters, tasks, 2, runTask)
+	results, err := runClusterDAG(clusters, tasks, 2, runTask, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
