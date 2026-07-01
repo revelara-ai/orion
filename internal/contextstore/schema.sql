@@ -6,6 +6,9 @@ CREATE TABLE IF NOT EXISTS projects (
     name         TEXT NOT NULL,
     intent       TEXT NOT NULL,
     project_type TEXT NOT NULL DEFAULT 'http-service',
+    -- single-active queue lifecycle (or-v9f.1): at most one 'active' project;
+    -- 'queued' intents wait FIFO; 'delivered'/'abandoned' are terminal.
+    status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('queued','active','delivered','abandoned')),
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
 );

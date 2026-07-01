@@ -11,6 +11,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -133,36 +134,68 @@ func (c *Conductor) Submit(ctx context.Context, intent string) (Confirmation, er
 		}
 	}
 
-	c.mu.Lock()
-	c.intent = trimmed
 	// Choose the project type from the intent (deterministic; default http-service)
 	// so the gate raises the right functional decisions and the decomposer uses the
 	// right per-type task template. A clear CLI/library/worker signal switches it;
 	// otherwise the V2.0 http-service path is unchanged (or-3ba.2).
 	ptype := completeness.InferProjectType(trimmed)
-	c.gate = completeness.NewAnalyzer(ptype)
-	c.mu.Unlock()
 
 	// Persist the intent as a project + draft spec so it survives a restart. The
-	// project + spec commit as one transaction (atomic intake).
+	// project + spec commit as one transaction (atomic intake). When a project is
+	// already ACTIVE, the new intent ENQUEUES behind it (or-v9f.1) — a second
+	// submit must never silently orphan the work in flight — and the in-memory
+	// gate keeps targeting the active project.
 	if c.store != nil {
 		var projectID string
+		var queuedBehind *contextstore.Project
+		var position int
 		err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+			active, aerr := tx.Projects().Active(ctx)
+			switch {
+			case aerr == nil:
+				queuedBehind = &active
+			case !errors.Is(aerr, contextstore.ErrNotFound):
+				return aerr
+			}
 			pid, err := tx.Projects().Create(ctx, projectName(trimmed), trimmed, ptype)
 			if err != nil {
 				return err
 			}
 			projectID = pid
+			if queuedBehind != nil {
+				if err := tx.Projects().SetStatus(ctx, pid, "queued"); err != nil {
+					return err
+				}
+				queued, qerr := tx.Projects().ListByStatus(ctx, "queued")
+				if qerr != nil {
+					return qerr
+				}
+				position = len(queued)
+			}
 			_, err = tx.Specs().CreateDraft(ctx, pid)
 			return err
 		})
 		if err != nil {
 			return Confirmation{}, fmt.Errorf("persist intent: %w", err)
 		}
+		if queuedBehind != nil {
+			c.log.InfoContext(ctx, "intent queued", "intent", trimmed, "behind", queuedBehind.Intent, "position", position)
+			return Confirmation{
+				Intent:   trimmed,
+				Accepted: true,
+				Message: fmt.Sprintf("Queued (position %d): %q waits behind the active intent %q. Finish or abandon the active one (orion queue next / orion queue abandon) and it starts automatically.",
+					position, trimmed, queuedBehind.Intent),
+			}, nil
+		}
 		c.mu.Lock()
 		c.projectID = projectID
 		c.mu.Unlock()
 	}
+
+	c.mu.Lock()
+	c.intent = trimmed
+	c.gate = completeness.NewAnalyzer(ptype)
+	c.mu.Unlock()
 
 	// Run the deterministic completeness gate. Unresolved dimensions become open
 	// decisions the developer must answer — we never silently guess.

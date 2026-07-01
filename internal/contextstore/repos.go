@@ -17,6 +17,7 @@ type Project struct {
 	Name        string
 	Intent      string
 	ProjectType string // http-service (default) | cli | library | worker — the inferred build type (or-3ba.5)
+	Status      string // queued | active | delivered | abandoned — single-active invariant (or-v9f.1)
 	CreatedAt   string
 	UpdatedAt   string
 }
@@ -106,7 +107,7 @@ func (r *ProjectRepo) Create(ctx context.Context, name, intent, projectType stri
 	}
 	id, now := newID(), nowRFC3339()
 	_, err := r.tx.ExecContext(ctx,
-		`INSERT INTO projects (id, name, intent, project_type, created_at, updated_at) VALUES (?,?,?,?,?,?)`,
+		`INSERT INTO projects (id, name, intent, project_type, status, created_at, updated_at) VALUES (?,?,?,?,'active',?,?)`,
 		id, name, intent, projectType, now, now)
 	if err != nil {
 		return "", fmt.Errorf("create project: %w", err)
@@ -115,22 +116,53 @@ func (r *ProjectRepo) Create(ctx context.Context, name, intent, projectType stri
 }
 
 func (r *ProjectRepo) Get(ctx context.Context, id string) (Project, error) {
-	var p Project
-	err := r.tx.QueryRowContext(ctx,
-		`SELECT id, name, intent, project_type, created_at, updated_at FROM projects WHERE id=?`, id).
-		Scan(&p.ID, &p.Name, &p.Intent, &p.ProjectType, &p.CreatedAt, &p.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Project{}, ErrNotFound
-	}
-	return p, err
+	return r.one(ctx, `SELECT id, name, intent, project_type, status, created_at, updated_at FROM projects WHERE id=?`, id)
 }
 
 // Latest returns the most recently created project.
 func (r *ProjectRepo) Latest(ctx context.Context) (Project, error) {
+	return r.one(ctx, `SELECT id, name, intent, project_type, status, created_at, updated_at FROM projects ORDER BY created_at DESC, id DESC LIMIT 1`)
+}
+
+// Active returns the single in-flight project (status='active'). The queue
+// semantics keep at most one row active; ties (a corrupted invariant) resolve
+// to the most recent so reads stay deterministic.
+func (r *ProjectRepo) Active(ctx context.Context) (Project, error) {
+	return r.one(ctx, `SELECT id, name, intent, project_type, status, created_at, updated_at FROM projects WHERE status='active' ORDER BY created_at DESC, id DESC LIMIT 1`)
+}
+
+// OldestQueued returns the FIFO head of the intent queue.
+func (r *ProjectRepo) OldestQueued(ctx context.Context) (Project, error) {
+	return r.one(ctx, `SELECT id, name, intent, project_type, status, created_at, updated_at FROM projects WHERE status='queued' ORDER BY created_at ASC, id ASC LIMIT 1`)
+}
+
+// ListByStatus returns projects with the given status, oldest first (queue order).
+func (r *ProjectRepo) ListByStatus(ctx context.Context, status string) ([]Project, error) {
+	rows, err := r.tx.QueryContext(ctx,
+		`SELECT id, name, intent, project_type, status, created_at, updated_at FROM projects WHERE status=? ORDER BY created_at ASC, id ASC`, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanProjects(rows)
+}
+
+// SetStatus moves a project through the queue lifecycle (queued|active|delivered|abandoned).
+func (r *ProjectRepo) SetStatus(ctx context.Context, id, status string) error {
+	res, err := r.tx.ExecContext(ctx, `UPDATE projects SET status=?, updated_at=? WHERE id=?`, status, nowRFC3339(), id)
+	if err != nil {
+		return fmt.Errorf("set project status: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *ProjectRepo) one(ctx context.Context, query string, args ...any) (Project, error) {
 	var p Project
-	err := r.tx.QueryRowContext(ctx,
-		`SELECT id, name, intent, project_type, created_at, updated_at FROM projects ORDER BY created_at DESC, id DESC LIMIT 1`).
-		Scan(&p.ID, &p.Name, &p.Intent, &p.ProjectType, &p.CreatedAt, &p.UpdatedAt)
+	err := r.tx.QueryRowContext(ctx, query, args...).
+		Scan(&p.ID, &p.Name, &p.Intent, &p.ProjectType, &p.Status, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Project{}, ErrNotFound
 	}
@@ -139,15 +171,19 @@ func (r *ProjectRepo) Latest(ctx context.Context) (Project, error) {
 
 func (r *ProjectRepo) List(ctx context.Context) ([]Project, error) {
 	rows, err := r.tx.QueryContext(ctx,
-		`SELECT id, name, intent, project_type, created_at, updated_at FROM projects ORDER BY created_at DESC, id`)
+		`SELECT id, name, intent, project_type, status, created_at, updated_at FROM projects ORDER BY created_at DESC, id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanProjects(rows)
+}
+
+func scanProjects(rows *sql.Rows) ([]Project, error) {
 	var out []Project
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.Intent, &p.ProjectType, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Intent, &p.ProjectType, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

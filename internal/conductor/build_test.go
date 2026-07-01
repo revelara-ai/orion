@@ -57,6 +57,12 @@ func TestBuildAndProveFixture(t *testing.T) {
 	}
 	oc, ctx := ratifiedTimeService(t)
 
+	// A second intent submitted mid-flight queues behind the active one (or-v9f.1);
+	// delivery must promote it into the active slot.
+	if _, err := oc.Submit(ctx, "Build an HTTP service that returns a WAITING greeting."); err != nil {
+		t.Fatalf("queued submit: %v", err)
+	}
+
 	res, err := BuildAndProve(ctx, oc.Store(), nil, nil, nil, "")
 	if err != nil {
 		t.Fatalf("build: %v", err)
@@ -66,6 +72,16 @@ func TestBuildAndProveFixture(t *testing.T) {
 	}
 	if res.Verdict != "Accept" || !res.Closed {
 		t.Fatalf("canonical fixture must prove green and close the task: %+v", res)
+	}
+	if res.Delivery == "Deliver" {
+		// The delivered project leaves the active slot and the queued intent starts.
+		p, _, cerr := oc.Store().CurrentProjectSpec(ctx)
+		if cerr != nil {
+			t.Fatalf("after delivery the queued intent must be active: %v", cerr)
+		}
+		if !strings.Contains(p.Intent, "WAITING") {
+			t.Fatalf("delivery must promote the FIFO head, active is: %q", p.Intent)
+		}
 	}
 }
 
