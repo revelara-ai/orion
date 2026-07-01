@@ -155,3 +155,42 @@ func TestIntegrateEpicRollsBackOnRedAssembly(t *testing.T) {
 		t.Fatal("a red post-merge re-proof must fail the epic assembly (ok=false)")
 	}
 }
+
+// TestIntegrateEpicAssemblesAcceptedSubset (or-v9f.5): a failed cluster is skipped
+// and the ACCEPTED subset still assembles cleanly (ok=true) — the head carries the
+// accepted cluster's files and none of the failed one's. This is the artifact
+// partial delivery ships.
+func TestIntegrateEpicAssemblesAcceptedSubset(t *testing.T) {
+	ctx := context.Background()
+	repo := initManagedRepo(t)
+	mgr := worktree.New(repo, openStore(t)).WithBase("main")
+	clusters := []decomposer.TaskCluster{
+		{Key: "clOK", Members: []string{"a1"}},
+		{Key: "clBAD", Members: []string{"b1"}},
+	}
+	clusterWT := map[string]string{}
+	for _, cl := range clusters {
+		wt, err := mgr.Create(ctx, cl.Key, "main")
+		if err != nil {
+			t.Fatal(err)
+		}
+		clusterWT[cl.Key] = wt.Path
+		dogWrite(t, filepath.Join(wt.Path, cl.Key+".go"), "package svc\n\n// "+cl.Key+"\n")
+	}
+	results := []taskResult{{TaskID: "a1", Verdict: "Accept"}, {TaskID: "b1", Verdict: "Reject"}}
+	green := func(context.Context, string) (bool, error) { return true, nil }
+
+	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("the accepted subset must assemble cleanly even when a sibling cluster failed")
+	}
+	if _, err := os.Stat(filepath.Join(headDir, "clOK.go")); err != nil {
+		t.Errorf("accepted cluster's file must be on the integration head: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(headDir, "clBAD.go")); err == nil {
+		t.Error("failed cluster's file must NOT be on the integration head")
+	}
+}
