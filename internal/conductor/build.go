@@ -209,12 +209,18 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	// artifact is the integrated whole — not one cluster's tree. A merge conflict or a red
 	// post-merge re-proof fails the epic. The Epic is Accept only if every task Accepted AND the
 	// assembly held.
+	// The reprove closure runs on each assembled head (serialized by the integration queue), so the
+	// LAST run leaves the proof of the fully assembled tree — capture it so the drift check re-evaluates
+	// coverage against the delivered WHOLE, not one cluster's slice.
+	var assembledReport proof.Report
+	var haveAssembled bool
 	reprove := func(ctx context.Context, dir string) (bool, error) {
 		r, perr := proof.ProveAll(ctx, dir, contract, model)
 		if perr != nil {
 			return false, perr
 		}
 		proof.EnforceObligations(requiredIDs, &r)
+		assembledReport, haveAssembled = r, true
 		return string(r.Outcome.Verdict) == string(truthalign.Accept), nil
 	}
 	intDir, integrated, ierr := integrateEpic(ctx, wtMgr, clusters, clusterWT, results, managed.Base, reprove, onPhase)
@@ -231,19 +237,8 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	if !integrated {
 		aggregateVerdict = truthalign.Reject
 	}
-	// or-tcs.3: system-assembly proof — the per-task proofs do not imply the ASSEMBLED system is
-	// wired. On the integrated tree, every package must be reachable from a main; an orphan (built
-	// but unwired — the "6 orphan packages" lesson) REJECTS the epic even if every task Accepted.
-	if integrated {
-		if wired, orphans := systemWireupGate(intDir); !wired {
-			aggregateVerdict = truthalign.Reject
-			onPhase.emit("SystemValidate", PhaseWarn, fmt.Sprintf("orphan package(s) not wired into the system: %v", orphans))
-		} else {
-			onPhase.emit("SystemValidate", PhaseDone, "assembled wireup clean (no orphan packages)")
-		}
-	}
 	buildDir := intDir // the INTEGRATED tree is the single delivery artifact
-	// Representative task result for the epic-level report fields (id, attempts, alignment).
+	// Representative task result (report fields + the assembled proof the drift check re-evaluates).
 	rep := results[0]
 	for _, r := range results {
 		if r.Verdict == "Accept" {
@@ -252,6 +247,32 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		}
 	}
 	taskID := rep.TaskID
+
+	// SYSTEM VALIDATION — re-evaluate the ASSEMBLED tree against the spec artifact.
+	//  - or-tcs.3 (wireup GATE): every package must be reachable from a main; an orphan (built but
+	//    unwired — the "6 orphan packages" lesson) REJECTS the epic even if every task Accepted.
+	//  - or-tcs.10 (drift REPORT): surface the spec↔build alignment (coverage + wireup) so drift is
+	//    visible to the developer, citing the artifact — the structured hook the scope-creep check
+	//    extends once builds produce distinct modules.
+	if integrated {
+		wired, orphans := systemWireupGate(intDir)
+		if !wired {
+			aggregateVerdict = truthalign.Reject
+		}
+		// Judge coverage against the assembled proof when the integrator re-proved it; for a
+		// single-cluster epic the integrator fast-forwards (no reprove) and the head is byte-identical
+		// to the already-proven cluster, so rep.Report is the assembled proof.
+		driftProof := rep.Report
+		if haveAssembled {
+			driftProof = assembledReport
+		}
+		dr, drift := driftReport(es, driftProof, orphans)
+		status := PhaseDone
+		if drift {
+			status = PhaseWarn
+		}
+		onPhase.emit("SystemValidate", status, dr)
+	}
 
 	// Reliability scan → tier → deployment bar → deliver or escalate (Epic-level, once).
 	findings, _ := reliabilityscan.ScanAndRecord(ctx, store, proj.ID, buildDir)
