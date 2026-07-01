@@ -322,6 +322,15 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			if res.Git.Branch != "" {
 				out += fmt.Sprintf("\nCommitted to branch %s (%s) — worktree: %s", res.Git.Branch, res.Git.Commit, res.Git.Path)
 			}
+			// or-tcs.7: surface the PR handoff over the feature branch.
+			if res.PR.Opened {
+				out += "\nPR opened: " + res.PR.URL
+			} else if res.PR.ArtifactPath != "" {
+				out += "\nPR-ready for review: " + res.PR.ArtifactPath
+				if len(res.PR.Commands) > 0 {
+					out += "\n  open it with:\n    " + strings.Join(res.PR.Commands, "\n    ")
+				}
+			}
 			if res.Reason != "" {
 				out += "\nEscalation: " + res.Reason
 			}
