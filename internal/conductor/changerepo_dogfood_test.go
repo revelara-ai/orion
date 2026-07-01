@@ -150,6 +150,13 @@ func TestChangeRepoDogfood_ToolingChange(t *testing.T) {
 	if !res.Committed {
 		t.Fatalf("an honest, proven tooling change must be COMMITTED; got NOT committed: %s", res.Reason)
 	}
+	// or-v9f.15: the change flow now speaks the delivery tail's decision semantic.
+	if res.Delivery != "deliver" {
+		t.Errorf("a committed change is a deliver decision, got %q", res.Delivery)
+	}
+	if res.Tier == "" {
+		t.Errorf("a committed change must carry its classified reliability tier")
+	}
 	out, _ := exec.Command("git", "-C", repo, "log", "--oneline", res.Branch).CombinedOutput()
 	if !strings.Contains(string(out), "orion:") {
 		t.Errorf("expected an orion commit on review branch %s, got:\n%s", res.Branch, out)

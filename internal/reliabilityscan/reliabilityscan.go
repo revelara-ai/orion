@@ -70,12 +70,18 @@ func ScanArtifact(artifactDir string) ([]Finding, error) {
 	if err != nil {
 		return nil, err
 	}
-	src := string(b)
+	return ScanSource(string(b)), nil
+}
+
+// ScanSource runs the detector fleet over one source file's contents — the
+// brownfield change flow uses it per CHANGED file, since a change worktree has
+// no single main.go artifact (or-v9f.15).
+func ScanSource(src string) []Finding {
 	var findings []Finding
 	for _, d := range fleet {
 		findings = append(findings, d.scan(src)...)
 	}
-	return findings, nil
+	return findings
 }
 
 // ScanAndRecord scans and writes the findings to the risk register (persisted in

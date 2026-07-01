@@ -5,13 +5,18 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
+	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/brownfield"
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/llm"
+	"github.com/revelara-ai/orion/internal/proof"
 	"github.com/revelara-ai/orion/internal/proof/newbehavior"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
+	"github.com/revelara-ai/orion/internal/reliabilityscan"
+	"github.com/revelara-ai/orion/internal/reliabilitytier"
 	"github.com/revelara-ai/orion/internal/worktree"
 )
 
@@ -24,6 +29,8 @@ type ChangeResult struct {
 	NewBehavior  *truthalign.ModeResult // nil when no ratified cases were supplied
 	Committed    bool
 	Reason       string // why not committed, if applicable
+	Tier         string // reliability tier classified from the change worktree (or-v9f.15)
+	Delivery     string // "deliver" | "escalate" — the same decision semantic as the greenfield bar
 }
 
 // ChangeAndProve runs the brownfield change loop end-to-end: it creates a WORKTREE off
@@ -78,6 +85,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 
 	if !reg.Held {
 		res.Reason = reg.Reason
+		res.Delivery = "escalate"
 		return res, nil // change generated but it did not preserve existing behavior — not committed
 	}
 
@@ -92,8 +100,28 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		res.NewBehavior = &mr
 		if !mr.Pass {
 			res.Reason = "regression held, but the new-behavior proof did not pass"
+			res.Delivery = "escalate"
 			return res, nil // change preserved existing behavior but did not prove the asked-for behavior — not committed
 		}
+	}
+
+	// or-v9f.15: the change flow gets the delivery tail's gates — previously it
+	// committed with no security check and even while the red button was engaged.
+	// The security gate judges the CHANGE, not the repo: only findings inside the
+	// changed files block, so pre-existing debt never wedges brownfield work.
+	if findings := secretFindingsInChanged(wt.Path, res.FilesChanged); len(findings) > 0 {
+		res.Reason = "security gate: hardcoded secret(s) introduced by the change: " + strings.Join(findings, ", ")
+		res.Delivery = "escalate"
+		return res, nil
+	}
+	rb := actuation.RedButton{}
+	if store != nil {
+		rb.Path = filepath.Join(store.Dir(), "red_button")
+	}
+	if gerr := rb.Guard("commit change branch"); gerr != nil {
+		res.Reason = gerr.Error()
+		res.Delivery = "escalate"
+		return res, nil
 	}
 
 	// Stage ONLY the intended change. res.FilesChanged was snapshotted right after the edit,
@@ -102,6 +130,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	// A blanket `git add -A` would commit that junk; staging the snapshot keeps the commit clean.
 	if len(res.FilesChanged) == 0 {
 		res.Reason = "the generator produced no file changes"
+		res.Delivery = "escalate"
 		return res, nil
 	}
 	if _, err := gitIn(ctx, wt.Path, append([]string{"add", "-A", "--"}, res.FilesChanged...)...); err != nil {
@@ -113,7 +142,42 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		return res, err
 	}
 	res.Committed = true
+	res.Delivery = "deliver"
+	// Tier classification over the CHANGED files (a change worktree has no single
+	// main.go artifact; non-Go changes classify at the base tier). Pure scan — a
+	// brownfield change has no project row to record against.
+	var findings []reliabilityscan.Finding
+	for _, f := range res.FilesChanged {
+		if !strings.HasSuffix(f, ".go") {
+			continue
+		}
+		if b, rerr := os.ReadFile(filepath.Join(wt.Path, f)); rerr == nil {
+			findings = append(findings, reliabilityscan.ScanSource(string(b))...)
+		}
+	}
+	res.Tier = string(reliabilitytier.Classify(reliabilityscan.DeriveDimensions(findings)))
 	return res, nil
+}
+
+// secretFindingsInChanged filters the worktree's secret-scan findings to the
+// files the change touched — the gate judges the change, never the repo's
+// pre-existing debt (or-v9f.15).
+func secretFindingsInChanged(dir string, changed []string) []string {
+	set := make(map[string]bool, len(changed))
+	for _, f := range changed {
+		set[f] = true
+	}
+	var out []string
+	for _, finding := range proof.SecretScan(dir) {
+		file := finding
+		if i := strings.LastIndex(finding, ":"); i > 0 {
+			file = finding[:i]
+		}
+		if set[file] {
+			out = append(out, finding)
+		}
+	}
+	return out
 }
 
 // freshChangeID returns a worktree id derived from base that does not collide with an
