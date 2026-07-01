@@ -17,7 +17,7 @@ func sampleReport() health.Report {
 		},
 		Subsystems: []health.Check{
 			{Name: "sandbox-backend", Status: health.OK, Detail: "bwrap available"},
-			{Name: "polaris", Status: health.Warn, Detail: "not logged in"},
+			{Name: "revelara.ai", Status: health.Warn, Detail: "not logged in"},
 			{Name: "agent-preset", Status: health.OK, Detail: "fixture"},
 		},
 	}
@@ -37,7 +37,7 @@ func TestBannerContent(t *testing.T) {
 	out := Render(sampleReport(), sampleIdentity(), 100)
 	for _, want := range []string{
 		"Orion 0.0.0-dev+abc1234 · main", "intent→spec", "proof harness", "lsp gate",
-		"sandbox-backend", "polaris", "agent-preset", "Pipeline", "Subsystems",
+		"sandbox-backend", "revelara.ai", "agent-preset", "Pipeline", "Subsystems",
 		"native · claude-opus-4-8", "ready",
 	} {
 		if !strings.Contains(out, want) {
@@ -80,7 +80,7 @@ func TestBannerNoOverflow(t *testing.T) {
 // the boxed one — the only difference is the outer frame.
 func TestRenderInlineContent(t *testing.T) {
 	out := RenderInline(sampleReport(), sampleIdentity(), 100)
-	for _, want := range []string{"Orion 0.0.0-dev+abc1234 · main", "proof harness", "polaris", "Pipeline", "Subsystems", "4/6 ready"} {
+	for _, want := range []string{"Orion 0.0.0-dev+abc1234 · main", "proof harness", "revelara.ai", "Pipeline", "Subsystems", "4/6 ready"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("inline banner missing %q", want)
 		}
