@@ -257,6 +257,14 @@ func (c *Conductor) ApproveSpec(ctx context.Context) (spec.ExecutableSpec, error
 	if err != nil {
 		return spec.ExecutableSpec{}, err
 	}
+	// Zero-case hard fail (or-8ti.1, the or-y9d false-pass class): a spec with
+	// nothing to execute would "prove" vacuously green. Ratification is where
+	// that stops — intermediate compiles (preview, decomposer) may pass through
+	// case-less states while the developer is still elaborating.
+	if len(es.ResponseContract.Cases) == 0 {
+		return spec.ExecutableSpec{}, fmt.Errorf(
+			"cannot ratify: the spec declares no behavioral case, so nothing can be executed or proven — capture each behavior with add_requirement (>=1 request→response case) before ratifying")
+	}
 	rcJSON, err := json.Marshal(es.ResponseContract)
 	if err != nil {
 		return spec.ExecutableSpec{}, fmt.Errorf("marshal response contract: %w", err)
