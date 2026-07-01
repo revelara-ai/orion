@@ -54,6 +54,7 @@ type BuildResult struct {
 	BuildDir        string
 	OutputDir       string          // where the proven code was written in the dev's repo (Accept only)
 	Git             GitDelivery     // git commit/branch of the proven code (when ORION_GIT_DELIVERY)
+	PR              PRResult        // feature-branch PR handoff over the delivery branch (or-tcs.7)
 	Alignment       AlignmentRecord // advisory intent-alignment audit (log-only in V3 Step 1)
 	Attempts        int             // build+prove attempts spent on the lead task (>=1)
 	FailureAnalysis string          // causal analysis of the final non-Accept verdict, if any
@@ -254,6 +255,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	//  - or-tcs.10 (drift REPORT): surface the spec↔build alignment (coverage + wireup) so drift is
 	//    visible to the developer, citing the artifact — the structured hook the scope-creep check
 	//    extends once builds produce distinct modules.
+	var driftLine string // the SystemValidate re-evaluation, cited in the PR handoff (or-tcs.7)
 	if integrated {
 		wired, orphans := systemWireupGate(intDir)
 		if !wired {
@@ -267,6 +269,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 			driftProof = assembledReport
 		}
 		dr, drift := driftReport(es, driftProof, orphans)
+		driftLine = dr
 		status := PhaseDone
 		if drift {
 			status = PhaseWarn
@@ -320,6 +323,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	// store, so we warn and carry on rather than fail an otherwise-green build.
 	var outputDir string
 	var gitDelivery GitDelivery
+	var prResult PRResult
 	if aggregateVerdict == truthalign.Accept && outRoot != "" {
 		dest := ServiceOutputDir(outRoot, es)
 		if files, eerr := ExportProvenCode(buildDir, dest, es); eerr != nil {
@@ -338,6 +342,25 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 				} else {
 					gitDelivery = d
 					onPhase.emit("Deliver", PhaseDone, fmt.Sprintf("committed to branch %s (%s)", d.Branch, d.Commit))
+					// or-tcs.7: PR handoff over the feature branch — but ONLY when the epic actually
+					// cleared the delivery bar. A proven-but-ESCALATED epic (e.g. the security gate
+					// caught a secret, or the red button is engaged) keeps its review branch but is not
+					// presented as PR-ready — and, crucially, is never auto-pushed/PR'd under opt-in.
+					// Local review artifact always; a real PR only when opted in + remote + gh exist.
+					if res.Decision == delivery.Deliver {
+						runbook := delivery.GenerateRunbook(es, model, env)
+						if pr, perr := PRHandoff(ctx, root, store.Dir(), d, es, aggregateVerdict, driftLine, runbook); perr != nil {
+							prResult = pr // still carries the artifact + commands even if push/gh failed
+							onPhase.emit("Deliver", PhaseWarn, "PR handoff: "+perr.Error())
+						} else {
+							prResult = pr
+							if pr.Opened {
+								onPhase.emit("Deliver", PhaseDone, "PR opened: "+pr.URL)
+							} else {
+								onPhase.emit("Deliver", PhaseDone, fmt.Sprintf("PR-ready: branch %s + %s", pr.Branch, pr.ArtifactPath))
+							}
+						}
+					}
 				}
 			} else {
 				onPhase.emit("Deliver", PhaseWarn, "git delivery requested but the working directory is not a git repo")
@@ -350,6 +373,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		OutputDir: outputDir,
 		Tier:      string(tier), Delivery: string(res.Decision), Reason: res.Reason, BuildDir: buildDir,
 		Git:       gitDelivery,
+		PR:        prResult,
 		Alignment: rep.Alignment, Attempts: rep.Attempts, FailureAnalysis: rep.FailureAnalysis,
 		TaskResults: results,
 	}, nil
