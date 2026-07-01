@@ -114,8 +114,13 @@ func topoSort(tasks []orchestrator.PlanTask) ([]orchestrator.PlanTask, error) {
 // Blocked — its tasks are recorded Blocked, never run. maxConc<=1 degrades to sequential. A graph
 // cycle (caught by topoSort) is a hard error. runTask must be safe to call concurrently (shared
 // store/memory writes are serialized by the caller's stateMu; the proofCache is per-cluster).
+//
+// preDispatch (nil-safe) is the deterministic actuation gate (or-v9f.14): consulted before each
+// cluster dispatch; a refusal (e.g. the red button engaged) records the cluster's tasks Blocked —
+// in-flight clusters finish gracefully, no new work starts.
 func runClusterDAG(clusters []decomposer.TaskCluster, tasks []orchestrator.PlanTask, maxConc int,
 	runTask func(task orchestrator.PlanTask, cache map[string]proof.Report) (taskResult, error),
+	preDispatch func(clusterKey string) error,
 ) ([]taskResult, error) {
 	if maxConc < 1 {
 		maxConc = 1
@@ -192,6 +197,16 @@ func runClusterDAG(clusters []decomposer.TaskCluster, tasks []orchestrator.PlanT
 			}
 			if !ready || inflight >= maxConc {
 				continue
+			}
+			if preDispatch != nil {
+				if gerr := preDispatch(cl.Key); gerr != nil {
+					state[cl.Key] = "Blocked"
+					for _, t := range members[cl.Key] {
+						collected = append(collected, taskResult{TaskID: t.ID, Blocked: true, Verdict: "Blocked", FailureAnalysis: gerr.Error()})
+					}
+					completed++
+					continue
+				}
 			}
 			state[cl.Key] = "running"
 			inflight++

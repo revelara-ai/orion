@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/brownfield"
 	"github.com/revelara-ai/orion/internal/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
@@ -27,7 +28,7 @@ import (
 func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSession) *tools.Registry {
 	r := tools.NewRegistry()
 	registerChangeTools(r, cs, c, provider)
-	registerBeadsTool(r)
+	registerBeadsTool(r, c)
 
 	r.Register(tools.Tool{
 		Name:        "submit_intent",
@@ -432,6 +433,13 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			if root == "" {
 				return "", fmt.Errorf("not a git repository")
 			}
+			// or-v9f.14: mutating git ops route through the deterministic actuation
+			// gate; reads stay available so diagnosis works mid-halt.
+			if !gitReadOnly(p.Args) {
+				if gerr := storeRedButton(c).Guard("git " + p.Args[0]); gerr != nil {
+					return "", gerr
+				}
+			}
 			out, exit := gitRun(ctx, root, p.Args...)
 			var b strings.Builder
 			fmt.Fprintf(&b, "git %s (exit %d)\n", strings.Join(p.Args, " "), exit)
@@ -488,6 +496,29 @@ func asJSON(v any) string {
 		return fmt.Sprintf("%v", v)
 	}
 	return string(b)
+}
+
+// gitReadOnly reports whether a git invocation is on the read-only allowlist.
+// Fail-safe: an unknown verb counts as mutating, so the red button over-blocks
+// rather than under-blocks (or-v9f.14).
+func gitReadOnly(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	switch args[0] {
+	case "status", "diff", "log", "show", "rev-parse", "ls-files", "ls-remote", "blame", "describe", "shortlog", "rev-list":
+		return true
+	}
+	return false
+}
+
+// storeRedButton resolves the cross-process red button for the conductor's store
+// (nil-safe: no store → a button that is never engaged).
+func storeRedButton(c *orchestrator.Conductor) actuation.RedButton {
+	if c == nil || c.Store() == nil {
+		return actuation.RedButton{}
+	}
+	return actuation.RedButton{Path: filepath.Join(c.Store().Dir(), "red_button")}
 }
 
 // gitRun runs `git -C dir <args...>` and returns the combined output and exit code, WITHOUT

@@ -195,12 +195,19 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	maxConc := maxAgentsFromEnv()
 	safeSink := syncSink(onPhase)
 	var stateMu sync.Mutex
+	// or-v9f.14: the red button is the deterministic actuation gate — consulted
+	// before every cluster dispatch (in-flight clusters finish; nothing new starts)
+	// and before every outward write below. File-backed, so `orion redbutton
+	// engage` halts a run from any terminal.
+	rb := actuation.RedButton{Path: filepath.Join(store.Dir(), "red_button")}
 	results, err := runClusterDAG(clusters, scheduleTasks, maxConc, func(task orchestrator.PlanTask, cache map[string]proof.Report) (taskResult, error) {
 		buildDir := clusterWT[clusterByTask[task.ID]]
 		if buildDir == "" {
 			return taskResult{}, fmt.Errorf("task %s has no cluster worktree", task.ID)
 		}
 		return buildOneTask(ctx, store, gen, aligner, safeSink, es, model, gs, contract, requiredIDs, buildDir, cache, eng, mem, &stateMu, task)
+	}, func(clusterKey string) error {
+		return rb.Guard("dispatch cluster " + clusterKey)
 	})
 	if err != nil {
 		return BuildResult{}, err
@@ -286,7 +293,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	securityOK := proof.SecurityClean(buildDir)
 	res := delivery.EvaluateBar(outcome.barVerdict, []string{"behavioral", "empirical", "hazard"}, reliabilitytier.PolicyFor(tier), env, securityOK)
 	// Red Button (or-utm): while engaged, autonomy is revoked — never auto-deliver.
-	if rb := (actuation.RedButton{Path: filepath.Join(store.Dir(), "red_button")}); res.Decision == delivery.Deliver && rb.AutonomyRevoked() {
+	if res.Decision == delivery.Deliver && rb.AutonomyRevoked() {
 		res = delivery.Result{Decision: delivery.Escalate, Reason: "red button engaged: autonomy revoked, human delivery required"}
 	}
 	if res.Decision == delivery.Deliver {
@@ -367,7 +374,12 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	var outputDir string
 	var gitDelivery GitDelivery
 	var prResult PRResult
-	if outcome.barVerdict == truthalign.Accept && outRoot != "" {
+	if gerr := rb.Guard("export proven code"); gerr != nil && outcome.barVerdict == truthalign.Accept && outRoot != "" {
+		// or-v9f.14: the export + git delivery write into the DEVELOPER'S repo —
+		// exactly the outward actuation the red button exists to halt. The proven
+		// code stays in the build dir + store; nothing is lost, only withheld.
+		onPhase.emit("Deliver", PhaseWarn, gerr.Error())
+	} else if outcome.barVerdict == truthalign.Accept && outRoot != "" {
 		dest := ServiceOutputDir(outRoot, es)
 		if files, eerr := ExportProvenCode(buildDir, dest, es); eerr != nil {
 			onPhase.emit("Deliver", PhaseWarn, "code proven but export failed: "+eerr.Error())

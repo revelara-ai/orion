@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/tools"
 )
 
@@ -73,10 +74,23 @@ func runOnce(ctx context.Context, dir string, args []string) (string, int) {
 	return string(out) + err.Error(), -1
 }
 
+// bdReadOnly reports whether a bd invocation is on the read-only allowlist.
+// Fail-safe: an unknown verb counts as mutating (or-v9f.14).
+func bdReadOnly(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	switch args[0] {
+	case "ready", "show", "list", "search", "blocked", "stats", "comments", "memories", "prime":
+		return true
+	}
+	return false
+}
+
 // registerBeadsTool exposes a general bd tool when (and only when) the developer's
 // repo is a beads workspace — registration is separate from exposure, so an agent in
 // an untracked repo never sees a tool it cannot use.
-func registerBeadsTool(r *tools.Registry) {
+func registerBeadsTool(r *tools.Registry, c *orchestrator.Conductor) {
 	if _, ok := beadsWorkspace(context.Background()); !ok {
 		return
 	}
@@ -97,6 +111,13 @@ func registerBeadsTool(r *tools.Registry) {
 			}
 			if p.Args[0] == "edit" {
 				return "", fmt.Errorf("bd edit opens an interactive $EDITOR and would block the session — use bd update with --title/--description/--notes instead")
+			}
+			// or-v9f.14: mutating issue-DB ops route through the deterministic
+			// actuation gate; reads stay available mid-halt.
+			if !bdReadOnly(p.Args) {
+				if gerr := storeRedButton(c).Guard("bd " + p.Args[0]); gerr != nil {
+					return "", gerr
+				}
 			}
 			root, ok := beadsWorkspace(ctx)
 			if !ok {

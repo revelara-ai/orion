@@ -72,6 +72,8 @@ func run(args []string) int {
 			return cmdQueue(args[1:])
 		case "escalations":
 			return cmdEscalations(args[1:])
+		case "redbutton":
+			return cmdRedButton(args[1:])
 		case "login":
 			return cmdLogin(args[1:])
 		case "logout":
