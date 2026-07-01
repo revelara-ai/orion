@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/internal/proof"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
@@ -148,5 +149,28 @@ func TestBuildAndProveStopsWhenGeneratorCannotRefine(t *testing.T) {
 	}
 	if res.FailureAnalysis == "" {
 		t.Fatal("a non-Accept build must surface a causal analysis for the developer")
+	}
+
+	// or-v9f.4: the escalation lands in the inbox attributed to the FAILING task
+	// and carries its causal analysis as the decision payload.
+	if err := oc.Store().WithTx(ctx, func(tx *contextstore.Tx) error {
+		open, e := tx.Escalations().ListOpen(ctx)
+		if e != nil {
+			return e
+		}
+		if len(open) == 0 {
+			t.Fatal("an escalated build must create an open escalation in the inbox")
+		}
+		for _, esc := range open {
+			if esc.TaskID != res.TaskID {
+				t.Errorf("escalation attributed to %q, want the failing task %q", esc.TaskID, res.TaskID)
+			}
+			if esc.Detail == "" {
+				t.Errorf("escalation must carry the failing task's causal analysis, got empty detail: %+v", esc)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
