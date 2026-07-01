@@ -311,9 +311,27 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 			onPhase.emit("Queue", PhaseDone, fmt.Sprintf("next intent activated: %s", next.Intent))
 		}
 	} else {
+		// or-v9f.4: one escalation per FAILING task, each carrying its causal
+		// analysis as the decision payload — never attributed to the
+		// representative task, which is by construction an ACCEPTED one. With
+		// every task green (bar/security/red-button escalations) the row is
+		// project-level (empty task_id) rather than misattributed.
 		_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
-			_, e := tx.Escalations().Create(ctx, proj.ID, taskID, res.Reason)
-			return e
+			failed := 0
+			for _, r := range results {
+				if r.Blocked || r.Verdict == "Accept" {
+					continue
+				}
+				failed++
+				if _, e := tx.Escalations().CreateDetailed(ctx, proj.ID, r.TaskID, res.Reason, r.FailureAnalysis); e != nil {
+					return e
+				}
+			}
+			if failed == 0 {
+				_, e := tx.Escalations().CreateDetailed(ctx, proj.ID, "", res.Reason, driftLine)
+				return e
+			}
+			return nil
 		})
 	}
 	deliverStatus := PhaseDone

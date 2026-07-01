@@ -70,6 +70,8 @@ func run(args []string) int {
 			return cmdTracker(args[1:])
 		case "queue":
 			return cmdQueue(args[1:])
+		case "escalations":
+			return cmdEscalations(args[1:])
 		case "login":
 			return cmdLogin(args[1:])
 		case "logout":

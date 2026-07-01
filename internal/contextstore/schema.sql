@@ -116,12 +116,17 @@ CREATE TABLE IF NOT EXISTS deliveries (
 );
 
 CREATE TABLE IF NOT EXISTS escalations (
-    id         TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    task_id    TEXT REFERENCES tasks(id),
-    reason     TEXT NOT NULL,
-    resolved   INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
+    id          TEXT PRIMARY KEY,
+    project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    task_id     TEXT REFERENCES tasks(id),
+    reason      TEXT NOT NULL,
+    -- the inbox payload (or-v9f.4): what the human needs to decide — e.g. the
+    -- failing task's causal analysis — plus how the decision was closed out.
+    detail      TEXT NOT NULL DEFAULT '',
+    resolution  TEXT NOT NULL DEFAULT '',
+    resolved_at TEXT,
+    resolved    INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS failure_modes (

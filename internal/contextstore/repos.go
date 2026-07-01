@@ -789,16 +789,37 @@ func (r *DeliveryRepo) LatestForProject(ctx context.Context, projectID string) (
 
 // ── EscalationRepo ───────────────────────────────────────────────────────────
 
+// Escalation is one open decision routed to a human: why the loop stopped
+// (reason), what the human needs to judge it (detail — e.g. the failing task's
+// causal analysis), and how it was closed out (resolution).
+type Escalation struct {
+	ID         string
+	ProjectID  string
+	TaskID     string // empty for project-level escalations (bar/security/red button)
+	Reason     string
+	Detail     string
+	Resolution string
+	Resolved   bool
+	CreatedAt  string
+	ResolvedAt string
+}
+
 type EscalationRepo struct{ tx *sql.Tx }
 
 func (r *EscalationRepo) Create(ctx context.Context, projectID, taskID, reason string) (string, error) {
+	return r.CreateDetailed(ctx, projectID, taskID, reason, "")
+}
+
+// CreateDetailed records an escalation with its decision payload. Idempotent: an
+// escalation for (project, task, reason) is recorded once — a re-run that
+// re-escalates the same task returns the existing id (or-6z3), keeping the
+// original payload. `task_id IS ?` is null-safe so a NULL task_id matches a
+// NULL arg.
+func (r *EscalationRepo) CreateDetailed(ctx context.Context, projectID, taskID, reason, detail string) (string, error) {
 	var taskArg any
 	if taskID != "" {
 		taskArg = taskID
 	}
-	// Idempotent: an escalation for (project, task, reason) is recorded once — a
-	// re-run that re-escalates the same task returns the existing id (or-6z3).
-	// `task_id IS ?` is null-safe so a NULL task_id matches a NULL arg.
 	var existing string
 	switch err := r.tx.QueryRowContext(ctx,
 		`SELECT id FROM escalations WHERE project_id=? AND task_id IS ? AND reason=? ORDER BY created_at DESC LIMIT 1`,
@@ -810,12 +831,64 @@ func (r *EscalationRepo) Create(ctx context.Context, projectID, taskID, reason s
 	}
 	id, now := newID(), nowRFC3339()
 	_, err := r.tx.ExecContext(ctx,
-		`INSERT INTO escalations (id, project_id, task_id, reason, resolved, created_at) VALUES (?,?,?,?,0,?)`,
-		id, projectID, taskArg, reason, now)
+		`INSERT INTO escalations (id, project_id, task_id, reason, detail, resolved, created_at) VALUES (?,?,?,?,?,0,?)`,
+		id, projectID, taskArg, reason, detail, now)
 	if err != nil {
 		return "", fmt.Errorf("create escalation: %w", err)
 	}
 	return id, nil
+}
+
+// ListOpen returns every unresolved escalation, oldest first — the inbox a
+// human (or the answer loop) works through.
+func (r *EscalationRepo) ListOpen(ctx context.Context) ([]Escalation, error) {
+	rows, err := r.tx.QueryContext(ctx,
+		`SELECT id, project_id, COALESCE(task_id,''), reason, detail, resolution, resolved, created_at, COALESCE(resolved_at,'')
+		 FROM escalations WHERE resolved=0 ORDER BY created_at ASC, id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Escalation
+	for rows.Next() {
+		var e Escalation
+		var resolved int
+		if err := rows.Scan(&e.ID, &e.ProjectID, &e.TaskID, &e.Reason, &e.Detail, &e.Resolution, &resolved, &e.CreatedAt, &e.ResolvedAt); err != nil {
+			return nil, err
+		}
+		e.Resolved = resolved != 0
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// Get returns one escalation by id.
+func (r *EscalationRepo) Get(ctx context.Context, id string) (Escalation, error) {
+	var e Escalation
+	var resolved int
+	err := r.tx.QueryRowContext(ctx,
+		`SELECT id, project_id, COALESCE(task_id,''), reason, detail, resolution, resolved, created_at, COALESCE(resolved_at,'')
+		 FROM escalations WHERE id=?`, id).
+		Scan(&e.ID, &e.ProjectID, &e.TaskID, &e.Reason, &e.Detail, &e.Resolution, &resolved, &e.CreatedAt, &e.ResolvedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Escalation{}, ErrNotFound
+	}
+	e.Resolved = resolved != 0
+	return e, err
+}
+
+// Resolve closes an escalation with the human's decision note.
+func (r *EscalationRepo) Resolve(ctx context.Context, id, resolution string) error {
+	res, err := r.tx.ExecContext(ctx,
+		`UPDATE escalations SET resolved=1, resolution=?, resolved_at=? WHERE id=?`,
+		resolution, nowRFC3339(), id)
+	if err != nil {
+		return fmt.Errorf("resolve escalation: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // CountForProject returns how many escalations a project has.
