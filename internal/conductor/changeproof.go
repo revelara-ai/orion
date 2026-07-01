@@ -12,6 +12,7 @@ import (
 	"github.com/revelara-ai/orion/internal/brownfield"
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/llm"
+	"github.com/revelara-ai/orion/internal/notify"
 	"github.com/revelara-ai/orion/internal/proof"
 	"github.com/revelara-ai/orion/internal/proof/newbehavior"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
@@ -86,7 +87,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	if !reg.Held {
 		res.Reason = reg.Reason
 		res.Delivery = "escalate"
-		return res, nil // change generated but it did not preserve existing behavior — not committed
+		return finishChange(ctx, res, intent), nil // did not preserve existing behavior — not committed
 	}
 
 	// New-behavior proof (or-3p5.3): the regression gate proved do-no-harm; this proves
@@ -101,7 +102,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		if !mr.Pass {
 			res.Reason = "regression held, but the new-behavior proof did not pass"
 			res.Delivery = "escalate"
-			return res, nil // change preserved existing behavior but did not prove the asked-for behavior — not committed
+			return finishChange(ctx, res, intent), nil // did not prove the asked-for behavior — not committed
 		}
 	}
 
@@ -112,7 +113,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	if findings := secretFindingsInChanged(wt.Path, res.FilesChanged); len(findings) > 0 {
 		res.Reason = "security gate: hardcoded secret(s) introduced by the change: " + strings.Join(findings, ", ")
 		res.Delivery = "escalate"
-		return res, nil
+		return finishChange(ctx, res, intent), nil
 	}
 	rb := actuation.RedButton{}
 	if store != nil {
@@ -121,7 +122,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	if gerr := rb.Guard("commit change branch"); gerr != nil {
 		res.Reason = gerr.Error()
 		res.Delivery = "escalate"
-		return res, nil
+		return finishChange(ctx, res, intent), nil
 	}
 
 	// Stage ONLY the intended change. res.FilesChanged was snapshotted right after the edit,
@@ -131,7 +132,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	if len(res.FilesChanged) == 0 {
 		res.Reason = "the generator produced no file changes"
 		res.Delivery = "escalate"
-		return res, nil
+		return finishChange(ctx, res, intent), nil
 	}
 	if _, err := gitIn(ctx, wt.Path, append([]string{"add", "-A", "--"}, res.FilesChanged...)...); err != nil {
 		return res, err
@@ -156,7 +157,26 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		}
 	}
 	res.Tier = string(reliabilitytier.Classify(reliabilityscan.DeriveDimensions(findings)))
-	return res, nil
+	return finishChange(ctx, res, intent), nil
+}
+
+// finishChange fires the out-of-band event for a SETTLED change outcome
+// (or-v9f.17) — all three callers (CLI, build_change, change_repo) inherit it.
+// Fire-and-forget: a delivery miss never fails the change.
+func finishChange(ctx context.Context, res ChangeResult, intent string) ChangeResult {
+	kind := "change.delivered"
+	if res.Delivery != "deliver" {
+		kind = "change.escalated"
+	}
+	verdict := "Reject"
+	if res.Committed {
+		verdict = "Accept"
+	}
+	_ = notify.Notify(ctx, notify.Event{
+		Kind: kind, Task: oneLine(intent), Verdict: verdict, Detail: res.Reason,
+		Artifact: res.Branch, NextAction: "git diff main.." + res.Branch,
+	})
+	return res
 }
 
 // secretFindingsInChanged filters the worktree's secret-scan findings to the

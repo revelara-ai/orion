@@ -2,9 +2,13 @@ package conductor
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/revelara-ai/orion/internal/contextstore"
@@ -133,6 +137,23 @@ func TestBuildAndProveStopsWhenGeneratorCannotRefine(t *testing.T) {
 	}
 	oc, ctx := ratifiedTimeService(t)
 
+	// or-v9f.17: an escalating run must reach the operator out-of-band — both the
+	// mid-run escalation.created and the end-of-run escalated event.
+	var notifyMu sync.Mutex
+	kinds := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var e struct {
+			Kind string `json:"kind"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&e)
+		notifyMu.Lock()
+		kinds[e.Kind]++
+		notifyMu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	t.Setenv("ORION_NOTIFY_WEBHOOK", srv.URL)
+
 	gen := func(_ context.Context, gs sandbox.GenSpec, dir, _ string) (sandbox.GeneratedArtifact, error) {
 		return writeBrokenTimeService(dir, gs) // same broken artifact every attempt
 	}
@@ -176,5 +197,14 @@ func TestBuildAndProveStopsWhenGeneratorCannotRefine(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+
+	notifyMu.Lock()
+	defer notifyMu.Unlock()
+	if kinds["escalation.created"] == 0 {
+		t.Errorf("the mid-run escalation must notify out-of-band, got events: %v", kinds)
+	}
+	if kinds["escalated"] == 0 {
+		t.Errorf("the end-of-run escalate must notify out-of-band, got events: %v", kinds)
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/revelara-ai/orion/internal/delivery"
 	"github.com/revelara-ai/orion/internal/lspcheck"
 	"github.com/revelara-ai/orion/internal/memory"
+	"github.com/revelara-ai/orion/internal/notify"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
@@ -423,6 +424,26 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		}
 	}
 
+	// or-v9f.17: ONE end-of-run event from the pipeline itself, so every entry
+	// point (CLI run, TUI build_service, headless) inherits out-of-band
+	// visibility. Fire-and-forget; the payload carries what a 3 a.m. human acts on.
+	kind := "delivered"
+	nextAction := ""
+	switch {
+	case outcome.partial:
+		kind, nextAction = "partial", "orion escalations list"
+	case res.Decision != delivery.Deliver:
+		kind, nextAction = "escalated", "orion escalations list"
+	}
+	notifyArtifact := prResult.ArtifactPath
+	if notifyArtifact == "" {
+		notifyArtifact = outputDir
+	}
+	_ = notify.Notify(ctx, notify.Event{
+		Kind: kind, Task: taskID, Verdict: string(aggregateVerdict), Detail: res.Reason,
+		PRURL: prResult.URL, Artifact: notifyArtifact, NextAction: nextAction,
+	})
+
 	return BuildResult{
 		TaskID: taskID, Verdict: string(aggregateVerdict), Closed: rep.Closed,
 		Partial:   outcome.partial,
@@ -599,6 +620,7 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	// escalation write never fails the build; the bar-time pass dedups via
 	// HasOpenForTask.
 	if string(report.Outcome.Verdict) != "Accept" {
+		var escID string
 		withLock(stateMu, func() {
 			_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
 				proj, e := tx.Projects().Active(ctx)
@@ -608,12 +630,22 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 				id, e := tx.Escalations().CreateDetailed(ctx, proj.ID, taskID,
 					fmt.Sprintf("task failed proof after %d attempt(s)", attempts), failureAnalysis)
 				if e == nil {
+					escID = id
 					onPhase.emit("Escalate", PhaseWarn,
 						fmt.Sprintf("escalation %s filed — answer with: orion escalations resolve %s", id, id))
 				}
 				return e
 			})
 		})
+		// or-v9f.17: notify AFTER the tx committed (never on rollback) — the
+		// mid-run event that lets the human act while siblings keep building.
+		if escID != "" {
+			_ = notify.Notify(ctx, notify.Event{
+				Kind: "escalation.created", Task: taskID, Verdict: string(report.Outcome.Verdict),
+				Detail: failureAnalysis, EscalationID: escID,
+				NextAction: "orion escalations resolve " + escID,
+			})
+		}
 	}
 
 	// Slice 1 (or-hd3.2): populate memory so a LATER task recalls what was proven,

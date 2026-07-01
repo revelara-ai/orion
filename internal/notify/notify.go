@@ -14,12 +14,18 @@ import (
 	"time"
 )
 
-// Event is a run event worth surfacing out-of-band.
+// Event is a run event worth surfacing out-of-band. The optional fields make the
+// notification ACTIONABLE at 3 a.m. (or-v9f.17): the id to answer, the PR to
+// review, the exact command to run — not just "something happened".
 type Event struct {
-	Kind    string `json:"kind"`    // "completed" | "escalated"
-	Task    string `json:"task"`    // task id
-	Verdict string `json:"verdict"` // converged proof verdict
-	Detail  string `json:"detail"`  // delivery decision / escalation reason
+	Kind         string `json:"kind"`    // delivered | partial | escalated | escalation.created | change.delivered | change.escalated
+	Task         string `json:"task"`    // task id
+	Verdict      string `json:"verdict"` // converged proof verdict
+	Detail       string `json:"detail"`  // delivery decision / escalation reason
+	EscalationID string `json:"escalation_id,omitempty"`
+	PRURL        string `json:"pr_url,omitempty"`
+	Artifact     string `json:"artifact,omitempty"`    // PR artifact path, output dir, or review branch
+	NextAction   string `json:"next_action,omitempty"` // the command that acts on this event
 }
 
 // Notify delivers e to the configured channel: if $ORION_NOTIFY_WEBHOOK is set it POSTs e as

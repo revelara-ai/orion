@@ -2,6 +2,9 @@ package conductor
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,6 +45,17 @@ func TestChangeRefusedWhileRedButtonEngaged(t *testing.T) {
 	}
 	repo := initDogfoodRepo(t)
 	store := openStore(t)
+	var gotKind string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var e struct {
+			Kind string `json:"kind"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&e)
+		gotKind = e.Kind
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	t.Setenv("ORION_NOTIFY_WEBHOOK", srv.URL)
 	rb := actuation.RedButton{Path: filepath.Join(store.Dir(), "red_button")}
 	if err := rb.Engage(); err != nil {
 		t.Fatal(err)
@@ -60,5 +74,8 @@ func TestChangeRefusedWhileRedButtonEngaged(t *testing.T) {
 	}
 	if res.Delivery != "escalate" {
 		t.Errorf("a refused change is an escalate decision, got %q", res.Delivery)
+	}
+	if gotKind != "change.escalated" {
+		t.Errorf("a refused change must notify out-of-band, got kind %q", gotKind)
 	}
 }
