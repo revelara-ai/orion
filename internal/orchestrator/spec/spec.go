@@ -77,6 +77,20 @@ func Compile(intent string, answers map[string]string, kinds map[string]string, 
 	}
 	rc.Cases = buildCases(rc, reqs)
 
+	// A spec whose cases contradict each other cannot be implemented, so it must
+	// never anchor (or-v9f.2). Checked over the FULL case set — including the
+	// default case synthesized from the scalar contract — so a requirement that
+	// contradicts an answered decision is caught here too, while the developer is
+	// still in the conversation. This gates preview, ratify, and recall alike.
+	if cs := FindContradictions(rc.Cases); len(cs) > 0 {
+		var b strings.Builder
+		fmt.Fprintf(&b, "cannot compile spec: %d contradiction(s) — resolve them with the developer before ratifying:", len(cs))
+		for _, c := range cs {
+			fmt.Fprintf(&b, "\n  %s: cases %s and %s contradict — %s", c.Request, c.CaseA, c.CaseB, c.Reason)
+		}
+		return ExecutableSpec{}, fmt.Errorf("%s", b.String())
+	}
+
 	dims := buildDimensions(answers, kinds, checklist)
 
 	s := ExecutableSpec{
