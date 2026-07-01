@@ -13,12 +13,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/revelara-ai/orion/internal/budget"
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
+	"github.com/revelara-ai/orion/internal/repo"
 )
 
 // Confirmation is the Conductor's acknowledgement of a submitted intent. It
@@ -113,6 +115,22 @@ func (c *Conductor) Submit(ctx context.Context, intent string) (Confirmation, er
 	trimmed := strings.TrimSpace(intent)
 	if trimmed == "" {
 		return Confirmation{}, fmt.Errorf("intent is empty: describe what you want to build")
+	}
+
+	// or-tcs.8 (step 11 → 12): before intaking a new intent, reconcile the managed repo's base with
+	// its remote — the developer may have merged the prior epic's PR, so a stale local base would
+	// build the next intent off the wrong head. Fast-forward if behind; BLOCK on a genuine divergence
+	// (the developer's to resolve); abstain when there's no repo yet or no remote (local-first).
+	if c.store != nil {
+		repoDir := filepath.Join(c.store.Dir(), "repo")
+		switch st, serr := repo.SyncMain(ctx, repoDir); {
+		case serr != nil:
+			return Confirmation{}, fmt.Errorf("reconcile managed repo with origin: %w", serr)
+		case st == repo.SyncDiverged:
+			return Confirmation{}, fmt.Errorf("managed base branch has diverged from origin; merge or rebase %s before a new intent", repoDir)
+		case st == repo.SyncResynced:
+			c.log.InfoContext(ctx, "managed base fast-forwarded to origin before intent", "repo", repoDir)
+		}
 	}
 
 	c.mu.Lock()
