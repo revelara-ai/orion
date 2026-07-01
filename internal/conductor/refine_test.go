@@ -152,22 +152,26 @@ func TestBuildAndProveStopsWhenGeneratorCannotRefine(t *testing.T) {
 	}
 
 	// or-v9f.4: the escalation lands in the inbox attributed to the FAILING task
-	// and carries its causal analysis as the decision payload.
+	// and carries its causal analysis as the decision payload. or-v9f.6 slice A:
+	// it was filed at EXHAUSTION time (the mid-run reason survives — the bar-time
+	// pass dedups), and one task never accumulates two open rows.
 	if err := oc.Store().WithTx(ctx, func(tx *contextstore.Tx) error {
 		open, e := tx.Escalations().ListOpen(ctx)
 		if e != nil {
 			return e
 		}
-		if len(open) == 0 {
-			t.Fatal("an escalated build must create an open escalation in the inbox")
+		if len(open) != 1 {
+			t.Fatalf("want exactly ONE open escalation for the one failing task, got %d: %+v", len(open), open)
 		}
-		for _, esc := range open {
-			if esc.TaskID != res.TaskID {
-				t.Errorf("escalation attributed to %q, want the failing task %q", esc.TaskID, res.TaskID)
-			}
-			if esc.Detail == "" {
-				t.Errorf("escalation must carry the failing task's causal analysis, got empty detail: %+v", esc)
-			}
+		esc := open[0]
+		if esc.TaskID != res.TaskID {
+			t.Errorf("escalation attributed to %q, want the failing task %q", esc.TaskID, res.TaskID)
+		}
+		if esc.Detail == "" {
+			t.Errorf("escalation must carry the failing task's causal analysis, got empty detail: %+v", esc)
+		}
+		if !strings.Contains(esc.Reason, "attempt") {
+			t.Errorf("the exhaustion-time reason must survive (filed mid-run, bar pass dedups), got: %q", esc.Reason)
 		}
 		return nil
 	}); err != nil {
