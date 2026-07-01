@@ -18,6 +18,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -64,21 +65,40 @@ func Open(dir string) (*Store, error) {
 		{"deliveries", "runbook", "TEXT NOT NULL DEFAULT '{}'"},
 		{"projects", "project_type", "TEXT NOT NULL DEFAULT 'http-service'"},
 	} {
-		if err := ensureColumn(db, m.table, m.col, m.decl); err != nil {
+		if _, err := ensureColumn(db, m.table, m.col, m.decl); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("contextstore migrate columns: %w", err)
+		}
+	}
+	// projects.status (or-v9f.1): the backfill must run ONLY when the column is
+	// first added to a pre-queue DB — the latest project was the implicit work
+	// item, so it stays active and every earlier (already-orphaned) project is
+	// closed out. Re-running it later would clobber a legitimate queue state
+	// where the active project is older than a delivered one.
+	added, err := ensureColumn(db, "projects", "status",
+		"TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('queued','active','delivered','abandoned'))")
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("contextstore migrate columns: %w", err)
+	}
+	if added {
+		if _, err := db.Exec(`UPDATE projects SET status='abandoned' WHERE id NOT IN
+			(SELECT id FROM projects ORDER BY created_at DESC, id DESC LIMIT 1)`); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("contextstore backfill project status: %w", err)
 		}
 	}
 	return &Store{db: db, dir: dir}, nil
 }
 
 // ensureColumn adds a column to a table if it does not already exist (additive
-// migration for stores created by an earlier schema version). SQLite has no
-// "ADD COLUMN IF NOT EXISTS", so we probe PRAGMA table_info first.
-func ensureColumn(db *sql.DB, table, column, decl string) error {
+// migration for stores created by an earlier schema version), reporting whether
+// it added it — one-time backfills key off that. SQLite has no "ADD COLUMN IF
+// NOT EXISTS", so we probe PRAGMA table_info first.
+func ensureColumn(db *sql.DB, table, column, decl string) (bool, error) {
 	rows, err := db.Query("PRAGMA table_info(" + table + ")")
 	if err != nil {
-		return err
+		return false, err
 	}
 	found := false
 	for rows.Next() {
@@ -87,7 +107,7 @@ func ensureColumn(db *sql.DB, table, column, decl string) error {
 		var dflt any
 		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
 			_ = rows.Close()
-			return err
+			return false, err
 		}
 		if name == column {
 			found = true
@@ -95,14 +115,14 @@ func ensureColumn(db *sql.DB, table, column, decl string) error {
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return err
+		return false, err
 	}
 	_ = rows.Close()
 	if found {
-		return nil
+		return false, nil
 	}
 	_, err = db.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + decl)
-	return err
+	return err == nil, err
 }
 
 // Close checkpoints the WAL and closes the database.
@@ -226,14 +246,16 @@ func (s *Store) ProofCount(ctx context.Context, taskID string) (int, error) {
 	return n, err
 }
 
-// CurrentProjectSpec returns the latest project and its latest spec — the single
-// in-flight work item for V2.0. Returns ErrNotFound if nothing has been submitted.
+// CurrentProjectSpec returns the ACTIVE project and its latest spec — the single
+// in-flight work item. Creation order no longer decides it (or-v9f.1): a newer
+// queued intent waits its turn rather than silently orphaning the one in flight.
+// Returns ErrNotFound if nothing has been submitted (or the queue is drained).
 func (s *Store) CurrentProjectSpec(ctx context.Context) (Project, Spec, error) {
 	var p Project
 	var sp Spec
 	err := s.view(ctx, func(tx *Tx) error {
 		var e error
-		p, e = tx.Projects().Latest(ctx)
+		p, e = tx.Projects().Active(ctx)
 		if e != nil {
 			return e
 		}
@@ -241,6 +263,47 @@ func (s *Store) CurrentProjectSpec(ctx context.Context) (Project, Spec, error) {
 		return e
 	})
 	return p, sp, err
+}
+
+// QueuedProjects returns the intent queue in FIFO order.
+func (s *Store) QueuedProjects(ctx context.Context) ([]Project, error) {
+	var out []Project
+	err := s.view(ctx, func(tx *Tx) error {
+		var e error
+		out, e = tx.Projects().ListByStatus(ctx, "queued")
+		return e
+	})
+	return out, err
+}
+
+// ActivateNextQueued promotes the FIFO head of the intent queue to active. It is
+// a no-op returning (current, false) while an active project exists — the single-
+// active invariant is enforced here, not trusted to callers. With an empty queue
+// and no active project it returns ErrNotFound.
+func (s *Store) ActivateNextQueued(ctx context.Context) (Project, bool, error) {
+	var p Project
+	promoted := false
+	err := s.WithTx(ctx, func(tx *Tx) error {
+		active, e := tx.Projects().Active(ctx)
+		if e == nil {
+			p = active
+			return nil
+		}
+		if !errors.Is(e, ErrNotFound) {
+			return e
+		}
+		next, e := tx.Projects().OldestQueued(ctx)
+		if e != nil {
+			return e
+		}
+		if e := tx.Projects().SetStatus(ctx, next.ID, "active"); e != nil {
+			return e
+		}
+		next.Status = "active"
+		p, promoted = next, true
+		return nil
+	})
+	return p, promoted, err
 }
 
 // DecisionsForSpec returns the latest answer per key for a spec.

@@ -300,9 +300,16 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 			if e != nil {
 				return e
 			}
-			_, e = tx.Deliveries().Create(ctx, epic.ID, string(envJSON), string(rbJSON))
-			return e
+			if _, e = tx.Deliveries().Create(ctx, epic.ID, string(envJSON), string(rbJSON)); e != nil {
+				return e
+			}
+			// or-v9f.1: a delivered project leaves the active slot so the next
+			// queued intent can start; recorded in the same tx as the delivery.
+			return tx.Projects().SetStatus(ctx, proj.ID, "delivered")
 		})
+		if next, promoted, perr := store.ActivateNextQueued(ctx); perr == nil && promoted {
+			onPhase.emit("Queue", PhaseDone, fmt.Sprintf("next intent activated: %s", next.Intent))
+		}
 	} else {
 		_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
 			_, e := tx.Escalations().Create(ctx, proj.ID, taskID, res.Reason)

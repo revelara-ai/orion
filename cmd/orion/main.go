@@ -68,6 +68,8 @@ func run(args []string) int {
 			return cmdDeps(args[1:])
 		case "tracker":
 			return cmdTracker(args[1:])
+		case "queue":
+			return cmdQueue(args[1:])
 		case "login":
 			return cmdLogin(args[1:])
 		case "logout":
