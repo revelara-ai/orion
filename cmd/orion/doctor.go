@@ -97,15 +97,15 @@ func doctorChecks(dir string, lookPath func(string) (string, error), agentEnv st
 func cachedPolarisCheck() health.Check {
 	dir, err := credentialsDir()
 	if err != nil {
-		return health.Check{Name: "polaris", Status: health.Warn, Detail: "no credentials dir: " + err.Error()}
+		return health.Check{Name: "revelara.ai", Status: health.Warn, Detail: "no credentials dir: " + err.Error()}
 	}
 	store, err := polaris.NewTokenStore(dir)
 	if err != nil {
-		return health.Check{Name: "polaris", Status: health.Warn, Detail: err.Error()}
+		return health.Check{Name: "revelara.ai", Status: health.Warn, Detail: err.Error()}
 	}
 	tok, ok, err := store.Load()
 	if err != nil || !ok {
-		return health.Check{Name: "polaris", Status: health.Warn, Detail: "not logged in"}
+		return health.Check{Name: "revelara.ai", Status: health.Warn, Detail: "not logged in"}
 	}
-	return health.Check{Name: "polaris", Status: health.OK, Detail: "cached credential for " + tok.BaseURL}
+	return health.Check{Name: "revelara.ai", Status: health.OK, Detail: "cached credential for " + tok.BaseURL}
 }

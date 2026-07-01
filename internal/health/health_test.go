@@ -67,12 +67,12 @@ func TestProbePolarisInjected(t *testing.T) {
 	called := false
 	r := Probe(Options{DataDir: t.TempDir(), LookPath: okLook, Polaris: func() Check {
 		called = true
-		return Check{"polaris", OK, "injected"}
+		return Check{"revelara.ai", OK, "injected"}
 	}})
-	if !called || statusOf(r, "polaris") != OK {
+	if !called || statusOf(r, "revelara.ai") != OK {
 		t.Error("an injected Polaris probe should be invoked and included")
 	}
-	if statusOf(Probe(Options{DataDir: t.TempDir(), LookPath: okLook}), "polaris") != "missing" {
+	if statusOf(Probe(Options{DataDir: t.TempDir(), LookPath: okLook}), "revelara.ai") != "missing" {
 		t.Error("polaris should be absent when no probe is injected")
 	}
 }

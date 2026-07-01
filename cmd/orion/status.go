@@ -88,23 +88,23 @@ func terminalWidth() int {
 func livePolarisCheck() health.Check {
 	dir, err := credentialsDir()
 	if err != nil {
-		return health.Check{Name: "polaris", Status: health.Warn, Detail: "no credentials dir"}
+		return health.Check{Name: "revelara.ai", Status: health.Warn, Detail: "no credentials dir"}
 	}
 	store, err := polaris.NewTokenStore(dir)
 	if err != nil {
-		return health.Check{Name: "polaris", Status: health.Warn, Detail: err.Error()}
+		return health.Check{Name: "revelara.ai", Status: health.Warn, Detail: err.Error()}
 	}
 	tok, ok, err := store.Load()
 	if err != nil || !ok {
-		return health.Check{Name: "polaris", Status: health.Warn, Detail: "not logged in"}
+		return health.Check{Name: "revelara.ai", Status: health.Warn, Detail: "not logged in"}
 	}
 	id, err := polaris.NewClient(tok.BaseURL).Me(context.Background(), tok.AccessToken)
 	if err != nil {
-		return health.Check{Name: "polaris", Status: health.Warn, Detail: "cached credential present for " + tok.BaseURL + " (server unreachable)"}
+		return health.Check{Name: "revelara.ai", Status: health.Warn, Detail: "cached credential present for " + tok.BaseURL + " (server unreachable)"}
 	}
 	who := id.Email
 	if who == "" {
 		who = "authenticated"
 	}
-	return health.Check{Name: "polaris", Status: health.OK, Detail: "connected as " + who}
+	return health.Check{Name: "revelara.ai", Status: health.OK, Detail: "connected as " + who}
 }
