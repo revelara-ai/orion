@@ -22,6 +22,7 @@ type Token struct {
 	RefreshToken string `json:"refresh_token,omitempty"`
 	BaseURL      string `json:"base_url"`
 	Org          string `json:"org,omitempty"`
+	ExpiresAt    int64  `json:"expires_at,omitempty"` // unix seconds; 0 = unknown/non-expiring
 }
 
 // TokenStore persists the credential to a 0600 file, deliberately SEPARATE from
