@@ -152,6 +152,29 @@ func (m *Manager) Create(ctx context.Context, issueID, startPoint string) (Workt
 	return wt, nil
 }
 
+// Recreate makes a FRESH worktree for issueID at startPoint, discarding any prior worktree AND
+// branch of the same name. Create fails when the branch/worktree already exists and CreateResume
+// reattaches the prior branch; Recreate instead guarantees a clean tree from startPoint — for
+// EPHEMERAL heads like the epic-integration tree that must be reassembled from scratch on every run.
+// A leftover branch previously crashed the second `orion run` ("a branch named epic-integration
+// already exists"); this makes the integration head idempotent on re-run (or-d3w). Any uncommitted
+// work in a stale tree is WIP-snapshotted before removal (Remove §6.6), then the branch is
+// force-deleted (Remove drops the worktree but not the branch, and Create's `add -b` collides on it).
+func (m *Manager) Recreate(ctx context.Context, issueID, startPoint string) (Worktree, error) {
+	if _, err := os.Stat(m.PathFor(issueID)); err == nil {
+		if err := m.Remove(ctx, issueID, RemoveOpts{Force: true}); err != nil {
+			return Worktree{}, fmt.Errorf("recreate: clear stale worktree %s: %w", issueID, err)
+		}
+	}
+	// Prune any stale/prunable registration first — if the dir was removed out-of-band (or a crash
+	// landed between RemoveAll and Prune), git still considers the branch "checked out" by the ghost
+	// worktree, so `git branch -D` would fail ("used by worktree") and Create's `add -b` would collide
+	// again. Prune clears the ghost; then the force-delete succeeds even when the dir was already gone.
+	_ = m.Prune()
+	_, _ = m.git("branch", "-D", issueID) // best-effort: the branch may not exist
+	return m.Create(ctx, issueID, startPoint)
+}
+
 // CreateResume reattaches an existing branch's worktree (after a crash/restart).
 func (m *Manager) CreateResume(ctx context.Context, issueID, branch string) (Worktree, error) {
 	l := m.lockFor(issueID)

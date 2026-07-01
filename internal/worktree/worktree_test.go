@@ -87,6 +87,65 @@ func TestCreateOffMainSharedObjectStore(t *testing.T) {
 	}
 }
 
+// TestRecreateReplacesStaleWorktreeAndBranch (or-d3w): Recreate yields a FRESH tree even when a
+// prior worktree + branch of the same name exist — the case that broke `orion run` re-runs, where
+// the epic-integration head collided on the leftover branch from a previous run.
+func TestRecreateReplacesStaleWorktreeAndBranch(t *testing.T) {
+	repo := newRepo(t)
+	m := New(repo, mustStore(t))
+	ctx := context.Background()
+
+	wt1, err := m.Create(ctx, "epic-integration", "main")
+	if err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	// A stale integration head carrying an un-integrated commit (a prior run's assembly).
+	if err := os.WriteFile(filepath.Join(wt1.Path, "stale.txt"), []byte("prior run"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, wt1.Path, "git", "add", "-A")
+	run(t, wt1.Path, "git", "commit", "-m", "stale head")
+
+	// Precondition (the bug): a plain Create now collides on the existing branch.
+	if _, err := m.Create(ctx, "epic-integration", "main"); err == nil {
+		t.Fatal("precondition: a second Create must collide on the existing epic-integration branch")
+	}
+
+	// Recreate succeeds and yields a FRESH tree from main (the stale commit is gone).
+	wt2, err := m.Recreate(ctx, "epic-integration", "main")
+	if err != nil {
+		t.Fatalf("recreate: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wt2.Path, "stale.txt")); !os.IsNotExist(err) {
+		t.Errorf("recreated head must be fresh from main (no stale.txt); stat err = %v", err)
+	}
+	if out, _ := m.git("worktree", "list"); !strings.Contains(out, wt2.Path) {
+		t.Errorf("worktree list should show the recreated head:\n%s", out)
+	}
+}
+
+// TestRecreateSurvivesGhostRegistration (or-d3w): if the worktree DIR was removed out-of-band
+// (leaving a prunable git registration + the branch — e.g. a WSL2 rm -rf or a crash before prune),
+// Recreate must still succeed. It prunes the ghost first, so `git branch -D` no longer sees the
+// branch as "used by worktree" and the fresh `worktree add -b` no longer collides.
+func TestRecreateSurvivesGhostRegistration(t *testing.T) {
+	repo := newRepo(t)
+	m := New(repo, mustStore(t))
+	ctx := context.Background()
+
+	wt, err := m.Create(ctx, "epic-integration", "main")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Out-of-band deletion: the dir is gone but git still holds a prunable registration + the branch.
+	if err := os.RemoveAll(wt.Path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Recreate(ctx, "epic-integration", "main"); err != nil {
+		t.Fatalf("recreate must survive a ghost registration + leftover branch: %v", err)
+	}
+}
+
 // TestRemoveRefusesUnmergedWorkWithoutForce: a dirty worktree is not deleted
 // without --force, but is with it; afterward git no longer lists it.
 func TestRemoveRefusesUnmergedWorkWithoutForce(t *testing.T) {

@@ -25,7 +25,11 @@ func clusterWorktreeSet(ctx context.Context, mgr *worktree.Manager, clusters []d
 		}
 	}
 	for _, cl := range clusters {
-		wt, cerr := mgr.Create(ctx, cl.Key, base)
+		// Recreate (not Create): each cluster tree holds freshly-GENERATED code built from base, so
+		// it must be fresh each run — and a prior `orion run` leaves the cl.Key branch behind (Remove
+		// drops the worktree, not the branch), which plain Create would collide on. Recreate makes
+		// cluster allocation idempotent on re-run, matching the epic-integration head (or-d3w).
+		wt, cerr := mgr.Recreate(ctx, cl.Key, base)
 		if cerr != nil {
 			cleanup()
 			return nil, nil, fmt.Errorf("worktree for cluster %s: %w", cl.Key, cerr)

@@ -43,7 +43,10 @@ func integrateEpic(
 		}
 	}
 
-	intWT, err := wtMgr.Create(ctx, "epic-integration", base)
+	// Recreate (not Create): a prior `orion run` on this repo may have left the epic-integration
+	// worktree+branch; the head must be FRESH from base each run, so clear any stale one first —
+	// otherwise a re-run crashes on "a branch named epic-integration already exists" (or-d3w).
+	intWT, err := wtMgr.Recreate(ctx, "epic-integration", base)
 	if err != nil {
 		return "", false, fmt.Errorf("integration head worktree: %w", err)
 	}
@@ -64,18 +67,22 @@ func integrateEpic(
 			continue // a cluster with a non-accepted task is not integrated (the epic will Reject)
 		}
 		wt := clusterWT[cl.Key]
-		// Commit the cluster's generated build on its branch (= cl.Key) so it is a mergeable ref.
-		// Nothing-to-commit means the cluster produced no change → skip it (a no-op integration).
-		if status, _ := gitIn(ctx, wt, "status", "--porcelain"); status == "" {
+		// Commit any uncommitted build on the cluster's branch (= cl.Key) so it is a mergeable ref.
+		// A re-run's cluster is ALREADY committed (clean worktree) — do NOT mistake that for "no
+		// change" and skip it, or the re-assembled head loses the cluster's files (or-d3w).
+		if status, _ := gitIn(ctx, wt, "status", "--porcelain"); status != "" {
+			if _, e := gitIn(ctx, wt, "add", "-A"); e != nil {
+				return headDir, false, e
+			}
+			if _, e := gitIn(ctx, wt,
+				"-c", "user.name=Orion", "-c", "user.email=orion@revelara.ai", "-c", "commit.gpgsign=false",
+				"commit", "--no-verify", "-m", "orion: cluster "+cl.Key); e != nil {
+				return headDir, false, e
+			}
+		}
+		// Skip only a GENUINELY empty cluster — its branch has no commits beyond base to integrate.
+		if ahead, _ := gitIn(ctx, wt, "rev-list", "--count", base+"..HEAD"); ahead == "0" {
 			continue
-		}
-		if _, e := gitIn(ctx, wt, "add", "-A"); e != nil {
-			return headDir, false, e
-		}
-		if _, e := gitIn(ctx, wt,
-			"-c", "user.name=Orion", "-c", "user.email=orion@revelara.ai", "-c", "commit.gpgsign=false",
-			"commit", "--no-verify", "-m", "orion: cluster "+cl.Key); e != nil {
-			return headDir, false, e
 		}
 
 		out, ierr := integ.Integrate(ctx, cl.Key, wt, cl.Key)
