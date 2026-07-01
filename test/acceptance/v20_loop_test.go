@@ -131,6 +131,9 @@ func driveLoop(t *testing.T, dir string, env []string) {
 // the definition of "done" for V2.0: every shell-verifiable predicate from the
 // PRD must pass. It is RED until the loop fills it in — that is the point.
 func TestV20Loop(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full CLI acceptance loop (builds orion + runs generate→prove per predicate); run without -short")
+	}
 	if len(predicates) == 0 {
 		t.Fatal("no acceptance predicates encoded")
 	}
