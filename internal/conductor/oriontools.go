@@ -27,6 +27,7 @@ import (
 func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSession) *tools.Registry {
 	r := tools.NewRegistry()
 	registerChangeTools(r, cs, c, provider)
+	registerBeadsTool(r)
 
 	r.Register(tools.Tool{
 		Name:        "submit_intent",

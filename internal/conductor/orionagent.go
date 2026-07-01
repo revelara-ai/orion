@@ -184,5 +184,5 @@ A proven change is committed on a REVIEW branch, not on the base branch (main) â
 - Land it on the base branch: git ["merge", "--ff-only", "<branch>"].
 - If that merge is NOT a fast-forward, the base moved since the change was proven, so the proof is now STALE. Do NOT hand-merge or force. Instead re-run change_repo off current HEAD (it regenerates and re-proves the change against the real current state), then land the fresh branch with merge --ff-only. This keeps a landed change exactly what was proven.
 - Use the git tool for the diffs/merges/commits the developer asks for. Only push when they explicitly ask â€” push reaches a shared remote.
-Keep replies short and conversational. You propose; the deterministic gates verify.`
+Keep replies short and conversational. You propose; the deterministic gates verify.` + maybeBeadsGuidance()
 }
