@@ -18,11 +18,11 @@ const modulePath = "github.com/revelara-ai/orion"
 // Process note (or-rsm): six packages were built + unit-proven + mutation-tested
 // yet unreachable from cmd/orion. Per-task Done-when proved components, never the
 // wired system. This gate closes that gap.
-var deferredOrphans = map[string]string{
-	"internal/memory":        "tiered memory — wire into Conductor context assembly (or-b73)",
-	"internal/contextengine": "bundle assembler / poisoning defense — wire into Conductor context assembly (or-b73)",
-	"internal/tracker":       "store→beads projection — expose via command / on-demand (or-y0z)",
-}
+// Empty: every previously-deferred package is now wired into the binary (or-b73 wired
+// memory + contextengine into Conductor context assembly; or-y0z exposed tracker via
+// `orion tracker project`). The ratchet is fully closed — a new unreachable package now
+// fails the gate outright.
+var deferredOrphans = map[string]string{}
 
 // goListInternal returns the set of internal/ packages emitted by `go list <args>`.
 func goListInternal(t *testing.T, args ...string) map[string]bool {
