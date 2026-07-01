@@ -877,6 +877,17 @@ func (r *EscalationRepo) Get(ctx context.Context, id string) (Escalation, error)
 	return e, err
 }
 
+// HasOpenForTask reports whether the task already has an unresolved escalation —
+// the bar-time escalation pass uses it to avoid double-filing a task that
+// already escalated at exhaustion time (or-v9f.6).
+func (r *EscalationRepo) HasOpenForTask(ctx context.Context, projectID, taskID string) (bool, error) {
+	var n int
+	err := r.tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM escalations WHERE project_id=? AND task_id=? AND resolved=0`,
+		projectID, taskID).Scan(&n)
+	return n > 0, err
+}
+
 // Resolve closes an escalation with the human's decision note.
 func (r *EscalationRepo) Resolve(ctx context.Context, id, resolution string) error {
 	res, err := r.tx.ExecContext(ctx,

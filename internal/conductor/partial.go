@@ -55,7 +55,7 @@ func escalatedRemainder(results []taskResult) string {
 	for _, r := range results {
 		switch {
 		case r.Blocked:
-			fmt.Fprintf(&b, "- %s: BLOCKED (a dependency did not prove)\n", r.TaskID)
+			fmt.Fprintf(&b, "- %s: awaiting decision — blocked by an unproven dependency; resolve its escalation (orion escalations list) and re-run\n", r.TaskID)
 		case r.Verdict != "Accept":
 			reason := strings.TrimSpace(r.FailureAnalysis)
 			if reason == "" {

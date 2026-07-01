@@ -334,6 +334,13 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 					continue
 				}
 				failed++
+				// Exhaustion time (or-v9f.6) already filed this task's escalation
+				// in most cases — one task, one open row; the mid-run reason wins.
+				if has, e := tx.Escalations().HasOpenForTask(ctx, proj.ID, r.TaskID); e != nil {
+					return e
+				} else if has {
+					continue
+				}
 				if _, e := tx.Escalations().CreateDetailed(ctx, proj.ID, r.TaskID, reason, r.FailureAnalysis); e != nil {
 					return e
 				}
@@ -572,6 +579,29 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	withLock(stateMu, func() { closed, gateErr = New(store).ProveAndCloseReport(ctx, taskID, report) })
 	if gateErr != nil {
 		return taskResult{}, fmt.Errorf("gate: %w", gateErr)
+	}
+
+	// or-v9f.6 (slice A): a task that exhausted refinement files its inbox
+	// escalation NOW — on a long backlog run the human learns hours before the
+	// epic-level bar, and can act while siblings keep building. Best-effort: an
+	// escalation write never fails the build; the bar-time pass dedups via
+	// HasOpenForTask.
+	if string(report.Outcome.Verdict) != "Accept" {
+		withLock(stateMu, func() {
+			_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
+				proj, e := tx.Projects().Active(ctx)
+				if e != nil {
+					return e
+				}
+				id, e := tx.Escalations().CreateDetailed(ctx, proj.ID, taskID,
+					fmt.Sprintf("task failed proof after %d attempt(s)", attempts), failureAnalysis)
+				if e == nil {
+					onPhase.emit("Escalate", PhaseWarn,
+						fmt.Sprintf("escalation %s filed — answer with: orion escalations resolve %s", id, id))
+				}
+				return e
+			})
+		})
 	}
 
 	// Slice 1 (or-hd3.2): populate memory so a LATER task recalls what was proven,

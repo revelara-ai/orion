@@ -90,3 +90,56 @@ func TestEscalationInboxLifecycle(t *testing.T) {
 		t.Errorf("resolving an unknown escalation must return ErrNotFound, got %v", err)
 	}
 }
+
+// TestHasOpenForTask: the bar-time escalation pass must not double-file a task
+// that already escalated at exhaustion time.
+func TestHasOpenForTask(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+
+	var projID, taskID, escID string
+	if err := store.WithTx(ctx, func(tx *Tx) error {
+		var e error
+		projID, e = tx.Projects().Create(ctx, "p", "intent", "http-service")
+		if e != nil {
+			return e
+		}
+		specID, e := tx.Specs().CreateDraft(ctx, projID)
+		if e != nil {
+			return e
+		}
+		epicID, e := tx.Epics().Create(ctx, projID, specID, "epic")
+		if e != nil {
+			return e
+		}
+		taskID, e = tx.Tasks().Create(ctx, epicID, "task", "")
+		if e != nil {
+			return e
+		}
+		if has, e := tx.Escalations().HasOpenForTask(ctx, projID, taskID); e != nil || has {
+			t.Errorf("no escalation yet: want false, got %v/%v", has, e)
+		}
+		escID, e = tx.Escalations().CreateDetailed(ctx, projID, taskID, "task failed proof after 3 attempt(s)", "analysis")
+		return e
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WithTx(ctx, func(tx *Tx) error {
+		if has, e := tx.Escalations().HasOpenForTask(ctx, projID, taskID); e != nil || !has {
+			t.Errorf("open escalation exists: want true, got %v/%v", has, e)
+		}
+		if e := tx.Escalations().Resolve(ctx, escID, "fixed"); e != nil {
+			return e
+		}
+		if has, e := tx.Escalations().HasOpenForTask(ctx, projID, taskID); e != nil || has {
+			t.Errorf("resolved escalation: want false, got %v/%v", has, e)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
