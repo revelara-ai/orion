@@ -30,8 +30,9 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	registerChangeTools(r, cs, c, provider)
 	registerBeadsTool(r, c)
 	registerMCPTools(r, c.Store())  // revelara.ai MCP tools, when authenticated (or-xe7.10)
-	registerWorkspaceTools(r, c)    // bash + file I/O + search — general workspace agency (or-5j1)
-	registerWebTools(r)             // web_fetch + keyless web_search — web reach (or-5j1 slice 2)
+	registerWorkspaceTools(r, c)      // bash + file I/O + search — general workspace agency (or-5j1)
+	registerWebTools(r)               // web_fetch + keyless web_search — web reach (or-5j1 slice 2)
+	registerSubagentTool(r, c, provider) // spawn_subagent — bounded nested delegation (or-5j1 slice 3)
 
 	r.Register(tools.Tool{
 		Name:        "submit_intent",
