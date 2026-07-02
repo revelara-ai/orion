@@ -3,52 +3,30 @@ package polaris
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"net/url"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/revelara-ai/orion/internal/contextstore"
 )
 
-// fetchTimeout bounds each Polaris consume call so an unreachable server never
-// blocks the loop for long (Harness Reliability: Polaris is optional).
-const fetchTimeout = 3 * time.Second
-
-// fetch issues an authenticated GET and returns the body on 200.
-func (c *Client) fetch(ctx context.Context, token, path string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
-	if err != nil {
-		return nil, err
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: status %d", path, resp.StatusCode)
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-}
+// callTimeout bounds each MCP tool call so an unreachable service never blocks the loop for long
+// (Harness Reliability: revelara.ai reliability context is optional).
+const callTimeout = 3 * time.Second
 
 // Source records where a kind's data came from.
 type Source string
 
+// Where a consumed kind's data came from.
 const (
 	SourceLive  Source = "live"
 	SourceCache Source = "cache"
 	SourceEmpty Source = "empty"
 )
 
-// ReliabilityContext is the consumed Polaris context for a task. Reduced is true
-// when any kind fell back to cache/empty (Polaris was unreachable) — the loop
-// proceeds, but the delivery envelope flags reduced reliability context.
+// ReliabilityContext is the consumed revelara.ai context for a task. Reduced is true when any kind
+// fell back to cache/empty (the MCP service was unreachable) — the loop proceeds, but the delivery
+// envelope flags reduced reliability context.
 type ReliabilityContext struct {
 	Controls  json.RawMessage   `json:"controls"`
 	Knowledge json.RawMessage   `json:"knowledge"`
@@ -57,42 +35,55 @@ type ReliabilityContext struct {
 	Sources   map[string]Source `json:"sources"`
 }
 
-// Consumer pulls reliability context from Polaris with a local cache fallback.
+// Consumer pulls reliability context from the revelara.ai MCP service with a local cache fallback.
+// A nil client means "no live MCP" → it serves cache/empty and flags reduced context.
 type Consumer struct {
-	client     *Client
+	mcp        *MCPClient
 	store      *contextstore.Store
-	token      string
 	ttlSeconds int
+	initOnce   sync.Once
+	initErr    error
 }
 
-// NewConsumer builds a consumer. A nil client (or empty token) means "no live
-// Polaris" → the consumer serves cache/empty and flags reduced context.
-func NewConsumer(client *Client, store *contextstore.Store, token string) *Consumer {
-	return &Consumer{client: client, store: store, token: token, ttlSeconds: 3600}
+// NewConsumer builds a consumer over an MCP client (nil = no live MCP → cache/empty).
+func NewConsumer(mcp *MCPClient, store *contextstore.Store) *Consumer {
+	return &Consumer{mcp: mcp, store: store, ttlSeconds: 3600}
 }
 
-// Load pulls controls, knowledge, and risks for a project CONCURRENTLY, caching
-// live results and falling back to cache (then empty) when Polaris is
-// unreachable. Each fetch is time-bounded, so an unreachable Polaris bounds the
-// whole call at ~fetchTimeout. It NEVER errors on unreachability — the loop
-// proceeds on reduced context.
+// ensureInit performs the MCP handshake once, lazily, before the first tool call.
+func (c *Consumer) ensureInit(ctx context.Context) error {
+	c.initOnce.Do(func() {
+		if c.mcp == nil {
+			return
+		}
+		ictx, cancel := context.WithTimeout(ctx, callTimeout)
+		defer cancel()
+		_, c.initErr = c.mcp.Initialize(ictx)
+	})
+	return c.initErr
+}
+
+// Load pulls controls, knowledge, and risks for a project CONCURRENTLY via MCP tool calls, caching
+// live results and falling back to cache (then empty) when the MCP service is unreachable. Each call
+// is time-bounded, so an unreachable service bounds the whole call. It NEVER errors on
+// unreachability — the loop proceeds on reduced context.
 func (c *Consumer) Load(ctx context.Context, projectID, query string) (ReliabilityContext, error) {
 	rc := ReliabilityContext{Sources: map[string]Source{}}
 	kinds := []struct {
-		name, path string
+		name, tool string
 		set        func(json.RawMessage)
 	}{
-		{"controls", "/api/v1/controls", func(m json.RawMessage) { rc.Controls = m }},
-		{"knowledge", "/api/knowledge/search?q=" + url.QueryEscape(query), func(m json.RawMessage) { rc.Knowledge = m }},
-		{"risks", "/api/v1/risks", func(m json.RawMessage) { rc.Risks = m }},
+		{"controls", "search_controls", func(m json.RawMessage) { rc.Controls = m }},
+		{"knowledge", "search_knowledge", func(m json.RawMessage) { rc.Knowledge = m }},
+		{"risks", "search_risks", func(m json.RawMessage) { rc.Risks = m }},
 	}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for _, k := range kinds {
 		wg.Add(1)
-		go func(name, path string, set func(json.RawMessage)) {
+		go func(name, tool string, set func(json.RawMessage)) {
 			defer wg.Done()
-			payload, src := c.fetchOrCache(ctx, projectID, name, path)
+			payload, src := c.callOrCache(ctx, projectID, name, tool, query)
 			mu.Lock()
 			set(payload)
 			rc.Sources[name] = src
@@ -100,37 +91,57 @@ func (c *Consumer) Load(ctx context.Context, projectID, query string) (Reliabili
 				rc.Reduced = true
 			}
 			mu.Unlock()
-		}(k.name, k.path, k.set)
+		}(k.name, k.tool, k.set)
 	}
 	wg.Wait()
 	return rc, nil
 }
 
-func (c *Consumer) fetchOrCache(ctx context.Context, projectID, kind, path string) (json.RawMessage, Source) {
-	if c.client != nil && c.token != "" {
-		fctx, cancel := context.WithTimeout(ctx, fetchTimeout)
-		body, err := c.client.fetch(fctx, c.token, path)
-		cancel()
-		if err == nil && json.Valid(body) {
-			_ = c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
-				return tx.PolarisContext().Upsert(ctx, projectID, kind, string(body), c.ttlSeconds)
-			})
-			return body, SourceLive
-		}
+// callOrCache calls the MCP tool for a kind, caching a live result and falling back to cache then
+// empty when the MCP service is unreachable.
+func (c *Consumer) callOrCache(ctx context.Context, projectID, kind, tool, query string) (json.RawMessage, Source) {
+	if body, ok := c.callTool(ctx, tool, query); ok {
+		_ = c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+			return tx.PolarisContext().Upsert(ctx, projectID, kind, string(body), c.ttlSeconds)
+		})
+		return body, SourceLive
 	}
 	// Fall back to cache, then empty.
 	var cached string
-	var ok bool
+	var found bool
 	_ = c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
-		e, found, err := tx.PolarisContext().Get(ctx, projectID, kind)
+		e, ok, err := tx.PolarisContext().Get(ctx, projectID, kind)
 		if err != nil {
 			return err
 		}
-		cached, ok = e.Payload, found
+		cached, found = e.Payload, ok
 		return nil
 	})
-	if ok && json.Valid([]byte(cached)) {
+	if found && json.Valid([]byte(cached)) {
 		return json.RawMessage(cached), SourceCache
 	}
 	return json.RawMessage("[]"), SourceEmpty
+}
+
+// callTool runs an MCP tool and returns its JSON payload (the concatenated text content), or
+// ok=false on any error / non-JSON / tool-error result.
+func (c *Consumer) callTool(ctx context.Context, tool, query string) (json.RawMessage, bool) {
+	if c.mcp == nil || c.ensureInit(ctx) != nil {
+		return nil, false
+	}
+	cctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	res, err := c.mcp.CallTool(cctx, tool, map[string]any{"query": query})
+	if err != nil || res.IsError {
+		return nil, false
+	}
+	var b strings.Builder
+	for _, ct := range res.Content {
+		b.WriteString(ct.Text)
+	}
+	body := json.RawMessage(strings.TrimSpace(b.String()))
+	if !json.Valid(body) {
+		return nil, false
+	}
+	return body, true
 }
