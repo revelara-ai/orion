@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -93,23 +94,71 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truth
 	}()
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	pr := probeContract(addr, c)
-	return modeFrom(pr), pr, nil
+	// or-v9f.20: the running service is probed N times — reality is sampled, not
+	// glimpsed. All-pass is a pass, all-fail is a deterministic fail, and a MIX is
+	// Inconclusive: a flaky pass must never read as Accept.
+	n := runCount()
+	prs := make([]ProbeResult, 0, n)
+	for i := 0; i < n; i++ {
+		prs = append(prs, probeContract(addr, c))
+	}
+	mode, merged := modeFromRuns(prs)
+	return mode, merged, nil
 }
 
-func modeFrom(pr ProbeResult) truthalign.ModeResult {
-	pass := pr.PortOpen && pr.ResponseContractSatisfied
-	rate := 0.0
-	if pass {
-		rate = 1.0
+// runCount is the per-proof probe repetition (ORION_PROOF_RUN_COUNT, default 3,
+// min 1).
+func runCount() int {
+	if v, err := strconv.Atoi(os.Getenv("ORION_PROOF_RUN_COUNT")); err == nil && v >= 1 {
+		return v
+	}
+	return 3
+}
+
+// modeFromRuns converges N probe rounds. Per-case obligations merge across
+// rounds: executed if ANY round ran the case, passed only if EVERY round that
+// ran it passed — a flickering case fails its obligation.
+func modeFromRuns(prs []ProbeResult) (truthalign.ModeResult, ProbeResult) {
+	passes := 0
+	merged := ProbeResult{PortOpen: true, ResponseContractSatisfied: true, Cases: map[string]truthalign.ObligationStatus{}}
+	for _, pr := range prs {
+		if pr.PortOpen && pr.ResponseContractSatisfied {
+			passes++
+		}
+		merged.PortOpen = merged.PortOpen && pr.PortOpen
+		merged.ResponseContractSatisfied = merged.ResponseContractSatisfied && pr.ResponseContractSatisfied
+		if merged.Detail == "" {
+			merged.Detail = pr.Detail
+		}
+		for id, st := range pr.Cases {
+			acc := merged.Cases[id]
+			if st.Executed {
+				if !acc.Executed {
+					acc.Executed, acc.Passed = true, st.Passed
+				} else {
+					acc.Passed = acc.Passed && st.Passed
+				}
+			}
+			merged.Cases[id] = acc
+		}
+	}
+	if len(merged.Cases) == 0 {
+		merged.Cases = nil
+	}
+	n := len(prs)
+	rate := float64(passes) / float64(n)
+	inconclusive := passes > 0 && passes < n
+	if inconclusive {
+		merged.Detail = fmt.Sprintf("VARIANCE: %d/%d probe rounds passed — flaky behavior is inconclusive, not accepted; %s", passes, n, merged.Detail)
 	}
 	return truthalign.ModeResult{
-		Mode:        "empirical",
-		Pass:        pass,
-		Output:      pr.Detail,
-		Metrics:     map[string]float64{"empirical_pass_rate": rate, "run_count": 1},
-		Obligations: pr.Cases,
-	}
+		Mode:         "empirical",
+		Pass:         passes == n,
+		Inconclusive: inconclusive,
+		Output:       merged.Detail,
+		Metrics:      map[string]float64{"empirical_pass_rate": rate, "run_count": float64(n)},
+		Obligations:  merged.Cases,
+	}, merged
 }
 
 func failMode(detail string) truthalign.ModeResult {
