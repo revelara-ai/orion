@@ -16,7 +16,7 @@ func TestDeploymentBarByTier(t *testing.T) {
 	threeModes := []string{"behavioral", "empirical", "hazard"}
 
 	// Throwaway: Accept on 2 modes → delivers.
-	r := EvaluateBar(truthalign.Accept, twoModes, reliabilitytier.PolicyFor(reliabilitytier.Throwaway), env, true)
+	r := EvaluateBar(truthalign.Accept, twoModes, reliabilitytier.PolicyFor(reliabilitytier.Throwaway), env, true, nil)
 	if r.Decision != Deliver || !r.HumanMergeable || r.Envelope == nil {
 		t.Fatalf("throwaway accept should deliver human-mergeable with envelope; got %+v", r)
 	}
@@ -25,25 +25,25 @@ func TestDeploymentBarByTier(t *testing.T) {
 	}
 
 	// Standard: Accept on only 2 modes → escalate (needs all three).
-	r = EvaluateBar(truthalign.Accept, twoModes, reliabilitytier.PolicyFor(reliabilitytier.Standard), env, true)
+	r = EvaluateBar(truthalign.Accept, twoModes, reliabilitytier.PolicyFor(reliabilitytier.Standard), env, true, nil)
 	if r.Decision != Escalate || r.Envelope != nil {
 		t.Fatalf("standard accept w/o hazard should escalate; got %+v", r)
 	}
 
 	// Critical: full converge → delivers.
-	r = EvaluateBar(truthalign.Accept, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Critical), env, true)
+	r = EvaluateBar(truthalign.Accept, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Critical), env, true, nil)
 	if r.Decision != Deliver || r.Envelope == nil {
 		t.Fatalf("critical full converge should deliver; got %+v", r)
 	}
 
 	// Any Reject → escalate, no ship.
-	r = EvaluateBar(truthalign.Reject, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Standard), env, true)
+	r = EvaluateBar(truthalign.Reject, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Standard), env, true, nil)
 	if r.Decision != Escalate || r.HumanMergeable || r.Envelope != nil {
 		t.Fatalf("reject must escalate and never ship; got %+v", r)
 	}
 
 	// Security gate failure escalates even on a full Accept.
-	r = EvaluateBar(truthalign.Accept, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Standard), env, false)
+	r = EvaluateBar(truthalign.Accept, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Standard), env, false, nil)
 	if r.Decision != Escalate || r.Envelope != nil {
 		t.Fatalf("security-gate failure must escalate; got %+v", r)
 	}
@@ -57,7 +57,7 @@ func TestCriticalTierRequiresCompleteEnvelope(t *testing.T) {
 	threeModes := []string{"behavioral", "empirical", "hazard"}
 	empty := OperatingEnvelope{}
 
-	r := EvaluateBar(truthalign.Accept, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Critical), empty, true)
+	r := EvaluateBar(truthalign.Accept, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Critical), empty, true, nil)
 	if r.Decision != Escalate {
 		t.Fatalf("critical without a complete envelope must escalate, got %+v", r)
 	}
@@ -65,12 +65,12 @@ func TestCriticalTierRequiresCompleteEnvelope(t *testing.T) {
 		t.Fatalf("the escalation must carry a named reason and no envelope, got %+v", r)
 	}
 
-	if r := EvaluateBar(truthalign.Accept, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Standard), empty, true); r.Decision != Deliver {
+	if r := EvaluateBar(truthalign.Accept, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Standard), empty, true, nil); r.Decision != Deliver {
 		t.Fatalf("standard tolerates an incomplete envelope (calibrated rigor), got %+v", r)
 	}
 
 	full := OperatingEnvelope{ProvenLoad: "500 req/min", FaultClassesControlled: []string{"timeout"}}
-	if r := EvaluateBar(truthalign.Accept, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Critical), full, true); r.Decision != Deliver {
+	if r := EvaluateBar(truthalign.Accept, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Critical), full, true, nil); r.Decision != Deliver {
 		t.Fatalf("critical with a complete envelope must deliver, got %+v", r)
 	}
 }

@@ -70,3 +70,51 @@ func (r Runbook) Complete() bool {
 	}
 	return true
 }
+
+// operabilityClaims are the runbook statements that assert something about the
+// ARTIFACT — each carries the deterministic evidence predicate that must hold in
+// the artifact source for the claim to stand (or-v9f.12: the 3 a.m. reader must
+// never follow instructions the artifact cannot honor).
+var operabilityClaims = []struct {
+	name     string
+	claimRE  string   // substring that identifies the claim in a section
+	evidence []string // any of these substrings in the artifact source verifies it
+}{
+	{"structured-logs", "slog", []string{"log/slog", "slog."}},
+	{"graceful-shutdown", "SIGTERM", []string{"os/signal", "signal.Notify"}},
+}
+
+// VerifyRunbook checks every operability claim against the artifact source.
+// Unevidenced claims are rewritten with an UNVERIFIED marker (visible to the
+// reviewer and the 3 a.m. operator) and returned in missing; verified claims
+// pass through untouched.
+func VerifyRunbook(rb Runbook, artifactSrc string) (Runbook, []string) {
+	verified := Runbook{Sections: make(map[string]string, len(rb.Sections))}
+	var missing []string
+	flagged := map[string]bool{}
+	for name, body := range rb.Sections {
+		out := body
+		for _, c := range operabilityClaims {
+			if !strings.Contains(out, c.claimRE) {
+				continue
+			}
+			ok := false
+			for _, e := range c.evidence {
+				if strings.Contains(artifactSrc, e) {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				out = strings.ReplaceAll(out, c.claimRE, c.claimRE+" [UNVERIFIED: not present in the artifact]")
+				if !flagged[c.name] {
+					flagged[c.name] = true
+					missing = append(missing, c.name)
+				}
+			}
+		}
+		verified.Sections[name] = out
+	}
+	sort.Strings(missing)
+	return verified, missing
+}
