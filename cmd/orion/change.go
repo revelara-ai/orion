@@ -63,9 +63,20 @@ func cmdChange(args []string) int {
 	}
 	if res.Committed {
 		fmt.Printf("  COMMITTED ✓ — review with: git diff main..%s\n", res.Branch)
+		if res.Tier != "" {
+			fmt.Printf("  tier: %s\n", res.Tier)
+		}
+		if res.PR.Opened { // or-v9f.15
+			fmt.Printf("  PR opened: %s\n", res.PR.URL)
+		} else if res.PR.ArtifactPath != "" {
+			fmt.Printf("  PR-ready: %s\n", res.PR.ArtifactPath)
+		}
 		return 0
 	}
 	fmt.Printf("  NOT committed — %s\n", res.Reason)
+	if res.EscalationID != "" { // or-v9f.15: actionable via the unified inbox
+		fmt.Printf("  escalation: %s — resolve with: orion escalations resolve %s\n", res.EscalationID, res.EscalationID)
+	}
 	return 1
 }
 

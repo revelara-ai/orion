@@ -119,6 +119,34 @@ func (r *ProjectRepo) Get(ctx context.Context, id string) (Project, error) {
 	return r.one(ctx, `SELECT id, name, intent, project_type, status, created_at, updated_at FROM projects WHERE id=?`, id)
 }
 
+// BrownfieldProjectName is the reserved holder project that project-less
+// brownfield changes (orion change) attribute their escalations to (or-v9f.15),
+// so failed changes land in the same unified inbox as greenfield escalations.
+const BrownfieldProjectName = "orion:brownfield-changes"
+
+// GetOrCreateReserved returns the id of the reserved project with the given
+// name, creating it in a TERMINAL status ('delivered') on first use. Terminal =
+// invisible to the queue (Active/OldestQueued/QueuedProjects never see it), so a
+// permanent holder never competes for the single active slot (or-v9f.1).
+// Idempotent and race-safe inside a WithTx (immediate-tx serializes writers).
+func (r *ProjectRepo) GetOrCreateReserved(ctx context.Context, name, projectType string) (string, error) {
+	var id string
+	err := r.tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE name=? ORDER BY created_at LIMIT 1`, name).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("lookup reserved project: %w", err)
+	}
+	id, now := newID(), nowRFC3339()
+	if _, err := r.tx.ExecContext(ctx,
+		`INSERT INTO projects (id, name, intent, project_type, status, created_at, updated_at) VALUES (?,?,?,?,'delivered',?,?)`,
+		id, name, name, projectType, now, now); err != nil {
+		return "", fmt.Errorf("create reserved project: %w", err)
+	}
+	return id, nil
+}
+
 // Latest returns the most recently created project.
 func (r *ProjectRepo) Latest(ctx context.Context) (Project, error) {
 	return r.one(ctx, `SELECT id, name, intent, project_type, status, created_at, updated_at FROM projects ORDER BY created_at DESC, id DESC LIMIT 1`)
