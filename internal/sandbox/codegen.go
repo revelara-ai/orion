@@ -31,6 +31,9 @@ type GenSpec struct {
 	// entry symbol). Empty defaults to "handleTime" (the HTTP-family contract symbol),
 	// so existing callers are unchanged (or-3ba.4 / or-ciq).
 	EntrySymbol string
+	// ProgramFamily selects the generation contract: "" == "service" (HTTP, the
+	// default) | "cli" (or-v9f.3 exec cases: a run() entry + thin os.Exit main).
+	ProgramFamily string
 	// Context is the assembled, trust-tiered recalled context (spec constraints +
 	// retrieved memory, with generation-tier memory quarantined) that the Conductor
 	// injects into the generation prompt (or-b73). The deterministic fixture ignores

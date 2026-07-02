@@ -50,6 +50,16 @@ func SpecDocument(es spec.ExecutableSpec, ratified bool) string {
 	}
 	b.WriteString("\n")
 
+	// or-v9f.3: exec cases render as one imperative shell-transcript line each —
+	// the human reviews the ratifiable surface, exactly what is hashed and proven.
+	if execLines := renderExecCases(rc.Cases); len(execLines) > 0 {
+		b.WriteString("## Command cases\n\n")
+		for _, l := range execLines {
+			fmt.Fprintf(&b, "- %s\n", l)
+		}
+		b.WriteString("\n")
+	}
+
 	// Decisions, grouped by dimension, marking how each was resolved.
 	if len(es.Dimensions) > 0 {
 		b.WriteString("## Decisions\n\n")
@@ -116,4 +126,54 @@ func titleCase(s string) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// renderExecCases renders each exec case as `$ argv → expectations [seeded: …]`.
+func renderExecCases(cases []spec.BehavioralCase) []string {
+	var out []string
+	for _, c := range cases {
+		if c.Kind != spec.KindExec || c.Exec == nil || len(c.Exec.Steps) == 0 {
+			continue
+		}
+		st := c.Exec.Steps[0]
+		var parts []string
+		if st.Expect.Exit != nil {
+			parts = append(parts, fmt.Sprintf("exit %d", *st.Expect.Exit))
+		}
+		for _, a := range st.Expect.Stdout {
+			parts = append(parts, "stdout "+renderStreamAssertion(a))
+		}
+		for _, a := range st.Expect.Stderr {
+			parts = append(parts, "stderr "+renderStreamAssertion(a))
+		}
+		line := "`$ " + strings.Join(st.Argv[1:], " ") + "` → " + strings.Join(parts, ", ")
+		if len(st.Argv) == 1 {
+			line = "`$ <binary>` → " + strings.Join(parts, ", ")
+		}
+		if n := len(c.Exec.Seed); n > 0 {
+			names := make([]string, 0, n)
+			for _, s := range c.Exec.Seed {
+				names = append(names, s.Path)
+			}
+			line += " _[seeded: " + strings.Join(names, ", ") + "]_"
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+func renderStreamAssertion(a spec.StreamAssertion) string {
+	switch a.Kind {
+	case spec.StreamExact:
+		return fmt.Sprintf("= %q", a.Value)
+	case spec.StreamContains:
+		return fmt.Sprintf("contains %q", a.Value)
+	case spec.StreamRegex:
+		return fmt.Sprintf("~ /%s/", a.Value)
+	case spec.StreamEmpty:
+		return "empty"
+	case spec.StreamRFC3339UTC:
+		return "is RFC3339 UTC"
+	}
+	return string(a.Kind)
 }

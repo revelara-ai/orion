@@ -10,6 +10,7 @@ package proof
 import (
 	"context"
 
+	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/internal/proof/behavioral"
 	"github.com/revelara-ai/orion/internal/proof/diagnostics"
 	"github.com/revelara-ai/orion/internal/proof/empirical"
@@ -175,6 +176,18 @@ func ProveAllWithThreshold(ctx context.Context, artifactDir string, c testsynth.
 	if d := diagnostics.Check(ctx, artifactDir); !d.OK {
 		mr := truthalign.ModeResult{Mode: "diagnostics", Pass: false, Output: d.Output}
 		return Report{Outcome: truthalign.Converge(mr), Modes: []ModeReport{{Result: mr}}}, nil
+	}
+	// or-v9f.3: exec cases require the CLI entry contract — a missing/mis-signed
+	// run() becomes ONE targeted diagnostic here, not a corpus compile failure
+	// cascading into all-obligations-Inconclusive spin.
+	for _, cs := range c.Cases {
+		if cs.Kind == spec.KindExec {
+			if e := diagnostics.CheckEntry(artifactDir, c.Entry()); !e.OK {
+				mr := truthalign.ModeResult{Mode: "diagnostics", Pass: false, Output: e.Output}
+				return Report{Outcome: truthalign.Converge(mr), Modes: []ModeReport{{Result: mr}}}, nil
+			}
+			break
+		}
 	}
 
 	bmr, err := behavioral.ProveWithThreshold(ctx, artifactDir, c, nil, mutationThreshold)

@@ -112,6 +112,20 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		TimeZone: es.ResponseContract.TimeZone,
 		Cases:    es.ResponseContract.Cases, // the behavioral contract the generator builds to
 	}
+	// or-v9f.3: a spec whose cases are exec-shaped with no HTTP contract is a CLI
+	// build — the generator gets the run()/thin-main contract and the proof
+	// channels target the run entry.
+	hasExecCases := false
+	for _, cs := range es.ResponseContract.Cases {
+		if cs.Kind == spec.KindExec {
+			hasExecCases = true
+			break
+		}
+	}
+	if hasExecCases && es.ResponseContract.Route == "" && es.ResponseContract.ContentType == "" {
+		gs.ProgramFamily = "cli"
+		gs.EntrySymbol = "run"
+	}
 
 	proj, _, _ := store.CurrentProjectSpec(ctx)
 	model, ok, _ := stpa.Load(ctx, store, proj.ID)
@@ -126,7 +140,15 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		_ = stpa.Save(ctx, store, proj.ID, model)
 	}
 	contract := testsynth.Contract{Route: gs.Route, Format: gs.Format, TimeZone: gs.TimeZone, Cases: es.ResponseContract.Cases, EntrySymbol: gs.Entry()}
+	// Shadow gate (or-v9f.3 slice 1): exec obligations are executed and recorded
+	// in every report, but the VERDICT gates on them only when
+	// ORION_EXEC_CASES=required — the measured cutover flips the default once the
+	// shadow criterion holds (>=50 runs, <2% infra false-Inconclusive).
 	requiredIDs := es.ResponseContract.RequiredCaseIDs()
+	if hasExecCases && os.Getenv("ORION_EXEC_CASES") != "required" {
+		requiredIDs = es.ResponseContract.RequiredCaseIDsWhere(func(cs spec.BehavioralCase) bool { return cs.Kind != spec.KindExec })
+		onPhase.emit("Decompose", PhaseWarn, fmt.Sprintf("exec-shadow: %d exec case(s) execute + record but do not yet gate the verdict (ORION_EXEC_CASES=required to gate)", len(es.ResponseContract.Cases)-len(requiredIDs)))
+	}
 
 	// Cluster coupled tasks by declared file scope (or-tcs.1.2): the schedule keeps
 	// cluster members contiguous, and — below — each cluster builds in its own

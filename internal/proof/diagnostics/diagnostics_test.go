@@ -1,6 +1,7 @@
 package diagnostics
 
 import (
+	"strings"
 	"context"
 	"os"
 	"path/filepath"
@@ -56,5 +57,38 @@ func TestCheckFailsVetFinding(t *testing.T) {
 	writeMod(t, dir, "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Printf(\"%d\\n\", \"not an int\") }\n")
 	if r := Check(context.Background(), dir); r.OK {
 		t.Fatal("a vet finding (Printf format mismatch) must fail diagnostics")
+	}
+}
+
+// TestCheckEntry (or-v9f.3): the CLI entry contract is verified at go/parser
+// altitude — missing or mis-signed run() yields one targeted diagnostic.
+func TestCheckEntry(t *testing.T) {
+	write := func(t *testing.T, src string) string {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	good := `package main
+import ("io"; "os")
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env map[string]string) int { return 0 }
+func main() { os.Exit(run(nil, nil, nil, nil, nil)) }
+`
+	if r := CheckEntry(write(t, good), "run"); !r.OK {
+		t.Fatalf("conforming entry rejected: %s", r.Output)
+	}
+	missing := `package main
+func main() {}
+`
+	if r := CheckEntry(write(t, missing), "run"); r.OK || !strings.Contains(r.Output, "no run function") {
+		t.Fatalf("missing entry must yield the targeted diagnostic, got %+v", r)
+	}
+	misSigned := `package main
+func run(args []string) error { return nil }
+func main() {}
+`
+	if r := CheckEntry(write(t, misSigned), "run"); r.OK || !strings.Contains(r.Output, "does not match") {
+		t.Fatalf("mis-signed entry must yield the targeted diagnostic, got %+v", r)
 	}
 }
