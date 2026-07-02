@@ -41,7 +41,7 @@ func main(){ _ = apiKey }
 	env := delivery.OperatingEnvelope{}
 	res := delivery.EvaluateBar(truthalign.Accept,
 		[]string{"behavioral", "empirical", "hazard"},
-		reliabilitytier.PolicyFor(reliabilitytier.Standard), env, SecurityClean(dirty))
+		reliabilitytier.PolicyFor(reliabilitytier.Standard), env, SecurityClean(dirty), nil)
 	if res.Decision != delivery.Escalate {
 		t.Fatalf("hardcoded secret must block the bar; got %s", res.Decision)
 	}
