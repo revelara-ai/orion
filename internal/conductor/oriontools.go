@@ -325,7 +325,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			var gen Generator
 			var aligner Aligner
 			if provider != nil {
-				gen = NativeGenerator(provider)
+				gen = NativeGenerator(provider, c.Budget())
 				aligner = NativeAligner(provider)
 			}
 			res, err := BuildAndProve(ctx, st, gen, aligner, func(e PhaseEvent) { phases = append(phases, e) }, OutputRoot())

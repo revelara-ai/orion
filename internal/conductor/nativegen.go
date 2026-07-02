@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/revelara-ai/orion/internal/budget"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,7 +24,7 @@ import (
 // template. The model never sees the proof corpus (it gets the contract — the
 // cases — not the harness-authored tests), so it still cannot grade its own
 // homework: the (independent) proof holds whatever it writes accountable.
-func NativeGenerator(provider llm.Provider) Generator {
+func NativeGenerator(provider llm.Provider, acct *budget.Accountant) Generator {
 	return func(ctx context.Context, gs sandbox.GenSpec, buildDir, feedback string) (sandbox.GeneratedArtifact, error) {
 		reg := tools.NewRegistry()
 		reg.Register(writeFileTool(buildDir))
@@ -31,7 +32,7 @@ func NativeGenerator(provider llm.Provider) Generator {
 			Provider:   provider,
 			Tools:      reg,
 			System:     generationRole(gs),
-			Supervisor: harness.Supervisor{MaxIterations: 24},
+			Supervisor: harness.Supervisor{MaxIterations: 24, Budget: acct},
 		}
 		userMsg := "Generate the program now: write each file with write_file (a complete go.mod and main.go), then end your turn."
 		if strings.TrimSpace(feedback) != "" {

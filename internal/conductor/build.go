@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/revelara-ai/orion/internal/budget"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/contextengine"
@@ -217,6 +219,9 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		return tr, terr
 	}, func(clusterKey string) error {
 		if err := rb.Guard("dispatch cluster " + clusterKey); err != nil {
+			return err
+		}
+		if err := budgetGate(c.Budget()); err != nil {
 			return err
 		}
 		return drift.Check(ctx)
@@ -698,6 +703,17 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		Closed: closed, BuildDir: buildDir, Attempts: attempts,
 		FailureAnalysis: failureAnalysis, Alignment: alignment,
 	}, nil
+}
+
+// budgetGate refuses new cluster dispatch once the run's budget ceiling is
+// reached (or-v9f.18). Wall-clock counts even where a vendor agent's tokens are
+// invisible; with no ceiling configured the accountant never halts.
+func budgetGate(acct *budget.Accountant) error {
+	if acct == nil || !acct.Halted() {
+		return nil
+	}
+	s := acct.Snapshot()
+	return fmt.Errorf("budget gate: ceiling reached (tokens=%d dollars=%.2f wall=%s) — no new clusters; raise ORION_BUDGET_* or resolve and re-run", s.Tokens, s.Dollars, s.Wall.Round(time.Second))
 }
 
 // mutationThresholdFor classifies the artifact's reliability tier from its own
