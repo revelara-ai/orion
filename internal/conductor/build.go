@@ -294,13 +294,25 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	aggregateVerdict := outcome.aggregate
 	remainder := escalatedRemainder(results)
 
+	// or-xe7.4: pull the project's reliability context (controls/knowledge/risks) from revelara.ai
+	// (MCP) before the bar — cached for reuse, and its reduced flag recorded in the envelope so a
+	// delivery decided WITHOUT live reliability context is honestly marked. The touchpoint is optional
+	// (no credential / unreachable → reduced, the loop proceeds).
+	relctx := loadReliabilityContext(ctx, store, proj.ID, es.Intent)
+	if relctx.Reduced {
+		onPhase.emit("ReliabilityContext", PhaseWarn, "reduced — revelara.ai unreachable; proceeding on cached/empty reliability context")
+	} else {
+		onPhase.emit("ReliabilityContext", PhaseDone, "controls, knowledge, and risks pulled from revelara.ai")
+	}
+
 	// Reliability scan → tier → deployment bar → deliver or escalate (Epic-level, once).
 	findings, _ := reliabilityscan.ScanAndRecord(ctx, store, proj.ID, buildDir)
 	tier := reliabilitytier.Classify(reliabilityscan.DeriveDimensions(findings))
 	env := delivery.OperatingEnvelope{
-		ProvenLoad:             provenLoad(es),
-		FaultClassesControlled: faultClasses(model),
-		Assumptions:            assumptions(model),
+		ProvenLoad:                provenLoad(es),
+		FaultClassesControlled:    faultClasses(model),
+		Assumptions:               assumptions(model),
+		ReducedReliabilityContext: relctx.Reduced,
 	}
 	securityOK := proof.SecurityClean(buildDir)
 	// or-v9f.13: the bar is told which modes actually RAN — the assembled proof
