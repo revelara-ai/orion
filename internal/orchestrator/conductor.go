@@ -63,13 +63,13 @@ type Conductor struct {
 // self-instruments via the default structured logger (3 a.m. test) and an
 // always-on budget accountant (no ceiling by default).
 func New() *Conductor {
-	return &Conductor{log: slog.Default(), gate: completeness.NewAnalyzer("http-service"), budget: budget.New()}
+	return &Conductor{log: slog.Default(), gate: completeness.NewAnalyzer("http-service"), budget: budget.FromEnv()}
 }
 
 // NewWithStore returns a Conductor that persists intake to the Context Store, so
 // a submitted intent (project + draft spec) survives a restart.
 func NewWithStore(store *contextstore.Store) *Conductor {
-	return &Conductor{log: slog.Default(), store: store, gate: completeness.NewAnalyzer("http-service"), budget: budget.New()}
+	return &Conductor{log: slog.Default(), store: store, gate: completeness.NewAnalyzer("http-service"), budget: budget.FromEnv()}
 }
 
 // Budget returns the always-on resource/cost accountant.

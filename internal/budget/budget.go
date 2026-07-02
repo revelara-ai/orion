@@ -9,6 +9,8 @@ package budget
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -62,6 +64,28 @@ type Accountant struct {
 // New returns an always-on accountant with NO ceiling (the default posture).
 func New() *Accountant {
 	return &Accountant{now: time.Now, start: time.Now(), lastState: StateOK}
+}
+
+// FromEnv returns the accountant the environment asks for (or-v9f.18):
+// ORION_BUDGET_MAX_TOKENS, ORION_BUDGET_MAX_DOLLARS, and
+// ORION_BUDGET_MAX_WALL_MINUTES set the opt-in ceiling axes; with none set the
+// accountant is accounting-only and never halts (the default posture). An
+// unparseable value is ignored (never a fatal misconfiguration).
+func FromEnv() *Accountant {
+	var c Ceiling
+	if v, err := strconv.Atoi(os.Getenv("ORION_BUDGET_MAX_TOKENS")); err == nil && v > 0 {
+		c.MaxTokens = v
+	}
+	if v, err := strconv.ParseFloat(os.Getenv("ORION_BUDGET_MAX_DOLLARS"), 64); err == nil && v > 0 {
+		c.MaxDollars = v
+	}
+	if v, err := strconv.Atoi(os.Getenv("ORION_BUDGET_MAX_WALL_MINUTES")); err == nil && v > 0 {
+		c.MaxWall = time.Duration(v) * time.Minute
+	}
+	if c == (Ceiling{}) {
+		return New()
+	}
+	return NewWithCeiling(c)
 }
 
 // NewWithCeiling returns an accountant with an opt-in hard ceiling.

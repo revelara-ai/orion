@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/revelara-ai/orion/internal/actuation"
+	"github.com/revelara-ai/orion/internal/budget"
 	"github.com/revelara-ai/orion/internal/decomposer"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/proof"
@@ -105,5 +106,24 @@ func TestBeadsToolGuardedByRedButton(t *testing.T) {
 	}
 	if _, err := tool.Run(context.Background(), json.RawMessage(`{"args":["close","or-1"]}`)); err == nil || !strings.Contains(err.Error(), "red button") {
 		t.Fatalf("mutating bd op must be refused at the gate while engaged, got: %v", err)
+	}
+}
+
+// TestBudgetGateRefusesWhenHalted (or-v9f.18): a run at its ceiling dispatches
+// no new clusters; without a ceiling the gate is a no-op.
+func TestBudgetGateRefusesWhenHalted(t *testing.T) {
+	if err := budgetGate(nil); err != nil {
+		t.Fatalf("nil accountant must pass: %v", err)
+	}
+	free := budget.New()
+	free.Record(1_000_000, 99)
+	if err := budgetGate(free); err != nil {
+		t.Fatalf("no ceiling must never halt: %v", err)
+	}
+	capped := budget.NewWithCeiling(budget.Ceiling{MaxTokens: 100})
+	capped.Record(100, 0)
+	err := budgetGate(capped)
+	if err == nil || !strings.Contains(err.Error(), "budget gate") {
+		t.Fatalf("a halted budget must refuse dispatch with a named reason, got: %v", err)
 	}
 }

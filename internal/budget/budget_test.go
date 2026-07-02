@@ -59,3 +59,29 @@ func TestAccountingAlwaysTracks(t *testing.T) {
 		t.Fatalf("snapshot = %+v, want tokens=200 dollars=0.75", s)
 	}
 }
+
+// TestFromEnv (or-v9f.18): ceilings are configurable from the environment; unset
+// or invalid values keep the accounting-only posture that never halts.
+func TestFromEnv(t *testing.T) {
+	t.Setenv("ORION_BUDGET_MAX_TOKENS", "")
+	t.Setenv("ORION_BUDGET_MAX_DOLLARS", "")
+	t.Setenv("ORION_BUDGET_MAX_WALL_MINUTES", "")
+	if a := FromEnv(); a.Snapshot().HasCeiling {
+		t.Fatal("no env → accounting-only, no ceiling")
+	}
+
+	t.Setenv("ORION_BUDGET_MAX_TOKENS", "1000")
+	a := FromEnv()
+	if !a.Snapshot().HasCeiling {
+		t.Fatal("token ceiling from env must arm the accountant")
+	}
+	a.Record(1000, 0)
+	if !a.Halted() {
+		t.Fatal("recording up to the env ceiling must halt")
+	}
+
+	t.Setenv("ORION_BUDGET_MAX_TOKENS", "not-a-number")
+	if a := FromEnv(); a.Snapshot().HasCeiling {
+		t.Fatal("an unparseable value is ignored, never a partial ceiling")
+	}
+}
