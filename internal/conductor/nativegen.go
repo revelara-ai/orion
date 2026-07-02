@@ -148,7 +148,11 @@ func GenerationPrompt(gs sandbox.GenSpec, writeHint string) string {
 	b.WriteString("You are Orion's code generator. Write COMPLETE, COMPILABLE, RELIABLE Go that satisfies the behavioral contract below — build exactly what the contract requires, nothing more.\n\n")
 	b.WriteString("Hard requirements:\n")
 	b.WriteString("- A go.mod with `module " + module + "` and a recent `go` line (e.g. go 1.25).\n")
-	fmt.Fprintf(&b, "- Expose the behavioral entry point as a top-level func `%s(w http.ResponseWriter, r *http.Request)` — the proof harness calls this symbol directly.\n", gs.Entry())
+	if gs.ProgramFamily == "cli" {
+		fmt.Fprintf(&b, "- Expose the behavioral entry point as a top-level func `%s(args []string, stdin io.Reader, stdout, stderr io.Writer, env map[string]string) int` — the proof harness calls this symbol directly, and main() MUST be a thin wrapper: `func main() { os.Exit(%s(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, envMap())) }` so the shipped process and the entry behave identically.\n", gs.Entry(), gs.Entry())
+	} else {
+		fmt.Fprintf(&b, "- Expose the behavioral entry point as a top-level func `%s(w http.ResponseWriter, r *http.Request)` — the proof harness calls this symbol directly.\n", gs.Entry())
+	}
 	b.WriteString("- Real logic, not hardcoded responses: the proof runs the LIVE program and mutation-tests it; for any input a case specifies (including invalid input) return EXACTLY the status + body that case requires, never crashing.\n")
 	b.WriteString("- RELIABILITY (Orion eats its own dog food): server timeouts + graceful shutdown, validated inputs, and errors handled without panicking.\n")
 	if gs.Route != "" || gs.Port != 0 {

@@ -70,6 +70,16 @@ var knownStreamKinds = map[StreamKind]bool{
 	StreamEmpty: true, StreamRFC3339UTC: true,
 }
 
+// KnownStreamKinds returns the closed stream-assertion vocabulary — the oracle
+// coherence test iterates it so the spec and casecheck sets can never drift.
+func KnownStreamKinds() []StreamKind {
+	out := make([]StreamKind, 0, len(knownStreamKinds))
+	for k := range knownStreamKinds {
+		out = append(out, k)
+	}
+	return out
+}
+
 // StreamAssertion is one checkable property of stdout or stderr.
 type StreamAssertion struct {
 	Kind  StreamKind `json:"kind"`
