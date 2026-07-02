@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // TestResolveCommand (or-dz9): slash-commands dispatch to their handlers; /help lists them; an
@@ -32,5 +34,32 @@ func TestResolveCommand(t *testing.T) {
 	// Bare "/" is treated as help.
 	if m.resolveCommand("/") != help {
 		t.Error("bare / should render help")
+	}
+}
+
+// TestResolveAsyncCommand (or-xe7.7): a command with an Async handler dispatches via
+// resolveAsyncCommand — returning its immediate line + a follow-up tea.Cmd that yields a
+// CommandResultMsg; a sync command is not treated as async.
+func TestResolveAsyncCommand(t *testing.T) {
+	ran := false
+	m := &Conversation{commands: []Command{
+		{Name: "skills", Help: "sync", Run: func(string) string { return "SYNC" }},
+		{Name: "mcp", Help: "async", Async: func(a string) (string, tea.Cmd) {
+			return "working:" + a, func() tea.Msg { ran = true; return CommandResultMsg{Text: "done"} }
+		}},
+	}}
+
+	immediate, cmd, ok := m.resolveAsyncCommand("/mcp login")
+	if !ok || cmd == nil {
+		t.Fatalf("async command should dispatch: ok=%v cmd=%v", ok, cmd)
+	}
+	if immediate != "working:login" {
+		t.Errorf("immediate line = %q", immediate)
+	}
+	if res := cmd(); res != (CommandResultMsg{Text: "done"}) || !ran {
+		t.Errorf("follow-up cmd should yield CommandResultMsg{done}: %v ran=%v", res, ran)
+	}
+	if _, _, ok := m.resolveAsyncCommand("/skills"); ok {
+		t.Error("a sync command must not be dispatched as async")
 	}
 }
