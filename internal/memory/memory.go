@@ -172,7 +172,7 @@ func (s *Store) queryVector(ctx context.Context, query string) ([]float32, bool)
 // Open opens (creating if needed) the memory store under dir/memory.db.
 func Open(dir string) (*Store, error) {
 	path := filepath.Join(dir, "memory.db")
-	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
+	dsn := "file:" + path + "?_txlock=immediate&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("memory open: %w", err)
