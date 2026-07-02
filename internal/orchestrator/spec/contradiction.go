@@ -33,7 +33,7 @@ func FindContradictions(cases []BehavioralCase) []Contradiction {
 	var order []string
 	for _, c := range cases {
 		c.EnsureID()
-		k := requestKey(c.Request)
+		k := stimulusKey(c)
 		if _, seen := groups[k]; !seen {
 			order = append(order, k)
 		}
@@ -46,7 +46,7 @@ func FindContradictions(cases []BehavioralCase) []Contradiction {
 		for i := 0; i < len(group); i++ {
 			for j := i + 1; j < len(group); j++ {
 				a, b := group[i], group[j]
-				if reason := conflict(a.Expect, b.Expect); reason != "" {
+				if reason := caseConflict(a, b); reason != "" {
 					out = append(out, Contradiction{
 						CaseA:   a.ID,
 						CaseB:   b.ID,
@@ -92,11 +92,72 @@ func conflict(a, b ExpectShape) string {
 	return ""
 }
 
-// requestKey is the content-addressed identity of a request. encoding/json
-// marshals maps with sorted keys, so equal requests always collide.
-func requestKey(r RequestShape) string {
-	b, _ := json.Marshal(r)
-	return string(b)
+// stimulusKey is the content-addressed identity of a case's STIMULUS (or-v9f.3):
+// http cases keep the legacy request identity; exec cases group by {seed, argv,
+// stdin, env} — expectations excluded, so two cases demanding different outcomes
+// of one stimulus collide into a conflict check. encoding/json marshals maps
+// with sorted keys, so equal stimuli always collide.
+func stimulusKey(c BehavioralCase) string {
+	if c.Kind == KindExec && c.Exec != nil && len(c.Exec.Steps) > 0 {
+		st := c.Exec.Steps[0]
+		b, _ := json.Marshal(struct {
+			Seed  []FileSeed        `json:"seed,omitempty"`
+			Argv  []string          `json:"argv"`
+			Stdin string            `json:"stdin,omitempty"`
+			Env   map[string]string `json:"env,omitempty"`
+		}{c.Exec.Seed, st.Argv, st.Stdin, st.Env})
+		return "exec:" + string(b)
+	}
+	b, _ := json.Marshal(c.Request)
+	return "http:" + string(b)
+}
+
+// caseConflict dispatches the decidable-conflict check by kind. Cross-kind
+// groups cannot form (stimulusKey namespaces by kind).
+func caseConflict(a, b BehavioralCase) string {
+	if a.Kind == KindExec {
+		return execConflict(a.Exec.Steps[0].Expect, b.Exec.Steps[0].Expect)
+	}
+	return conflict(a.Expect, b.Expect)
+}
+
+// execConflict reports why two expectations of one exec stimulus are
+// incompatible: different exit codes, or mutually exclusive stream demands
+// (exact-vs-different-exact, exact-vs-empty). Regex-vs-regex is documented out
+// of scope (composes or fails at proof time), same conservative posture as http.
+func execConflict(a, b StepExpect) string {
+	if a.Exit != nil && b.Exit != nil && *a.Exit != *b.Exit {
+		return fmt.Sprintf("one case requires exit %d, the other %d", *a.Exit, *b.Exit)
+	}
+	for _, stream := range []struct {
+		name string
+		x, y []StreamAssertion
+	}{{"stdout", a.Stdout, b.Stdout}, {"stderr", a.Stderr, b.Stderr}} {
+		if reason := streamConflict(stream.name, append(append([]StreamAssertion{}, stream.x...), stream.y...)); reason != "" {
+			return reason
+		}
+	}
+	return ""
+}
+
+func streamConflict(name string, all []StreamAssertion) string {
+	exact, empty := "", false
+	haveExact := false
+	for _, as := range all {
+		switch as.Kind {
+		case StreamExact:
+			if haveExact && as.Value != exact {
+				return fmt.Sprintf("%s is required to be exactly %q by one case and exactly %q by the other", name, exact, as.Value)
+			}
+			exact, haveExact = as.Value, true
+		case StreamEmpty:
+			empty = true
+		}
+	}
+	if haveExact && empty && exact != "" {
+		return fmt.Sprintf("%s is required to be exactly %q by one case and empty by the other", name, exact)
+	}
+	return ""
 }
 
 func renderRequest(r RequestShape) string {
