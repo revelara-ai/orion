@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
+	"github.com/revelara-ai/orion/internal/proof/casecheck"
 	"github.com/revelara-ai/orion/internal/proof/execprobe"
 	"github.com/revelara-ai/orion/internal/proof/unitprobe"
 	"github.com/revelara-ai/orion/internal/proof/proofexec"
@@ -60,7 +61,7 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truth
 			httpCases = append(httpCases, cs)
 		}
 	}
-	_ = fileCases // routed in the round loop below (Layer C)
+
 	hasHTTP := c.Route != "" || len(httpCases) > 0
 	// The route to probe comes from the contract or the first declared http case —
 	// never a silent "/time" default (that imposed the time domain on every probe).
@@ -146,6 +147,19 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truth
 			pr = probeContract(addr, c)
 		} else {
 			pr = ProbeResult{PortOpen: true, ResponseContractSatisfied: true, Detail: "ok"}
+		}
+		if len(fileCases) > 0 {
+			if pr.Cases == nil {
+				pr.Cases = map[string]truthalign.ObligationStatus{}
+			}
+			for _, fc := range fileCases {
+				pass, detail := checkFileCase(binDir, fc)
+				pr.Cases[fc.ID] = truthalign.ObligationStatus{Executed: true, Passed: pass}
+				if !pass {
+					pr.ResponseContractSatisfied = false
+					pr.Detail = joinDetail(pr.Detail, detail)
+				}
+			}
 		}
 		if len(unitCases) > 0 {
 			if unitDriver != "" {
@@ -538,4 +552,15 @@ func joinDetail(cur, more string) string {
 		return more
 	}
 	return cur + "; " + more
+}
+
+// checkFileCase runs one file case against the staged artifact tree — the
+// IDENTICAL oracle function the behavioral corpus embeds.
+func checkFileCase(stagedDir string, fc spec.BehavioralCase) (bool, string) {
+	for _, a := range fc.File.Assertions {
+		if ok, detail := casecheck.OrionCheckFile(string(a.Kind), filepath.Join(stagedDir, a.Path), a.Value); !ok {
+			return false, fc.ID + ": " + detail
+		}
+	}
+	return true, ""
 }

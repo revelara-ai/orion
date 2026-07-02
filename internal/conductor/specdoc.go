@@ -59,6 +59,20 @@ func SpecDocument(es spec.ExecutableSpec, ratified bool) string {
 		}
 		b.WriteString("\n")
 	}
+	if unitLines := renderUnitCases(rc.Cases); len(unitLines) > 0 {
+		b.WriteString("## Library cases\n\n")
+		for _, l := range unitLines {
+			fmt.Fprintf(&b, "- %s\n", l)
+		}
+		b.WriteString("\n")
+	}
+	if fileLines := renderFileCases(rc.Cases); len(fileLines) > 0 {
+		b.WriteString("## Artifact cases\n\n")
+		for _, l := range fileLines {
+			fmt.Fprintf(&b, "- %s\n", l)
+		}
+		b.WriteString("\n")
+	}
 
 	// Decisions, grouped by dimension, marking how each was resolved.
 	if len(es.Dimensions) > 0 {
@@ -176,4 +190,58 @@ func renderStreamAssertion(a spec.StreamAssertion) string {
 		return "is RFC3339 UTC"
 	}
 	return string(a.Kind)
+}
+
+// renderUnitCases: `pkg: call → want` per step; restart boundaries marked.
+func renderUnitCases(cases []spec.BehavioralCase) []string {
+	var out []string
+	for _, c := range cases {
+		if c.Kind != spec.KindUnit || c.Unit == nil {
+			continue
+		}
+		var steps []string
+		for _, st := range c.Unit.Steps {
+			s := "`" + st.Call + "`"
+			if st.Restart {
+				s = "⟲ restart; " + s
+			}
+			if st.Want != "" {
+				s += " → `" + st.Want + "`"
+			} else {
+				s += " → error ~ /" + st.WantErrRE + "/"
+			}
+			steps = append(steps, s)
+		}
+		pkg := c.Unit.Pkg
+		if pkg == "" {
+			pkg = "(root)"
+		}
+		out = append(out, "**"+pkg+"**: "+strings.Join(steps, "; "))
+	}
+	return out
+}
+
+// renderFileCases: one line per assertion.
+func renderFileCases(cases []spec.BehavioralCase) []string {
+	var out []string
+	for _, c := range cases {
+		if c.Kind != spec.KindFile || c.File == nil {
+			continue
+		}
+		var as []string
+		for _, a := range c.File.Assertions {
+			switch a.Kind {
+			case spec.FileExists:
+				as = append(as, "`"+a.Path+"` exists")
+			case spec.FileAbsent:
+				as = append(as, "`"+a.Path+"` absent")
+			case spec.FileContains:
+				as = append(as, "`"+a.Path+"` contains "+fmt.Sprintf("%q", a.Value))
+			case spec.FileRegex:
+				as = append(as, "`"+a.Path+"` ~ /"+a.Value+"/")
+			}
+		}
+		out = append(out, strings.Join(as, "; "))
+	}
+	return out
 }

@@ -189,6 +189,12 @@ func ProveAllWithThreshold(ctx context.Context, artifactDir string, c testsynth.
 			break
 		}
 	}
+	// or-v9f.23: unit cases require their packages to exist — one targeted
+	// diagnostic beats a corpus-compile cascade.
+	if u := diagnostics.CheckUnitRefs(artifactDir, c.Cases); !u.OK {
+		mr := truthalign.ModeResult{Mode: "diagnostics", Pass: false, Output: u.Output}
+		return Report{Outcome: truthalign.Converge(mr), Modes: []ModeReport{{Result: mr}}}, nil
+	}
 
 	bmr, err := behavioral.ProveWithThreshold(ctx, artifactDir, c, nil, mutationThreshold)
 	if err != nil {

@@ -207,7 +207,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 
 	r.Register(tools.Tool{
 		Name:        "add_requirement",
-		Description: "Record a behavioral requirement the developer stated, as STRUCTURED CASES. HTTP shape: {request:{method,path,...}, expect:{status,content_type,assertions}}. CLI/exec shape (or-v9f.3): {kind:\"exec\", exec:{seed:[{path,content}]?, steps:[{argv:[\"$BIN\",...], stdin?, env?, expect:{exit?, within_ms?, stdout:[{kind,value}]?, stderr:[...]?}}]}} with stream assertion kinds exact|contains|regex|empty|rfc3339_utc — argv[0] MUST be \"$BIN\" (the built artifact). Use exec cases when the intent is a CLI/worker, http cases when it serves routes. Each case becomes a proof obligation, so the build is held to it.",
+		Description: "Record a behavioral requirement the developer stated, as STRUCTURED CASES. HTTP shape: {request:{...}, expect:{...}}. CLI shape: {kind:\"exec\", exec:{seed?, steps:[{argv:[\"$BIN\",...], expect:{exit?, stdout?, stderr?}}]}}. LIBRARY shape (or-v9f.23): {kind:\"unit\", unit:{pkg:\"storage\", steps:[{call:\"Put(\\\"k\\\",\\\"v\\\")\", want:\"error(nil)\"} | {call:..., want_err_re:\"missing.*name\"}]}} — call is a Go expression on the package's EXPORTED surface (wrap multi-returns: func() error { _, err := F(); return err }()); a step with restart:true crosses a REAL process boundary and requires modes_apply [\"empirical\"] + modes_rationale \"cross_process_persistence\". ARTIFACT shape: {kind:\"file\", file:{assertions:[{path, kind: exists|absent|contains|regex, value?}]}}. Each case becomes a proof obligation, so the build is held to it.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -216,7 +216,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				"cases":{"type":"array","minItems":1,"items":{
 					"type":"object",
 					"properties":{
-						"kind":{"type":"string","enum":["exec"],"description":"omit for http cases; \"exec\" for CLI cases"},
+						"kind":{"type":"string","enum":["exec","unit","file"],"description":"omit for http; exec=CLI, unit=library surface, file=artifact tree"},
 						"request":{"type":"object","properties":{"method":{"type":"string"},"path":{"type":"string"},"query":{"type":"object","additionalProperties":{"type":"string"}},"body":{"type":"string"}}},
 						"expect":{"type":"object","properties":{
 							"status":{"type":"integer"},
@@ -225,6 +225,15 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 								"kind":{"type":"string","enum":["json_key_present","json_key_rfc3339","json_key_in_tz","json_error_present","body_rfc3339"]},
 								"key":{"type":"string"},"value":{"type":"string","description":"e.g. an IANA timezone for json_key_in_tz"}},"required":["kind"]}}
 						}},
+						"unit":{"type":"object","properties":{
+							"pkg":{"type":"string"},
+							"steps":{"type":"array","minItems":1,"items":{"type":"object","properties":{
+								"call":{"type":"string"},"want":{"type":"string"},"want_err_re":{"type":"string"},"restart":{"type":"boolean"}},"required":["call"]}}},"required":["steps"]},
+						"file":{"type":"object","properties":{
+							"assertions":{"type":"array","minItems":1,"items":{"type":"object","properties":{
+								"path":{"type":"string"},"kind":{"type":"string","enum":["exists","absent","contains","regex"]},"value":{"type":"string"}},"required":["path","kind"]}}},"required":["assertions"]},
+						"modes_apply":{"type":"array","items":{"type":"string","enum":["behavioral","empirical"]}},
+						"modes_rationale":{"type":"string","enum":["cross_process_persistence"]},
 						"exec":{"type":"object","properties":{
 							"seed":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},
 							"steps":{"type":"array","minItems":1,"maxItems":1,"items":{"type":"object","properties":{

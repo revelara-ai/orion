@@ -97,12 +97,17 @@ var (
 `)
 	hasExec := false
 	for _, cs := range cases {
-		if cs.Kind == spec.KindExec {
+		switch cs.Kind {
+		case spec.KindExec:
 			hasExec = true
 			b.WriteString(execCaseTest(cs))
-			continue
+		case spec.KindFile:
+			b.WriteString(fileCaseTest(cs))
+		case spec.KindUnit:
+			// unit cases live in their packages (SynthesizeUnitTests), not the root corpus
+		default:
+			b.WriteString(caseTest(cs, c.Entry()))
 		}
-		b.WriteString(caseTest(cs, c.Entry()))
 	}
 	out := b.String()
 	if hasExec {

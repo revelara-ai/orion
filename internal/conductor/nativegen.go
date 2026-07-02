@@ -148,7 +148,9 @@ func GenerationPrompt(gs sandbox.GenSpec, writeHint string) string {
 	b.WriteString("You are Orion's code generator. Write COMPLETE, COMPILABLE, RELIABLE Go that satisfies the behavioral contract below — build exactly what the contract requires, nothing more.\n\n")
 	b.WriteString("Hard requirements:\n")
 	b.WriteString("- A go.mod with `module " + module + "` and a recent `go` line (e.g. go 1.25).\n")
-	if gs.ProgramFamily == "cli" {
+	if gs.ProgramFamily == "library" {
+		b.WriteString("- This is a LIBRARY build: create the named packages with the EXPORTED functions/types the cases call (a thin package main { func main() {} } at the root keeps the module buildable). Unit cases call the exported surface directly — signatures must match the case expressions exactly.\n")
+	} else if gs.ProgramFamily == "cli" {
 		fmt.Fprintf(&b, "- Expose the behavioral entry point as a top-level func `%s(args []string, stdin io.Reader, stdout, stderr io.Writer, env map[string]string) int` — the proof harness calls this symbol directly, and main() MUST be a thin wrapper: `func main() { os.Exit(%s(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, envMap())) }` so the shipped process and the entry behave identically.\n", gs.Entry(), gs.Entry())
 	} else {
 		fmt.Fprintf(&b, "- Expose the behavioral entry point as a top-level func `%s(w http.ResponseWriter, r *http.Request)` — the proof harness calls this symbol directly.\n", gs.Entry())
