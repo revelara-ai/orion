@@ -29,7 +29,8 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	r := tools.NewRegistry()
 	registerChangeTools(r, cs, c, provider)
 	registerBeadsTool(r, c)
-	registerMCPTools(r, c.Store()) // revelara.ai MCP tools, when authenticated (or-xe7.10)
+	registerMCPTools(r, c.Store())  // revelara.ai MCP tools, when authenticated (or-xe7.10)
+	registerWorkspaceTools(r, c)    // bash + file I/O + search — general workspace agency (or-5j1)
 
 	r.Register(tools.Tool{
 		Name:        "submit_intent",
