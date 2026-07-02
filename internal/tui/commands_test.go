@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -61,5 +62,38 @@ func TestResolveAsyncCommand(t *testing.T) {
 	}
 	if _, _, ok := m.resolveAsyncCommand("/skills"); ok {
 		t.Error("a sync command must not be dispatched as async")
+	}
+}
+
+// TestCommandPalette (arrow-key command navigation): the palette is open only for a bare /command
+// prefix, filters by that prefix, and the selection index clamps into range.
+func TestCommandPalette(t *testing.T) {
+	m := &Conversation{commands: []Command{{Name: "status"}, {Name: "doctor"}, {Name: "mcp"}}}
+	m.input = textinput.New()
+
+	m.input.SetValue("hello") // not a slash-command → closed
+	if got := m.paletteMatches(); len(got) != 0 {
+		t.Errorf("non-slash input should close the palette, got %d", len(got))
+	}
+	m.input.SetValue("/mcp set x") // args typed (a space) → closed
+	if got := m.paletteMatches(); len(got) != 0 {
+		t.Errorf("typing args should close the palette, got %d", len(got))
+	}
+	m.input.SetValue("/d") // prefix filter
+	if got := m.paletteMatches(); len(got) != 1 || got[0].Name != "doctor" {
+		t.Errorf("/d should match only doctor, got %+v", got)
+	}
+	m.input.SetValue("/") // bare slash → all commands + built-in help
+	if got := m.paletteMatches(); len(got) != 4 {
+		t.Errorf("/ should list status/doctor/mcp/help, got %d", len(got))
+	}
+
+	m.paletteIdx = 99
+	if m.clampPalette(3) != 2 {
+		t.Error("index above range should clamp to last")
+	}
+	m.paletteIdx = -5
+	if m.clampPalette(3) != 0 {
+		t.Error("index below range should clamp to first")
 	}
 }

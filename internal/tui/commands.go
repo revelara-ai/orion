@@ -73,6 +73,38 @@ func (m *Conversation) resolveCommand(text string) string {
 	return "unknown command /" + name + " — type /help"
 }
 
+// paletteMatches returns the slash-commands to show in the command palette: it is non-empty only
+// while the input is a BARE /command prefix (a leading "/" with no space yet — once args are typed
+// the palette closes), and lists every command (plus /help) whose name starts with that prefix.
+func (m Conversation) paletteMatches() []Command {
+	v := m.input.Value()
+	if !strings.HasPrefix(v, "/") || strings.ContainsRune(v, ' ') {
+		return nil
+	}
+	prefix := strings.ToLower(strings.TrimPrefix(v, "/"))
+	all := append([]Command{{Name: "help", Help: "show this list"}}, m.commands...)
+	sort.SliceStable(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+	out := make([]Command, 0, len(all))
+	for _, c := range all {
+		if strings.HasPrefix(c.Name, prefix) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// clampPalette bounds the palette selection index into [0, n).
+func (m Conversation) clampPalette(n int) int {
+	switch {
+	case n <= 0 || m.paletteIdx < 0:
+		return 0
+	case m.paletteIdx >= n:
+		return n - 1
+	default:
+		return m.paletteIdx
+	}
+}
+
 // commandHelp lists the built-in /help plus every injected command, sorted.
 func (m *Conversation) commandHelp() string {
 	rows := append([]Command{{Name: "help", Help: "show this list"}}, m.commands...)
