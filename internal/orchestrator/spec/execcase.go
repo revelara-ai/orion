@@ -105,8 +105,8 @@ func validateExecCase(c BehavioralCase) error {
 	if c.Exec == nil {
 		return fmt.Errorf("exec case carries no exec payload")
 	}
-	if !zeroRequest(c.Request) || !zeroExpect(c.Expect) {
-		return fmt.Errorf("exec case must leave the http request/expect zero-valued")
+	if !zeroRequest(c.Request) || !zeroExpect(c.Expect) || c.Unit != nil || c.File != nil {
+		return fmt.Errorf("exec case must leave other kind payloads zero-valued")
 	}
 	if len(c.ModesApply) > 0 {
 		return fmt.Errorf("exec run cases are mandatorily dual-mode; modes_apply is not accepted")

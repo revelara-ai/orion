@@ -57,6 +57,7 @@ func FindContradictions(cases []BehavioralCase) []Contradiction {
 			}
 		}
 	}
+	out = append(out, fileContradictions(cases)...)
 	return out
 }
 
@@ -98,6 +99,20 @@ func conflict(a, b ExpectShape) string {
 // of one stimulus collide into a conflict check. encoding/json marshals maps
 // with sorted keys, so equal stimuli always collide.
 func stimulusKey(c BehavioralCase) string {
+	if c.Kind == KindUnit && c.Unit != nil {
+		calls := make([]string, 0, len(c.Unit.Steps))
+		for _, st := range c.Unit.Steps {
+			calls = append(calls, st.Call)
+		}
+		b, _ := json.Marshal(struct {
+			Pkg   string   `json:"pkg,omitempty"`
+			Calls []string `json:"calls"`
+		}{c.Unit.Pkg, calls})
+		return "unit:" + string(b)
+	}
+	if c.Kind == KindFile {
+		return "file:" + c.ID // file conflicts are checked pairwise across ALL file cases below
+	}
 	if c.Kind == KindExec && c.Exec != nil && len(c.Exec.Steps) > 0 {
 		st := c.Exec.Steps[0]
 		b, _ := json.Marshal(struct {
@@ -115,10 +130,63 @@ func stimulusKey(c BehavioralCase) string {
 // caseConflict dispatches the decidable-conflict check by kind. Cross-kind
 // groups cannot form (stimulusKey namespaces by kind).
 func caseConflict(a, b BehavioralCase) string {
-	if a.Kind == KindExec {
+	switch a.Kind {
+	case KindExec:
 		return execConflict(a.Exec.Steps[0].Expect, b.Exec.Steps[0].Expect)
+	case KindUnit:
+		return unitConflict(a.Unit, b.Unit)
 	}
 	return conflict(a.Expect, b.Expect)
+}
+
+// unitConflict: identical call sequences demanding different outcomes.
+func unitConflict(a, b *UnitCase) string {
+	for i := range a.Steps {
+		x, y := a.Steps[i], b.Steps[i]
+		if x.Want != "" && y.Want != "" && x.Want != y.Want {
+			return fmt.Sprintf("step %d: one case wants %s, the other %s for the same call", i, x.Want, y.Want)
+		}
+		if (x.Want != "" && y.WantErrRE != "") || (x.WantErrRE != "" && y.Want != "") {
+			return fmt.Sprintf("step %d: one case wants a value, the other an error, for the same call", i)
+		}
+	}
+	return ""
+}
+
+// fileContradictions: exists vs absent on one path across all file cases.
+func fileContradictions(cases []BehavioralCase) []Contradiction {
+	type claim struct {
+		caseID string
+		kind   FileKind
+	}
+	byPath := map[string][]claim{}
+	for _, c := range cases {
+		if c.Kind != KindFile || c.File == nil {
+			continue
+		}
+		for _, a := range c.File.Assertions {
+			byPath[a.Path] = append(byPath[a.Path], claim{c.ID, a.Kind})
+		}
+	}
+	var out []Contradiction
+	for path, claims := range byPath {
+		var exists, absent *claim
+		for i := range claims {
+			switch claims[i].kind {
+			case FileAbsent:
+				absent = &claims[i]
+			case FileExists, FileContains, FileRegex:
+				exists = &claims[i]
+			}
+		}
+		if exists != nil && absent != nil {
+			out = append(out, Contradiction{
+				CaseA: exists.caseID, CaseB: absent.caseID, Request: "file " + path,
+				Reason: fmt.Sprintf("one case requires %s to exist/have content, the other requires it absent", path),
+			})
+		}
+	}
+	return out
 }
 
 // execConflict reports why two expectations of one exec stimulus are
