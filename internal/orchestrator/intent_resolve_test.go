@@ -14,6 +14,9 @@ func TestIntentStatedDecisionsAssembleNotUnresolved(t *testing.T) {
 	}
 
 	// No RecordAnswer — the intent states the functional decisions itself.
+	if _, err := c.ApproveAssumptions(ctx); err != nil {
+		t.Fatalf("approve assumptions: %v", err)
+	}
 	es, err := c.ApproveSpec(ctx)
 	if err != nil {
 		t.Fatalf("approve should succeed for an intent that states its decisions, got: %v", err)
@@ -42,6 +45,9 @@ func TestExplicitAnswerOverridesIntentValue(t *testing.T) {
 	}
 	if err := c.RecordAnswer(ctx, "port", "9090"); err != nil {
 		t.Fatalf("answer port: %v", err)
+	}
+	if _, err := c.ApproveAssumptions(ctx); err != nil {
+		t.Fatalf("approve assumptions: %v", err)
 	}
 	es, err := c.ApproveSpec(ctx)
 	if err != nil {
