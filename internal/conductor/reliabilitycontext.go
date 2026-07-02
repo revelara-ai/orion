@@ -19,19 +19,33 @@ import (
 // flags Reduced) — the reliability touchpoint is optional, never a hard dependency, so a build never
 // fails for lack of it; the reduced flag is recorded in the delivery envelope instead.
 func loadReliabilityContext(ctx context.Context, store *contextstore.Store, projectID, query string) polaris.ReliabilityContext {
-	var mcp *polaris.MCPClient
-	credsDir := filepath.Join(store.Dir(), "credentials")
-	if ts, err := polaris.NewTokenStore(credsDir); err == nil {
-		if tok, ok, _ := ts.Load(); ok && tok.AccessToken != "" {
-			var cfg polaris.Config
-			if cs, cerr := polaris.NewConfigStore(credsDir); cerr == nil {
-				cfg, _ = cs.Load()
-			}
-			if endpoint := polaris.ResolveMCPURL(os.Getenv("ORION_POLARIS_MCP_URL"), cfg, tok); endpoint != "" {
-				mcp = polaris.NewMCPClient(endpoint, tok.AccessToken)
-			}
-		}
-	}
-	rc, _ := polaris.NewConsumer(mcp, store).Load(ctx, projectID, query)
+	rc, _ := polaris.NewConsumer(mcpClientFromCredentials(store), store).Load(ctx, projectID, query)
 	return rc
+}
+
+// mcpClientFromCredentials builds an authenticated revelara.ai MCP client from the cached credential
+// (store.Dir()/credentials) + the resolved endpoint (env → config → token → default). Returns nil
+// when there is no store or no cached token — the caller then runs without the MCP surface.
+func mcpClientFromCredentials(store *contextstore.Store) *polaris.MCPClient {
+	if store == nil {
+		return nil
+	}
+	credsDir := filepath.Join(store.Dir(), "credentials")
+	ts, err := polaris.NewTokenStore(credsDir)
+	if err != nil {
+		return nil
+	}
+	tok, ok, _ := ts.Load()
+	if !ok || tok.AccessToken == "" {
+		return nil
+	}
+	var cfg polaris.Config
+	if cs, cerr := polaris.NewConfigStore(credsDir); cerr == nil {
+		cfg, _ = cs.Load()
+	}
+	endpoint := polaris.ResolveMCPURL(os.Getenv("ORION_POLARIS_MCP_URL"), cfg, tok)
+	if endpoint == "" {
+		return nil
+	}
+	return polaris.NewMCPClient(endpoint, tok.AccessToken)
 }
