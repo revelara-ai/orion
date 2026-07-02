@@ -168,3 +168,19 @@ func TestProveAllFastFailsOnNonCompilingCode(t *testing.T) {
 		t.Fatalf("diagnostics output should carry the compiler error: %q", rep.Modes[0].Result.Output)
 	}
 }
+
+// TestReportPresentModes (or-v9f.13): the deployment bar must be told which modes
+// actually RAN — derived from the report, never a hardcoded list.
+func TestReportPresentModes(t *testing.T) {
+	r := Report{Modes: []ModeReport{
+		{Result: truthalign.ModeResult{Mode: "behavioral", Pass: true}},
+		{Result: truthalign.ModeResult{Mode: "empirical", Pass: false}},
+	}}
+	got := r.PresentModes()
+	if len(got) != 2 || got[0] != "behavioral" || got[1] != "empirical" {
+		t.Fatalf("PresentModes should list the modes that ran, got %v", got)
+	}
+	if len((Report{}).PresentModes()) != 0 {
+		t.Fatal("an empty report has no present modes")
+	}
+}

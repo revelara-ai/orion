@@ -34,6 +34,7 @@ type Policy struct {
 	Tier              Tier
 	MutationThreshold float64
 	RequireAllModes   bool // require behavioral+empirical+hazard converge
+	RequireEnvelope   bool // critical only: a delivery must carry a complete operating envelope (or-v9f.13)
 	AutonomyAllowed   bool // V2.3 only; always false in V2.0
 }
 
@@ -43,6 +44,7 @@ func PolicyFor(t Tier) Policy {
 		Tier:              t,
 		MutationThreshold: MutationThreshold(t),
 		RequireAllModes:   t != Throwaway, // throwaway tools may ship on fewer modes
+		RequireEnvelope:   t == Critical,  // critical ships only with proven load + controlled fault classes documented
 		AutonomyAllowed:   false,          // V2.0/V2.1: human-mergeable only
 	}
 }

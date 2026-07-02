@@ -48,3 +48,29 @@ func TestDeploymentBarByTier(t *testing.T) {
 		t.Fatalf("security-gate failure must escalate; got %+v", r)
 	}
 }
+
+// TestCriticalTierRequiresCompleteEnvelope (or-v9f.13): the first real behavioral
+// difference between Standard and Critical at the bar — a critical delivery
+// without a complete operating envelope (proven load + controlled fault classes)
+// escalates with a named reason; the same envelope passes at Standard.
+func TestCriticalTierRequiresCompleteEnvelope(t *testing.T) {
+	threeModes := []string{"behavioral", "empirical", "hazard"}
+	empty := OperatingEnvelope{}
+
+	r := EvaluateBar(truthalign.Accept, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Critical), empty, true)
+	if r.Decision != Escalate {
+		t.Fatalf("critical without a complete envelope must escalate, got %+v", r)
+	}
+	if r.Reason == "" || r.Envelope != nil {
+		t.Fatalf("the escalation must carry a named reason and no envelope, got %+v", r)
+	}
+
+	if r := EvaluateBar(truthalign.Accept, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Standard), empty, true); r.Decision != Deliver {
+		t.Fatalf("standard tolerates an incomplete envelope (calibrated rigor), got %+v", r)
+	}
+
+	full := OperatingEnvelope{ProvenLoad: "500 req/min", FaultClassesControlled: []string{"timeout"}}
+	if r := EvaluateBar(truthalign.Accept, threeModes, reliabilitytier.PolicyFor(reliabilitytier.Critical), full, true); r.Decision != Deliver {
+		t.Fatalf("critical with a complete envelope must deliver, got %+v", r)
+	}
+}

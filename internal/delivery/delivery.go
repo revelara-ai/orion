@@ -45,13 +45,19 @@ type Result struct {
 // operating envelope; otherwise it escalates with a named reason.
 func EvaluateBar(verdict truthalign.Verdict, presentModes []string, policy reliabilitytier.Policy, env OperatingEnvelope, securityOK bool) Result {
 	if !securityOK {
-		return Result{Decision: Escalate, Reason: "security gate failed (hardcoded secret or unverified dependency)"}
+		return Result{Decision: Escalate, Reason: "security gate failed: hardcoded secret in the artifact"}
 	}
 	if verdict != truthalign.Accept {
 		return Result{Decision: Escalate, Reason: fmt.Sprintf("proof verdict is %s, not Accept", verdict)}
 	}
 	if policy.RequireAllModes && !hasAllModes(presentModes) {
 		return Result{Decision: Escalate, Reason: fmt.Sprintf("tier %s requires behavioral+empirical+hazard; got %v", policy.Tier, presentModes)}
+	}
+	// or-v9f.13: a critical-tier delivery must document what was proven and what
+	// faults are controlled — an empty envelope at the highest tier is exactly the
+	// unstated-scaling-assumptions failure the manifesto names.
+	if policy.RequireEnvelope && (env.ProvenLoad == "" || len(env.FaultClassesControlled) == 0) {
+		return Result{Decision: Escalate, Reason: fmt.Sprintf("tier %s requires a complete operating envelope (proven load + controlled fault classes); got load=%q faults=%d", policy.Tier, env.ProvenLoad, len(env.FaultClassesControlled))}
 	}
 	env.Tier = string(policy.Tier)
 	return Result{Decision: Deliver, HumanMergeable: true, Envelope: &env, Reason: "bar met; human-mergeable (V2.0 no auto-deploy)"}
