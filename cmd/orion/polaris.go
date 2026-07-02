@@ -31,13 +31,21 @@ func polarisURL(flagVal string) string {
 	return "https://app.revelara.ai"
 }
 
-// polarisMCPURL resolves the revelara.ai MCP endpoint: flag → $ORION_POLARIS_MCP_URL → <base>/mcp.
+// polarisMCPURL resolves the revelara.ai MCP endpoint: flag → $ORION_POLARIS_MCP_URL → the
+// TUI-persisted config (`/mcp set`) → <base>/mcp default.
 func polarisMCPURL(flagVal, base string) string {
 	if flagVal != "" {
 		return flagVal
 	}
 	if u := os.Getenv("ORION_POLARIS_MCP_URL"); u != "" {
 		return u
+	}
+	if dir, err := credentialsDir(); err == nil {
+		if cs, err := polaris.NewConfigStore(dir); err == nil {
+			if cfg, _ := cs.Load(); cfg.MCPURL != "" {
+				return cfg.MCPURL
+			}
+		}
 	}
 	return strings.TrimRight(base, "/") + "/mcp"
 }
