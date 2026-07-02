@@ -660,7 +660,7 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	// write miss never fails an otherwise-green build.
 	if mem != nil {
 		withLock(stateMu, func() {
-			memMaintenance(ctx, mem, taskID, report, lastNarrative)
+			memMaintenance(ctx, mem, taskID, buildDir, report, lastNarrative)
 		})
 	}
 
@@ -687,8 +687,11 @@ func mutationThresholdFor(artifactDir string) float64 {
 // memMaintenance records the proven outcome into memory + bounds the tiers (or-hd3.*). Best-effort
 // (a memory miss never fails an otherwise-green build); called under stateMu so it is race-free
 // when clusters build in parallel.
-func memMaintenance(ctx context.Context, mem *memory.Store, taskID string, report proof.Report, lastNarrative string) {
+func memMaintenance(ctx context.Context, mem *memory.Store, taskID, buildDir string, report proof.Report, lastNarrative string) {
 	_ = rememberOutcome(ctx, mem, taskID, report)
+	// or-v9f.8: the durable decision log — a proven module's structural choices
+	// (exports, routes, module path) persist so dependent modules reuse them.
+	_ = rememberDecidedConstraints(ctx, mem, taskID, buildDir, report)
 	// or-hd3.5: on a non-Accept verdict, capture WHY it failed so the next attempt avoids it —
 	// proof facts trusted, the agent's self-report quarantined. or-7mr: the last attempt's agent
 	// narrative (empty for the deterministic fixture) is the untrusted half; rememberFailure tags
