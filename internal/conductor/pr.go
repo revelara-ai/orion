@@ -53,7 +53,6 @@ func deliveryBase(ctx context.Context, repoRoot string) string {
 // layer over it.
 func PRHandoff(ctx context.Context, repoRoot, storeDir string, d GitDelivery, es spec.ExecutableSpec, verdict truthalign.Verdict, driftLine, remainder string, rb delivery.Runbook) (PRResult, error) {
 	base := deliveryBase(ctx, repoRoot)
-	res := PRResult{Branch: d.Branch, Base: base}
 
 	// diff --stat of the feature branch vs its base (best-effort — the artifact is worth writing
 	// even if the diff can't be computed, e.g. a fresh repo with no base divergence).
@@ -65,15 +64,41 @@ func PRHandoff(ctx context.Context, repoRoot, storeDir string, d GitDelivery, es
 	}
 
 	body := prBody(es, verdict, driftLine, remainder, diffstat, rb)
-	artifactPath := filepath.Join(storeDir, "pr-"+serviceSlug(es)+".md")
+	return emitPR(ctx, repoRoot, storeDir, d.Branch, base, "orion: "+strings.TrimSpace(es.Intent), serviceSlug(es), body)
+}
+
+// ChangePRHandoff is the brownfield-change PR handoff (or-v9f.15): a proven
+// change already committed to a review branch becomes a PR-ready artifact,
+// reusing the identical push/gh/opt-in machinery as the greenfield path. The
+// body is change-shaped (intent + tier + diffstat) — a change has no
+// ExecutableSpec.
+func ChangePRHandoff(ctx context.Context, repoRoot, storeDir, worktree, branch, intent, tier string) (PRResult, error) {
+	base := deliveryBase(ctx, repoRoot)
+	diffstat := ""
+	if worktree != "" {
+		if out, err := gitIn(ctx, worktree, "diff", "--stat", base); err == nil {
+			diffstat = out
+		}
+	}
+	return emitPR(ctx, repoRoot, storeDir, branch, base, "orion: "+oneLine(intent), changeSlug(intent), changePRBody(intent, tier, diffstat))
+}
+
+// emitPR is the shared PR-handoff tail: it ALWAYS writes the local artifact (the
+// reviewable handoff — no remote required), and opens a REAL pull request only
+// when the developer opted in (ORION_GIT_PR) AND the repo has an 'origin' remote
+// AND gh is on PATH. Otherwise it records the exact push/PR commands and takes
+// no outward action. Greenfield and brownfield share it so their outward-action
+// posture can never drift.
+func emitPR(ctx context.Context, repoRoot, storeDir, branch, base, title, slug, body string) (PRResult, error) {
+	res := PRResult{Branch: branch, Base: base}
+	artifactPath := filepath.Join(storeDir, "pr-"+slug+".md")
 	if err := os.WriteFile(artifactPath, []byte(body), 0o600); err != nil {
 		return res, fmt.Errorf("write PR artifact: %w", err)
 	}
 	res.ArtifactPath = artifactPath
 
-	title := "orion: " + strings.TrimSpace(es.Intent)
-	pushCmd := fmt.Sprintf("git -C %s push -u origin %s", repoRoot, d.Branch)
-	prCmd := fmt.Sprintf("gh pr create --base %s --head %s --title %q --body-file %s", base, d.Branch, title, artifactPath)
+	pushCmd := fmt.Sprintf("git -C %s push -u origin %s", repoRoot, branch)
+	prCmd := fmt.Sprintf("gh pr create --base %s --head %s --title %q --body-file %s", base, branch, title, artifactPath)
 
 	// Open a real PR only with opt-in AND a remote AND gh present — else hand back the commands.
 	_, remoteErr := gitIn(ctx, repoRoot, "remote", "get-url", "origin")
@@ -83,13 +108,13 @@ func PRHandoff(ctx context.Context, repoRoot, storeDir string, d GitDelivery, es
 		return res, nil
 	}
 
-	if _, err := gitIn(ctx, repoRoot, "push", "-u", "origin", d.Branch); err != nil {
+	if _, err := gitIn(ctx, repoRoot, "push", "-u", "origin", branch); err != nil {
 		res.Commands = []string{pushCmd, prCmd}
 		return res, fmt.Errorf("push feature branch: %w", err)
 	}
-	// #nosec G204 -- 'gh' is a fixed binary and every arg is spec/branch-derived (route, branch name,
-	// intent title, our own artifact path); exec.Command invokes no shell, so there is no injection surface.
-	cmd := exec.CommandContext(ctx, "gh", "pr", "create", "--base", base, "--head", d.Branch, "--title", title, "--body-file", artifactPath)
+	// #nosec G204 -- 'gh' is a fixed binary and every arg is derived (branch name, intent title,
+	// our own artifact path); exec.Command invokes no shell, so there is no injection surface.
+	cmd := exec.CommandContext(ctx, "gh", "pr", "create", "--base", base, "--head", branch, "--title", title, "--body-file", artifactPath)
 	cmd.Dir = repoRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -99,6 +124,36 @@ func PRHandoff(ctx context.Context, repoRoot, storeDir string, d GitDelivery, es
 	res.Opened = true
 	res.URL = strings.TrimSpace(string(out))
 	return res, nil
+}
+
+// changePRBody renders the developer-facing PR description for a proven
+// brownfield change: the intent, the classified reliability tier, and the diff.
+func changePRBody(intent, tier, diffstat string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## %s\n\n", strings.TrimSpace(intent))
+	b.WriteString("_Brownfield change generated and regression-proven by Orion._\n\n")
+	b.WriteString("### Proof\n")
+	b.WriteString("- Regression gate: existing behavior preserved (green-before → green-after)\n")
+	b.WriteString("- New behavior: proven against the ratified case oracle\n")
+	if strings.TrimSpace(tier) != "" {
+		fmt.Fprintf(&b, "- Reliability tier: %s\n", tier)
+	}
+	b.WriteString("\n")
+	if strings.TrimSpace(diffstat) != "" {
+		b.WriteString("### Changes\n```\n")
+		b.WriteString(strings.TrimRight(diffstat, "\n"))
+		b.WriteString("\n```\n\n")
+	}
+	b.WriteString("Review the proven change and merge when satisfied.\n")
+	return b.String()
+}
+
+// changeSlug is a filesystem-safe slug for the change's PR artifact filename.
+func changeSlug(intent string) string {
+	if s := slugFromIntent(intent); s != "" {
+		return s
+	}
+	return "change"
 }
 
 // prBody renders the developer-facing PR description for a completed, system-validated epic —

@@ -298,8 +298,21 @@ func renderChangeResult(intent string, res ChangeResult) string {
 	}
 	if res.Committed {
 		fmt.Fprintf(&b, "  COMMITTED on %s (review: git diff main..%s)\n", res.Branch, res.Branch)
+		if res.Tier != "" {
+			fmt.Fprintf(&b, "  tier: %s\n", res.Tier)
+		}
+		if res.PR.ArtifactPath != "" { // or-v9f.15: PR-ready handoff over the review branch
+			if res.PR.Opened {
+				fmt.Fprintf(&b, "  PR opened: %s\n", res.PR.URL)
+			} else {
+				fmt.Fprintf(&b, "  PR-ready: %s\n", res.PR.ArtifactPath)
+			}
+		}
 	} else {
 		fmt.Fprintf(&b, "  NOT committed — %s\n", res.Reason)
+		if res.EscalationID != "" { // or-v9f.15: actionable via the unified inbox
+			fmt.Fprintf(&b, "  escalation: %s (orion escalations resolve %s)\n", res.EscalationID, res.EscalationID)
+		}
 	}
 	return b.String()
 }

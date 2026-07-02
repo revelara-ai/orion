@@ -30,8 +30,10 @@ type ChangeResult struct {
 	NewBehavior  *truthalign.ModeResult // nil when no ratified cases were supplied
 	Committed    bool
 	Reason       string // why not committed, if applicable
-	Tier         string // reliability tier classified from the change worktree (or-v9f.15)
-	Delivery     string // "deliver" | "escalate" — the same decision semantic as the greenfield bar
+	Tier         string   // reliability tier classified from the change worktree (or-v9f.15)
+	Delivery     string   // "deliver" | "escalate" — the same decision semantic as the greenfield bar
+	PR           PRResult // PR-ready handoff over the review branch on deliver (or-v9f.15)
+	EscalationID string   // inbox escalation recorded on escalate (or-v9f.15)
 }
 
 // ChangeAndProve runs the brownfield change loop end-to-end: it creates a WORKTREE off
@@ -87,7 +89,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	if !reg.Held {
 		res.Reason = reg.Reason
 		res.Delivery = "escalate"
-		return finishChange(ctx, res, intent), nil // did not preserve existing behavior — not committed
+		return finishChange(ctx, store, repoRoot, res, intent), nil // did not preserve existing behavior — not committed
 	}
 
 	// New-behavior proof (or-3p5.3): the regression gate proved do-no-harm; this proves
@@ -102,7 +104,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		if !mr.Pass {
 			res.Reason = "regression held, but the new-behavior proof did not pass"
 			res.Delivery = "escalate"
-			return finishChange(ctx, res, intent), nil // did not prove the asked-for behavior — not committed
+			return finishChange(ctx, store, repoRoot, res, intent), nil // did not prove the asked-for behavior — not committed
 		}
 	}
 
@@ -113,7 +115,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	if findings := secretFindingsInChanged(wt.Path, res.FilesChanged); len(findings) > 0 {
 		res.Reason = "security gate: hardcoded secret(s) introduced by the change: " + strings.Join(findings, ", ")
 		res.Delivery = "escalate"
-		return finishChange(ctx, res, intent), nil
+		return finishChange(ctx, store, repoRoot, res, intent), nil
 	}
 	rb := actuation.RedButton{}
 	if store != nil {
@@ -122,7 +124,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	if gerr := rb.Guard("commit change branch"); gerr != nil {
 		res.Reason = gerr.Error()
 		res.Delivery = "escalate"
-		return finishChange(ctx, res, intent), nil
+		return finishChange(ctx, store, repoRoot, res, intent), nil
 	}
 
 	// Stage ONLY the intended change. res.FilesChanged was snapshotted right after the edit,
@@ -132,7 +134,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	if len(res.FilesChanged) == 0 {
 		res.Reason = "the generator produced no file changes"
 		res.Delivery = "escalate"
-		return finishChange(ctx, res, intent), nil
+		return finishChange(ctx, store, repoRoot, res, intent), nil
 	}
 	if _, err := gitIn(ctx, wt.Path, append([]string{"add", "-A", "--"}, res.FilesChanged...)...); err != nil {
 		return res, err
@@ -157,13 +159,13 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		}
 	}
 	res.Tier = string(reliabilitytier.Classify(reliabilityscan.DeriveDimensions(findings)))
-	return finishChange(ctx, res, intent), nil
+	return finishChange(ctx, store, repoRoot, res, intent), nil
 }
 
 // finishChange fires the out-of-band event for a SETTLED change outcome
 // (or-v9f.17) — all three callers (CLI, build_change, change_repo) inherit it.
 // Fire-and-forget: a delivery miss never fails the change.
-func finishChange(ctx context.Context, res ChangeResult, intent string) ChangeResult {
+func finishChange(ctx context.Context, store *contextstore.Store, repoRoot string, res ChangeResult, intent string) ChangeResult {
 	kind := "change.delivered"
 	if res.Delivery != "deliver" {
 		kind = "change.escalated"
@@ -172,9 +174,41 @@ func finishChange(ctx context.Context, res ChangeResult, intent string) ChangeRe
 	if res.Committed {
 		verdict = "Accept"
 	}
+	// or-v9f.15: parity with the greenfield delivery tail. On DELIVER, the review
+	// branch becomes a PR-ready handoff (same push/gh machinery). On ESCALATE, a
+	// row lands in the unified inbox under the reserved brownfield holder project
+	// so a failed change is actionable via `orion escalations list`. Both nil-safe
+	// (store may be nil; a PR/escalation miss never fails the change).
+	nextAction := "git diff main.." + res.Branch
+	if store != nil {
+		if res.Delivery == "deliver" && res.Committed {
+			if pr, perr := ChangePRHandoff(ctx, repoRoot, store.Dir(), res.Path, res.Branch, intent, res.Tier); perr == nil {
+				res.PR = pr
+				if pr.ArtifactPath != "" {
+					nextAction = "review " + pr.ArtifactPath
+				}
+			}
+		} else if res.Delivery == "escalate" {
+			_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
+				pid, e := tx.Projects().GetOrCreateReserved(ctx, contextstore.BrownfieldProjectName, "brownfield")
+				if e != nil {
+					return e
+				}
+				id, e := tx.Escalations().CreateDetailed(ctx, pid, "",
+					"brownfield change: "+res.Reason,
+					"intent: "+oneLine(intent)+"\nreview branch: "+res.Branch)
+				if e == nil {
+					res.EscalationID = id
+					nextAction = "orion escalations resolve " + id
+				}
+				return e
+			})
+		}
+	}
 	_ = notify.Notify(ctx, notify.Event{
 		Kind: kind, Task: oneLine(intent), Verdict: verdict, Detail: res.Reason,
-		Artifact: res.Branch, NextAction: "git diff main.." + res.Branch,
+		EscalationID: res.EscalationID, PRURL: res.PR.URL,
+		Artifact: res.Branch, NextAction: nextAction,
 	})
 	return res
 }
