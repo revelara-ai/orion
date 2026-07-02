@@ -138,9 +138,14 @@ type Conversation struct {
 
 	// commands are the injected admin/management slash-commands (or-dz9).
 	commands []Command
-	// paletteIdx is the selected row in the command palette (shown while the input is a bare
-	// /command prefix; arrow keys navigate it).
+	// paletteIdx is the highlighted row in the command palette (shown while the input is a bare
+	// /command prefix; Tab cycles + completes it).
 	paletteIdx int
+	// Input history (or-d38): ↑/↓ recall previously-submitted lines, shell-style. histIdx is the
+	// cursor (== len(history) at the live line); draft holds the unsent line stashed while browsing.
+	history []string
+	histIdx int
+	draft   string
 }
 
 // NewConversation builds the pane bound to a connected ACP client + session.
@@ -246,32 +251,23 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyMsg:
-		// Command palette: while the input is a bare /command prefix, the arrow keys navigate the
-		// matching commands, tab completes the selection, enter runs it. (When it's closed, ↑/↓ fall
-		// through to the viewport scroll below.)
-		if matches := m.paletteMatches(); len(matches) > 0 {
-			idx := m.clampPalette(len(matches))
-			switch t.Type {
-			case tea.KeyUp:
-				if idx > 0 {
-					m.paletteIdx = idx - 1
-				}
-				return m, nil
-			case tea.KeyDown:
-				if idx < len(matches)-1 {
-					m.paletteIdx = idx + 1
-				}
-				return m, nil
-			case tea.KeyTab:
-				m.input.SetValue("/" + matches[idx].Name + " ")
+		switch t.Type {
+		case tea.KeyUp:
+			// Recall the previous submitted line (shell-style input history). Transcript scroll moves
+			// to pgup/pgdn + the mouse wheel (still handled by the viewport below).
+			m.historyPrev()
+			return m, nil
+		case tea.KeyDown:
+			m.historyNext()
+			return m, nil
+		case tea.KeyTab:
+			// Tab cycles + completes the command palette (shown while typing a bare /prefix).
+			if matches := m.paletteMatches(); len(matches) > 0 {
+				m.paletteIdx = (m.clampPalette(len(matches)) + 1) % len(matches)
+				m.input.SetValue("/" + matches[m.paletteIdx].Name)
 				m.input.CursorEnd()
-				m.paletteIdx = 0
-				return m, nil
-			case tea.KeyEnter:
-				m.input.SetValue("/" + matches[idx].Name)
-				m.paletteIdx = 0
-				return m, m.handleEnter()
 			}
+			return m, nil
 		}
 		switch t.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
@@ -297,6 +293,43 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, vcmd)
 }
 
+// recordHistory appends a just-submitted line and resets the recall cursor to the live position.
+// Consecutive duplicates are collapsed so re-running the same command doesn't clutter the history.
+func (m *Conversation) recordHistory(line string) {
+	if n := len(m.history); n == 0 || m.history[n-1] != line {
+		m.history = append(m.history, line)
+	}
+	m.histIdx = len(m.history)
+	m.draft = ""
+}
+
+// historyPrev recalls the previous (older) submitted line, stashing the live draft the first time.
+func (m *Conversation) historyPrev() {
+	if len(m.history) == 0 || m.histIdx == 0 {
+		return
+	}
+	if m.histIdx == len(m.history) {
+		m.draft = m.input.Value()
+	}
+	m.histIdx--
+	m.input.SetValue(m.history[m.histIdx])
+	m.input.CursorEnd()
+}
+
+// historyNext moves toward newer lines, restoring the stashed draft at the live line.
+func (m *Conversation) historyNext() {
+	if m.histIdx >= len(m.history) {
+		return
+	}
+	m.histIdx++
+	if m.histIdx == len(m.history) {
+		m.input.SetValue(m.draft)
+	} else {
+		m.input.SetValue(m.history[m.histIdx])
+	}
+	m.input.CursorEnd()
+}
+
 // handleEnter routes the current line: a permission response if one is pending,
 // otherwise a new prompt (dispatched async). Returns the tea.Cmd to run.
 func (m *Conversation) handleEnter() tea.Cmd {
@@ -308,6 +341,7 @@ func (m *Conversation) handleEnter() tea.Cmd {
 	// permission routing so /status, /doctor, etc. work even mid-turn or while a ratification
 	// is pending (a "/" line must never be read as a y/n answer or a conversational intent).
 	if strings.HasPrefix(text, "/") {
+		m.recordHistory(text)
 		return m.handleCommand(text)
 	}
 	// A turn is still processing (and no permission is awaiting an answer): keep
@@ -330,6 +364,7 @@ func (m *Conversation) handleEnter() tea.Cmd {
 		m.render()
 		return nil // the in-flight turn continues; updates arrive via Program.Send
 	}
+	m.recordHistory(text)
 	m.msgs = append(m.msgs, msg{role: "you", text: text})
 	m.inFlight = true
 	m.render()
@@ -486,7 +521,7 @@ func (m Conversation) View() string {
 	}
 	bottom := inputPane.Width(paneW).Render(status + "\n" + m.input.View())
 
-	hint := dimStyle.Render("  enter send · ↑/↓ scroll · ctrl+c quit")
+	hint := dimStyle.Render("  enter send · ↑/↓ history · pgup/pgdn scroll · tab complete · ctrl+c quit")
 
 	parts := []string{header, top}
 	if palette != "" {

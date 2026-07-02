@@ -97,3 +97,46 @@ func TestCommandPalette(t *testing.T) {
 		t.Error("index below range should clamp to first")
 	}
 }
+
+// TestInputHistoryRecall (or-d38): ↑/↓ recall previously-submitted lines shell-style, stashing the
+// unsent draft at the live line and collapsing consecutive duplicates.
+func TestInputHistoryRecall(t *testing.T) {
+	m := &Conversation{}
+	m.input = textinput.New()
+
+	m.historyPrev() // empty history → no-op
+	if m.input.Value() != "" {
+		t.Errorf("empty-history ↑ should no-op, got %q", m.input.Value())
+	}
+
+	m.recordHistory("/status")
+	m.recordHistory("build a time service")
+
+	m.input.SetValue("draft") // an unsent line at the live position
+	m.historyPrev()
+	if m.input.Value() != "build a time service" {
+		t.Errorf("↑ #1 should recall the newest, got %q", m.input.Value())
+	}
+	m.historyPrev()
+	if m.input.Value() != "/status" {
+		t.Errorf("↑ #2 should recall the older, got %q", m.input.Value())
+	}
+	m.historyPrev()
+	if m.input.Value() != "/status" {
+		t.Errorf("↑ past the oldest should stay, got %q", m.input.Value())
+	}
+
+	m.historyNext()
+	if m.input.Value() != "build a time service" {
+		t.Errorf("↓ #1 should move to the newer, got %q", m.input.Value())
+	}
+	m.historyNext()
+	if m.input.Value() != "draft" {
+		t.Errorf("↓ back to the live line should restore the draft, got %q", m.input.Value())
+	}
+
+	m.recordHistory("build a time service") // consecutive duplicate → collapsed
+	if len(m.history) != 2 {
+		t.Errorf("consecutive duplicate should collapse, history=%v", m.history)
+	}
+}
