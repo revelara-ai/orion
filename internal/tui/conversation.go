@@ -138,6 +138,9 @@ type Conversation struct {
 
 	// commands are the injected admin/management slash-commands (or-dz9).
 	commands []Command
+	// paletteIdx is the selected row in the command palette (shown while the input is a bare
+	// /command prefix; arrow keys navigate it).
+	paletteIdx int
 }
 
 // NewConversation builds the pane bound to a connected ACP client + session.
@@ -243,6 +246,33 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyMsg:
+		// Command palette: while the input is a bare /command prefix, the arrow keys navigate the
+		// matching commands, tab completes the selection, enter runs it. (When it's closed, ↑/↓ fall
+		// through to the viewport scroll below.)
+		if matches := m.paletteMatches(); len(matches) > 0 {
+			idx := m.clampPalette(len(matches))
+			switch t.Type {
+			case tea.KeyUp:
+				if idx > 0 {
+					m.paletteIdx = idx - 1
+				}
+				return m, nil
+			case tea.KeyDown:
+				if idx < len(matches)-1 {
+					m.paletteIdx = idx + 1
+				}
+				return m, nil
+			case tea.KeyTab:
+				m.input.SetValue("/" + matches[idx].Name + " ")
+				m.input.CursorEnd()
+				m.paletteIdx = 0
+				return m, nil
+			case tea.KeyEnter:
+				m.input.SetValue("/" + matches[idx].Name)
+				m.paletteIdx = 0
+				return m, m.handleEnter()
+			}
+		}
 		switch t.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			m.quitting = true
@@ -417,6 +447,7 @@ func (m Conversation) View() string {
 	if paneW < 1 {
 		paneW = 1 // tiny terminal: degrade narrow rather than overflow the width
 	}
+	palette := m.renderPalette()
 	body := m.vp.View()
 	if !m.ready || len(m.msgs) == 0 {
 		if m.bannerSet {
@@ -431,6 +462,11 @@ func (m Conversation) View() string {
 			}
 			body = dimStyle.Render(es)
 		}
+	} else if palette != "" {
+		// Active transcript: shrink the viewport by the palette's height so the total layout stays
+		// within the terminal (the palette renders between the transcript and the input).
+		m.vp.Height = max(3, m.vp.Height-lipgloss.Height(palette))
+		body = m.vp.View()
 	}
 
 	// Header: the Polaris identity line + the active brain (amber when offline).
@@ -452,7 +488,41 @@ func (m Conversation) View() string {
 
 	hint := dimStyle.Render("  enter send · ↑/↓ scroll · ctrl+c quit")
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, top, bottom, hint)
+	parts := []string{header, top}
+	if palette != "" {
+		parts = append(parts, palette)
+	}
+	parts = append(parts, bottom, hint)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// renderPalette renders the command palette — the matching slash-commands with the selection marked
+// — shown while the input is a bare /command prefix. Empty when the palette is closed. A short
+// window keeps it bounded so it never dominates the transcript.
+func (m Conversation) renderPalette() string {
+	matches := m.paletteMatches()
+	if len(matches) == 0 {
+		return ""
+	}
+	idx := m.clampPalette(len(matches))
+	const window = 8
+	start := 0
+	if idx >= window {
+		start = idx - window + 1
+	}
+	sel := lipgloss.NewStyle().Foreground(cLavender)
+	var b strings.Builder
+	b.WriteString(dimStyle.Render("commands · ↑/↓ select · tab complete · enter run"))
+	for i := start; i < len(matches) && i < start+window; i++ {
+		c := matches[i]
+		gap := strings.Repeat(" ", max(2, 12-len(c.Name)))
+		if i == idx {
+			b.WriteString("\n" + sel.Render("▸ /"+c.Name) + dimStyle.Render(gap+c.Help))
+		} else {
+			b.WriteString("\n" + dimStyle.Render("  /"+c.Name+gap+c.Help))
+		}
+	}
+	return b.String()
 }
 
 func (m Conversation) spendLine() string {
