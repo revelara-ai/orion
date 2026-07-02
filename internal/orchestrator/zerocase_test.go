@@ -47,6 +47,9 @@ func TestApproveSpecRejectsZeroCases(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("declare requirement: %v", err)
 	}
+	if _, err := c.ApproveAssumptions(ctx); err != nil {
+		t.Fatalf("approve assumptions: %v", err)
+	}
 	if _, err := c.ApproveSpec(ctx); err != nil {
 		t.Fatalf("with >=1 case the spec must ratify: %v", err)
 	}

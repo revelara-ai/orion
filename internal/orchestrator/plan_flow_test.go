@@ -12,6 +12,9 @@ func TestPlanViewDecomposesAcceptedSpec(t *testing.T) {
 		t.Fatalf("submit: %v", err)
 	}
 	answerFunctional(t, c, ctx)
+	if _, err := c.ApproveAssumptions(ctx); err != nil {
+		t.Fatalf("approve assumptions: %v", err)
+	}
 	if _, err := c.ApproveSpec(ctx); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
@@ -50,6 +53,9 @@ func TestPlanViewIsIdempotent(t *testing.T) {
 		t.Fatalf("submit: %v", err)
 	}
 	answerFunctional(t, c, ctx)
+	if _, err := c.ApproveAssumptions(ctx); err != nil {
+		t.Fatalf("approve assumptions: %v", err)
+	}
 	if _, err := c.ApproveSpec(ctx); err != nil {
 		t.Fatalf("approve: %v", err)
 	}

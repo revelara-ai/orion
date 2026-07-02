@@ -41,6 +41,9 @@ func ratifiedTimeService(t *testing.T) (*orchestrator.Conductor, context.Context
 	}); err != nil {
 		t.Fatalf("declare time requirement: %v", err)
 	}
+	if _, err := oc.ApproveAssumptions(ctx); err != nil {
+		t.Fatalf("approve assumptions: %v", err)
+	}
 	if _, err := oc.ApproveSpec(ctx); err != nil {
 		t.Fatalf("approve: %v", err)
 	}

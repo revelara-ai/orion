@@ -62,6 +62,22 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	})
 
 	r.Register(tools.Tool{
+		Name:        "approve_assumptions",
+		Description: "Record the developer's EXPLICIT confirmation of the open fallback assumptions (shown by preview_spec). Call this ONLY after the developer has seen each assumption and confirmed or overridden it — ratify_spec deterministically REFUSES while unapproved assumptions remain. Returns what was approved.",
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
+			approved, err := c.ApproveAssumptions(ctx)
+			if err != nil {
+				return "", err
+			}
+			if len(approved) == 0 {
+				return "no open assumptions to approve", nil
+			}
+			return "approved with the developer: " + strings.Join(approved, ", "), nil
+		},
+	})
+
+	r.Register(tools.Tool{
 		Name:        "read_codebase",
 		Description: "Read the EXISTING codebase in the working directory: greenfield/brownfield mode, languages, key files, and (for Go) the package structure + exported API surface + internal dependency edges. Call this FIRST when the intent concerns an existing project, so your questions and the spec are grounded in the REAL code (which packages exist, what they expose, how they depend on each other) — not invented structure.",
 		Safety:      tools.Safety{ReadOnly: true},

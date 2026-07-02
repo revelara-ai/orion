@@ -236,8 +236,17 @@ func (ca *ConductorAgent) presentSpec(ctx context.Context, st *convoState, strea
 	st.awaitingRatify = true
 }
 
-// ratify accepts the spec and streams the ready signal.
+// ratify accepts the spec and streams the ready signal. The developer's ratify
+// act (permission grant or explicit 'y') covers the PREVIEWED spec — assumptions
+// section included — so it records the assumption approvals the ratification
+// gate requires (or-v9f.19): one explicit human act, deterministically recorded.
 func (ca *ConductorAgent) ratify(ctx context.Context, st *convoState, stream func(acp.Update)) {
+	if approved, err := ca.conductor.ApproveAssumptions(ctx); err != nil {
+		stream(acp.Update{Kind: "agent_message", Text: "I can't record the assumption approvals: " + err.Error()})
+		return
+	} else if len(approved) > 0 {
+		stream(acp.Update{Kind: "agent_message", Text: "Assumptions approved with the spec: " + strings.Join(approved, ", ")})
+	}
 	es, err := ca.conductor.ApproveSpec(ctx)
 	if err != nil {
 		stream(acp.Update{Kind: "agent_message", Text: "I can't finalize the spec yet: " + err.Error()})

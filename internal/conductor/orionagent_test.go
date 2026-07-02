@@ -62,6 +62,7 @@ func TestOrionAgentDrivesSpecToRatification(t *testing.T) {
 		tuResp("4", "record_answer", `{"key":"port","value":"8080"}`),
 		tuResp("5", "record_answer", `{"key":"route","value":"/time"}`),
 		tuResp("6", "preview_spec", `{}`),
+		tuResp("6b", "approve_assumptions", `{}`), // developer confirmed the previewed assumptions
 		tuResp("7", "ratify_spec", `{}`),
 		endTurn("Spec ratified ✓ — ready to build."),
 	}}
@@ -115,6 +116,7 @@ func TestOrionAgentRatifiesThenBuildsInOneShot(t *testing.T) {
 		tuResp("4", "record_answer", `{"key":"port","value":"8080"}`),
 		tuResp("5", "record_answer", `{"key":"route","value":"/time"}`),
 		tuResp("6", "preview_spec", `{}`),
+		tuResp("6b", "approve_assumptions", `{}`), // developer confirmed the previewed assumptions
 		tuResp("7", "ratify_spec", `{}`),
 		tuResp("8", "build_service", `{}`),
 		endTurn("Built and proven."),
@@ -159,6 +161,7 @@ func TestOrionAgentCapturesRequirementThenRatifies(t *testing.T) {
 		tuResp("5", "record_answer", `{"key":"route","value":"/time"}`),
 		tuResp("6", "add_requirement", tzReq),
 		tuResp("7", "preview_spec", `{}`),
+		tuResp("7b", "approve_assumptions", `{}`), // developer confirmed the previewed assumptions
 		tuResp("8", "ratify_spec", `{}`),
 		endTurn("Ratified with the tz cases ✓"),
 	}}

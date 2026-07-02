@@ -27,6 +27,9 @@ func ratifiedWithRequirement(t *testing.T, req spec.Requirement) (*orchestrator.
 	if err := oc.AddRequirement(ctx, req); err != nil {
 		t.Fatalf("add requirement: %v", err)
 	}
+	if _, err := oc.ApproveAssumptions(ctx); err != nil {
+		t.Fatalf("approve assumptions: %v", err)
+	}
 	if _, err := oc.ApproveSpec(ctx); err != nil {
 		t.Fatalf("approve: %v", err)
 	}

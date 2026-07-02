@@ -169,6 +169,13 @@ func (c *Conductor) loadAnswers(ctx context.Context, specID string) (answers, ki
 	for _, d := range ds {
 		answers[d.Key] = d.Value
 		kinds[d.Key] = d.ValueKind
+		// An approved assumption (or-v9f.19) is a human-confirmed fallback: the
+		// decisions table keeps the approval audit record, while every compile
+		// path (assemble, recall, plan) sees a fallback_preset — the
+		// spec_dimensions CHECK's vocabulary, and one stable anchor hash.
+		if d.ValueKind == "assumption_approved" {
+			kinds[d.Key] = "fallback_preset"
+		}
 	}
 	return answers, kinds, nil
 }
@@ -265,6 +272,19 @@ func (c *Conductor) ApproveSpec(ctx context.Context) (spec.ExecutableSpec, error
 		return spec.ExecutableSpec{}, fmt.Errorf(
 			"cannot ratify: the spec declares no behavioral case, so nothing can be executed or proven — capture each behavior with add_requirement (>=1 request→response case) before ratifying")
 	}
+	// Assumption gate (or-v9f.19): a fallback the developer never explicitly
+	// confirmed must not ride into the ratified spec on prompt discipline. The
+	// approval is a recorded act (approve_assumptions), and ratification is where
+	// its absence is caught deterministically.
+	if len(fallbacks) > 0 {
+		keys := make([]string, 0, len(fallbacks))
+		for _, f := range fallbacks {
+			keys = append(keys, fmt.Sprintf("%s=%s", f.key, f.value))
+		}
+		return spec.ExecutableSpec{}, fmt.Errorf(
+			"cannot ratify: %d assumption(s) lack the developer's explicit approval: %s — surface each to the developer, then record the confirmation with approve_assumptions",
+			len(fallbacks), strings.Join(keys, ", "))
+	}
 	rcJSON, err := json.Marshal(es.ResponseContract)
 	if err != nil {
 		return spec.ExecutableSpec{}, fmt.Errorf("marshal response contract: %w", err)
@@ -290,6 +310,36 @@ func (c *Conductor) ApproveSpec(ctx context.Context) (spec.ExecutableSpec, error
 	}
 	c.log.InfoContext(ctx, "spec accepted", "spec_id", sp.ID, "hash", es.Hash)
 	return es, nil
+}
+
+// ApproveAssumptions records the developer's explicit confirmation of the
+// currently-open fallback assumptions (or-v9f.19): each becomes a stored
+// decision with value_kind "assumption_approved" — the audit record the
+// ratification gate requires. Call it ONLY after the developer has seen and
+// confirmed each assumption. Returns the approved key=value pairs.
+func (c *Conductor) ApproveAssumptions(ctx context.Context) ([]string, error) {
+	proj, sp, _, fallbacks, err := c.assembleSpec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(fallbacks) == 0 {
+		return nil, nil
+	}
+	approved := make([]string, 0, len(fallbacks))
+	err = c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+		for _, f := range fallbacks {
+			if _, e := tx.Decisions().Create(ctx, proj.ID, sp.ID, f.key, f.value, "assumption_approved", false); e != nil {
+				return e
+			}
+			approved = append(approved, f.key+"="+f.value)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("record assumption approvals: %w", err)
+	}
+	c.log.InfoContext(ctx, "assumptions approved", "count", len(approved))
+	return approved, nil
 }
 
 // SpecView returns the current spec projection (open decisions recomputed from
