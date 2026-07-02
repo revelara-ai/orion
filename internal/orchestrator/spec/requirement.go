@@ -81,9 +81,13 @@ type BehavioralCase struct {
 	Request RequestShape `json:"request"`
 	Expect  ExpectShape  `json:"expect"`
 	Exec    *ExecCase    `json:"exec,omitempty"`
-	// ModesApply narrows proof modes (later phases, enumerated rationale only);
-	// rejected on http and exec-run cases — those are mandatorily dual-mode.
-	ModesApply []string `json:"modes_apply,omitempty"`
+	Unit    *UnitCase    `json:"unit,omitempty"`
+	File    *FileCase    `json:"file,omitempty"`
+	// ModesApply narrows proof modes; only with a machine-checked rationale from
+	// the closed enum (unit restart steps). Rejected on http, exec-run, and file
+	// cases — those are mandatorily dual-mode.
+	ModesApply     []string `json:"modes_apply,omitempty"`
+	ModesRationale string   `json:"modes_rationale,omitempty"`
 }
 
 // Requirement is a stated behavior, lowered to >=1 BehavioralCase. Zero cases is a
@@ -112,8 +116,11 @@ func caseID(c BehavioralCase) string {
 	b, _ := json.Marshal(struct {
 		K CaseKind  `json:"k"`
 		M []string  `json:"m,omitempty"`
+		R string    `json:"r,omitempty"`
 		X *ExecCase `json:"x,omitempty"`
-	}{c.Kind, c.ModesApply, c.Exec})
+		U *UnitCase `json:"u,omitempty"`
+		F *FileCase `json:"f,omitempty"`
+	}{c.Kind, c.ModesApply, c.ModesRationale, c.Exec, c.Unit, c.File})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:6])
 }
@@ -160,8 +167,12 @@ func validateCase(c BehavioralCase) error {
 	case KindHTTP:
 	case KindExec:
 		return validateExecCase(c)
+	case KindUnit:
+		return validateUnitCase(c)
+	case KindFile:
+		return validateFileCase(c)
 	default:
-		return fmt.Errorf("unknown case kind %q (closed union: http, exec)", c.Kind)
+		return fmt.Errorf("unknown case kind %q (closed union: http, exec, unit, file)", c.Kind)
 	}
 	if c.Exec != nil {
 		return fmt.Errorf("http case must not carry an exec payload")
