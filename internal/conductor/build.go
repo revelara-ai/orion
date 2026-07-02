@@ -201,14 +201,25 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	// and before every outward write below. File-backed, so `orion redbutton
 	// engage` halts a run from any terminal.
 	rb := actuation.RedButton{Path: filepath.Join(store.Dir(), "red_button")}
+	// or-v9f.9: continuous drift monitoring — the spec anchor is re-verified and
+	// the alignment-degradation threshold enforced before EVERY cluster dispatch,
+	// not once at end-of-run.
+	drift := newDriftMonitor(c)
 	results, err := runClusterDAG(clusters, scheduleTasks, maxConc, func(task orchestrator.PlanTask, cache map[string]proof.Report) (taskResult, error) {
 		buildDir := clusterWT[clusterByTask[task.ID]]
 		if buildDir == "" {
 			return taskResult{}, fmt.Errorf("task %s has no cluster worktree", task.ID)
 		}
-		return buildOneTask(ctx, store, gen, aligner, safeSink, es, model, gs, contract, requiredIDs, buildDir, cache, eng, mem, &stateMu, task)
+		tr, terr := buildOneTask(ctx, store, gen, aligner, safeSink, es, model, gs, contract, requiredIDs, buildDir, cache, eng, mem, &stateMu, task)
+		if terr == nil {
+			drift.RecordAlignment(tr.Alignment)
+		}
+		return tr, terr
 	}, func(clusterKey string) error {
-		return rb.Guard("dispatch cluster " + clusterKey)
+		if err := rb.Guard("dispatch cluster " + clusterKey); err != nil {
+			return err
+		}
+		return drift.Check(ctx)
 	})
 	if err != nil {
 		return BuildResult{}, err
