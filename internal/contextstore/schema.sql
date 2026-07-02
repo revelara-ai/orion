@@ -149,6 +149,22 @@ CREATE TABLE IF NOT EXISTS artifacts (
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifacts(task_id);
 
+-- proof_memo (or-v9f.6): a cross-run, content-addressed proof cache. The proof
+-- verdict is a deterministic function of (artifact bytes, contract, model);
+-- spec_hash anchors the contract+model, content_hash the artifact, so an
+-- identical (spec, artifact) reuses its full post-enforcement Report instead of
+-- re-running the expensive behavioral+empirical+hazard proof. Re-running after
+-- fixing an escalation thus skips proof for every cluster whose bytes are
+-- unchanged — the practical mid-run resume for the synchronous run model. Not
+-- FK'd to any run: it is a pure memo keyed by content, valid across runs.
+CREATE TABLE IF NOT EXISTS proof_memo (
+    spec_hash    TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    report_json  TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    PRIMARY KEY (spec_hash, content_hash)
+);
+
 CREATE TABLE IF NOT EXISTS polaris_context (
     id          TEXT PRIMARY KEY,
     project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

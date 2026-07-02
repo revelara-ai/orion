@@ -257,6 +257,37 @@ func (s *Store) ProofCount(ctx context.Context, taskID string) (int, error) {
 	return n, err
 }
 
+// ProofMemoGet returns the persisted post-enforcement proof Report JSON for an
+// (artifact, spec) pair, or ok=false when none is memoized (or-v9f.6).
+func (s *Store) ProofMemoGet(ctx context.Context, specHash, contentHash string) (reportJSON string, ok bool, err error) {
+	err = s.view(ctx, func(tx *Tx) error {
+		e := tx.tx.QueryRowContext(ctx,
+			`SELECT report_json FROM proof_memo WHERE spec_hash=? AND content_hash=?`,
+			specHash, contentHash).Scan(&reportJSON)
+		if errors.Is(e, sql.ErrNoRows) {
+			return nil
+		}
+		if e == nil {
+			ok = true
+		}
+		return e
+	})
+	return reportJSON, ok, err
+}
+
+// ProofMemoPut records a proof Report for an (artifact, spec) pair so a later run
+// with the identical bytes skips the expensive proof (or-v9f.6). Idempotent
+// upsert — a re-proof of the same pair simply refreshes the stored report.
+func (s *Store) ProofMemoPut(ctx context.Context, specHash, contentHash, reportJSON string) error {
+	return s.WithTx(ctx, func(tx *Tx) error {
+		_, e := tx.tx.ExecContext(ctx,
+			`INSERT INTO proof_memo (spec_hash, content_hash, report_json, created_at) VALUES (?,?,?,?)
+			 ON CONFLICT(spec_hash, content_hash) DO UPDATE SET report_json=excluded.report_json, created_at=excluded.created_at`,
+			specHash, contentHash, reportJSON, nowRFC3339())
+		return e
+	})
+}
+
 // CurrentProjectSpec returns the ACTIVE project and its latest spec — the single
 // in-flight work item. Creation order no longer decides it (or-v9f.1): a newer
 // queued intent waits its turn rather than silently orphaning the one in flight.
