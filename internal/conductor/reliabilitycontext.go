@@ -20,13 +20,14 @@ import (
 // fails for lack of it; the reduced flag is recorded in the delivery envelope instead.
 func loadReliabilityContext(ctx context.Context, store *contextstore.Store, projectID, query string) polaris.ReliabilityContext {
 	var mcp *polaris.MCPClient
-	if ts, err := polaris.NewTokenStore(filepath.Join(store.Dir(), "credentials")); err == nil {
+	credsDir := filepath.Join(store.Dir(), "credentials")
+	if ts, err := polaris.NewTokenStore(credsDir); err == nil {
 		if tok, ok, _ := ts.Load(); ok && tok.AccessToken != "" {
-			endpoint := os.Getenv("ORION_POLARIS_MCP_URL")
-			if endpoint == "" {
-				endpoint = tok.BaseURL
+			var cfg polaris.Config
+			if cs, cerr := polaris.NewConfigStore(credsDir); cerr == nil {
+				cfg, _ = cs.Load()
 			}
-			if endpoint != "" {
+			if endpoint := polaris.ResolveMCPURL(os.Getenv("ORION_POLARIS_MCP_URL"), cfg, tok); endpoint != "" {
 				mcp = polaris.NewMCPClient(endpoint, tok.AccessToken)
 			}
 		}
