@@ -25,7 +25,7 @@ func tuiCommands() []tui.Command {
 		{Name: "skills", Help: "list discovered skills (agentskills.io)", Run: func(string) string { return skillsListText() }},
 		{Name: "agents", Help: "list discovered agent definitions", Run: func(string) string { return agentsListText() }},
 		{Name: "evolve", Help: "promote proof-passed candidates into skills", Run: func(string) string { return evolveText() }},
-		{Name: "mcp", Help: "configure the revelara.ai MCP server (show/set <url>/clear/login/logout)", Run: mcpCommandText},
+		{Name: "mcp", Help: "configure the revelara.ai MCP server (show/set <url>/clear/login/logout)", Async: mcpCommandAsync},
 	}
 }
 

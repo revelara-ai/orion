@@ -227,6 +227,13 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.render()
 		return m, nil
 
+	case CommandResultMsg:
+		// The deferred outcome of an async slash-command (e.g. /mcp login) — appended when its
+		// follow-up tea.Cmd completes.
+		m.msgs = append(m.msgs, msg{role: "orion", kind: "command", text: t.Text})
+		m.render()
+		return m, nil
+
 	case spinner.TickMsg:
 		if !m.inFlight {
 			return m, nil
