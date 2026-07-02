@@ -67,13 +67,23 @@ type ExpectShape struct {
 	Assertions  []BodyAssertion `json:"assertions,omitempty"`
 }
 
-// BehavioralCase is the UNIT OF PROOF: a (request → expected response) the proof
-// domain executes and reports executed+passed for. ID is content-addressed (stable
-// across re-elicitation) and is the obligation key the gates match on.
+// BehavioralCase is the UNIT OF PROOF: a stimulus → expected observation the
+// proof domain executes and reports executed+passed for. ID is content-addressed
+// (stable across re-elicitation) and is the obligation key the gates match on.
+// Kind tags the closed case union (or-v9f.3): the zero Kind is the legacy HTTP
+// case (Request/Expect, byte-identical JSON and identity); "exec" cases carry
+// Exec and must leave Request/Expect zero-valued (Request/Expect stay VALUE
+// typed on purpose — zero churn at existing call sites; the validator enforces
+// zero-value on non-http kinds and identity never includes them there).
 type BehavioralCase struct {
 	ID      string       `json:"id"`
+	Kind    CaseKind     `json:"kind,omitempty"`
 	Request RequestShape `json:"request"`
 	Expect  ExpectShape  `json:"expect"`
+	Exec    *ExecCase    `json:"exec,omitempty"`
+	// ModesApply narrows proof modes (later phases, enumerated rationale only);
+	// rejected on http and exec-run cases — those are mandatorily dual-mode.
+	ModesApply []string `json:"modes_apply,omitempty"`
 }
 
 // Requirement is a stated behavior, lowered to >=1 BehavioralCase. Zero cases is a
@@ -86,12 +96,24 @@ type Requirement struct {
 	Cases       []BehavioralCase       `json:"cases"`
 }
 
-// caseID is the content-addressed id of a case (request+expect), 12 hex chars.
+// caseID is the content-addressed id of a case, 12 hex chars. The legacy HTTP
+// kind keeps the EXACT {r,e} bytes so every anchored ID, spec hash, and
+// contradiction group is untouched; new kinds hash the authored surface shape
+// (kind + modes + payload) — never lowered/compiled output (anchor stability).
 func caseID(c BehavioralCase) string {
+	if c.Kind == KindHTTP {
+		b, _ := json.Marshal(struct {
+			R RequestShape `json:"r"`
+			E ExpectShape  `json:"e"`
+		}{c.Request, c.Expect})
+		sum := sha256.Sum256(b)
+		return hex.EncodeToString(sum[:6])
+	}
 	b, _ := json.Marshal(struct {
-		R RequestShape `json:"r"`
-		E ExpectShape  `json:"e"`
-	}{c.Request, c.Expect})
+		K CaseKind  `json:"k"`
+		M []string  `json:"m,omitempty"`
+		X *ExecCase `json:"x,omitempty"`
+	}{c.Kind, c.ModesApply, c.Exec})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:6])
 }
@@ -134,6 +156,19 @@ func ValidateRequirement(r Requirement) error {
 }
 
 func validateCase(c BehavioralCase) error {
+	switch c.Kind {
+	case KindHTTP:
+	case KindExec:
+		return validateExecCase(c)
+	default:
+		return fmt.Errorf("unknown case kind %q (closed union: http, exec)", c.Kind)
+	}
+	if c.Exec != nil {
+		return fmt.Errorf("http case must not carry an exec payload")
+	}
+	if len(c.ModesApply) > 0 {
+		return fmt.Errorf("http cases are mandatorily dual-mode; modes_apply is not accepted")
+	}
 	if strings.TrimSpace(c.Request.Method) == "" {
 		return fmt.Errorf("missing request method")
 	}
@@ -178,9 +213,18 @@ func (r *Requirement) SetIDs() {
 // RequiredCaseIDs returns every case ID a contract's cases declare — the set the
 // proof ObligationGate (Phase 3) requires to have executed and passed.
 func (rc ResponseContract) RequiredCaseIDs() []string {
+	return rc.RequiredCaseIDsWhere(func(BehavioralCase) bool { return true })
+}
+
+// RequiredCaseIDsWhere filters the required-obligation set — the exec-case
+// shadow gate (or-v9f.3 slice 1) uses it to record exec obligations without yet
+// gating the verdict on them.
+func (rc ResponseContract) RequiredCaseIDsWhere(keep func(BehavioralCase) bool) []string {
 	out := make([]string, 0, len(rc.Cases))
 	for _, c := range rc.Cases {
-		out = append(out, c.ID)
+		if keep(c) {
+			out = append(out, c.ID)
+		}
 	}
 	return out
 }
