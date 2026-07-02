@@ -122,9 +122,21 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 			break
 		}
 	}
-	if hasExecCases && es.ResponseContract.Route == "" && es.ResponseContract.ContentType == "" {
-		gs.ProgramFamily = "cli"
-		gs.EntrySymbol = "run"
+	hasUnitCases := false
+	for _, cs := range es.ResponseContract.Cases {
+		if cs.Kind == spec.KindUnit {
+			hasUnitCases = true
+			break
+		}
+	}
+	if es.ResponseContract.Route == "" && es.ResponseContract.ContentType == "" {
+		switch {
+		case hasExecCases:
+			gs.ProgramFamily = "cli"
+			gs.EntrySymbol = "run"
+		case hasUnitCases:
+			gs.ProgramFamily = "library"
+		}
 	}
 
 	proj, _, _ := store.CurrentProjectSpec(ctx)

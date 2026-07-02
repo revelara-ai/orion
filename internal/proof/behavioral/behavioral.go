@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/internal/proof/proofexec"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
@@ -86,7 +87,22 @@ func ProveWithThreshold(ctx context.Context, artifactDir string, c testsynth.Con
 	if pass {
 		// Behavioral quality gate: the corpus must KILL behavior-changing mutants
 		// (green coverage is a vanity metric; mutation score is the signal).
-		killed, total, mErr := MutationScore(ctx, artifactDir, corpus, c.Entry())
+		corpusFiles := map[string]string{"orion_behavioral_test.go": corpus}
+		for name, content := range testsynth.SynthesizeSupportFiles(c) {
+			corpusFiles[name] = content
+		}
+		for rel, content := range unitFiles {
+			corpusFiles[rel] = content
+		}
+		var unitPkgs []string
+		seenPkg := map[string]bool{}
+		for _, cs := range c.Cases {
+			if cs.Kind == spec.KindUnit && cs.Unit != nil && !seenPkg[cs.Unit.Pkg] {
+				seenPkg[cs.Unit.Pkg] = true
+				unitPkgs = append(unitPkgs, cs.Unit.Pkg)
+			}
+		}
+		killed, total, mErr := MutationScoreFiles(ctx, artifactDir, corpusFiles, c.Entry(), unitPkgs)
 		if mErr == nil {
 			metrics["mutation_score"] = MutationScoreValue(killed, total)
 			var note string

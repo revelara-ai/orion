@@ -51,42 +51,76 @@ func mutantsFor(entry string) []mutant {
 // previously a non-compiling mutant's failing test run counted as killed,
 // inflating the score.
 func MutationScore(ctx context.Context, artifactDir, corpusSource, entrySym string) (killed, total int, err error) {
+	return MutationScoreFiles(ctx, artifactDir, map[string]string{"orion_behavioral_test.go": corpusSource}, entrySym, nil)
+}
+
+// MutationScoreFiles is MutationScore with the FULL corpus placement (root
+// corpus + support files + in-package unit tests) and mutation targets drawn
+// from every file a unit case exercises (or-v9f.23): library artifacts are
+// mutation-scored on their case packages, not just main.go.
+func MutationScoreFiles(ctx context.Context, artifactDir string, corpusFiles map[string]string, entrySym string, unitPkgs []string) (killed, total int, err error) {
 	mainSrc, err := os.ReadFile(filepath.Join(artifactDir, "main.go"))
 	if err != nil {
 		return 0, 0, err
 	}
-	gomod, err := os.ReadFile(filepath.Join(artifactDir, "go.mod"))
-	if err != nil {
-		return 0, 0, err
-	}
 
-	var candidates []mutant
+	type target struct {
+		rel string
+		m   mutant
+	}
+	var candidates []target
 	for _, m := range mutantsFor(entrySym) {
 		if !strings.Contains(string(mainSrc), m.old) {
 			continue // string mutant not applicable to this artifact
 		}
 		m.source = strings.Replace(string(mainSrc), m.old, m.new, 1)
-		candidates = append(candidates, m)
+		candidates = append(candidates, target{rel: "main.go", m: m})
 	}
-	// AST mutants fill in ONLY when no contract-aware mutant applies (e.g. a
-	// non-HTTP artifact, which previously no-opped to a silent pass). They are
-	// NOT mixed into an HTTP artifact's score: contract-irrelevant sites carry
-	// equivalent/unobservable mutants that dilute the score and fail honest
-	// corpora — the gate must measure the corpus, not the artifact's incidental
-	// mutability.
+	// AST mutants fill in ONLY where no contract-aware mutant applies: the
+	// artifact's main.go when nothing matched there, and every unit-case
+	// package's sources (the library surface the unit corpus must pin). The gate
+	// measures the corpus, never the artifact's incidental mutability — so AST
+	// mutants never mix into an HTTP artifact's contract-mutant score.
 	if len(candidates) == 0 {
-		candidates = astMutants(string(mainSrc), astMutantCap)
+		for _, m := range astMutants(string(mainSrc), astMutantCap) {
+			candidates = append(candidates, target{rel: "main.go", m: m})
+		}
+	}
+	for _, pkg := range unitPkgs {
+		entries, rerr := os.ReadDir(filepath.Join(artifactDir, pkg))
+		if rerr != nil {
+			continue // the fast-tier diagnostic already reports missing packages
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+				continue
+			}
+			rel := filepath.Join(pkg, e.Name())
+			src, rerr := os.ReadFile(filepath.Join(artifactDir, rel))
+			if rerr != nil {
+				continue
+			}
+			if len(candidates) >= astMutantCap {
+				break
+			}
+			for _, m := range astMutants(string(src), astMutantCap-len(candidates)) {
+				candidates = append(candidates, target{rel: rel, m: m})
+			}
+		}
 	}
 
-	for _, m := range candidates {
+	for _, t := range candidates {
 		dir, e := os.MkdirTemp("", "orion-mutant-*")
 		if e != nil {
 			return killed, total, e
 		}
-		_ = os.WriteFile(filepath.Join(dir, "go.mod"), gomod, 0o644)
-		_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte(m.source), 0o644)
-		// Compile-validity first (no corpus in the dir yet): a mutant that does not
-		// compile is not a behavior change and must not count either way.
+		if e := copyTree(artifactDir, dir); e != nil {
+			_ = os.RemoveAll(dir)
+			return killed, total, e
+		}
+		_ = os.WriteFile(filepath.Join(dir, t.rel), []byte(t.m.source), 0o644)
+		// Compile-validity first (no corpus yet): a mutant that does not compile
+		// is not a behavior change and must not count either way.
 		if _, code, buildErr := proofexec.GoToolchain(ctx, dir, "build", "./..."); buildErr != nil || code != 0 {
 			_ = os.RemoveAll(dir)
 			if buildErr != nil {
@@ -95,7 +129,11 @@ func MutationScore(ctx context.Context, artifactDir, corpusSource, entrySym stri
 			continue // discarded: invalid mutant
 		}
 		total++
-		_ = os.WriteFile(filepath.Join(dir, "orion_behavioral_test.go"), []byte(corpusSource), 0o644)
+		for rel, content := range corpusFiles {
+			p := filepath.Join(dir, rel)
+			_ = os.MkdirAll(filepath.Dir(p), 0o755)
+			_ = os.WriteFile(p, []byte(content), 0o644)
+		}
 		// Run the mutant's corpus inside the proof sandbox (mutated generated code
 		// never sees host secrets and cannot reach the network).
 		_, code, execErr := proofexec.GoToolchain(ctx, dir, "test", "./...")
@@ -108,6 +146,34 @@ func MutationScore(ctx context.Context, artifactDir, corpusSource, entrySym stri
 		}
 	}
 	return killed, total, nil
+}
+
+// copyTree recursively copies the artifact (dot-dirs and prior corpora skipped).
+func copyTree(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, rerr := filepath.Rel(src, path)
+		if rerr != nil || rel == "." {
+			return rerr
+		}
+		name := d.Name()
+		if d.IsDir() {
+			if strings.HasPrefix(name, ".") {
+				return filepath.SkipDir
+			}
+			return os.MkdirAll(filepath.Join(dst, rel), 0o755)
+		}
+		if strings.HasPrefix(name, "orion_") && strings.HasSuffix(name, "_test.go") {
+			return nil
+		}
+		data, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		return os.WriteFile(filepath.Join(dst, rel), data, 0o644)
+	})
 }
 
 // MutationScoreValue is killed/total (0 when no applicable mutants).

@@ -65,9 +65,23 @@ var (
 // implementation, two compilation contexts).
 func SynthesizeSupportFiles(c Contract) map[string]string {
 	for _, cs := range c.Cases {
-		if cs.Kind == spec.KindExec {
+		if cs.Kind == spec.KindExec || cs.Kind == spec.KindFile {
 			return map[string]string{"orion_casecheck_test.go": casecheck.Source("main")}
 		}
 	}
 	return nil
+}
+
+// fileCaseTest emits the behavioral test for one file case: the corpus runs at
+// the module root, so artifact-relative paths check directly via the embedded
+// oracle — the IDENTICAL function the empirical channel calls compiled-in.
+func fileCaseTest(cs spec.BehavioralCase) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nfunc Test_obl_%s(t *testing.T) {\n", cs.ID)
+	fmt.Fprintf(&b, "\tfmt.Println(%q)\n", "ORION_OBLIGATION_RUN:"+cs.ID)
+	for _, a := range cs.File.Assertions {
+		fmt.Fprintf(&b, "\tif ok, detail := OrionCheckFile(%q, %q, %q); !ok { t.Fatal(detail) }\n", a.Kind, a.Path, a.Value)
+	}
+	fmt.Fprintf(&b, "\tfmt.Println(%q)\n}\n", "ORION_OBLIGATION_PASS:"+cs.ID)
+	return b.String()
 }

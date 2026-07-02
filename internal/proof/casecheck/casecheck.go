@@ -12,6 +12,7 @@ package casecheck
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -75,4 +76,33 @@ func truncate(s string) string {
 		return s[:200] + "…"
 	}
 	return s
+}
+
+// OrionCheckFile reports whether one artifact-tree path satisfies a file
+// assertion (or-v9f.23): exists/absent via the filesystem; contains/regex read
+// the file and delegate to the stream semantics — one oracle, every kind.
+func OrionCheckFile(kind, path, value string) (bool, string) {
+	switch kind {
+	case "exists":
+		if _, err := os.Stat(path); err == nil {
+			return true, ""
+		}
+		return false, fmt.Sprintf("file exists: %s is missing", path)
+	case "absent":
+		if _, err := os.Stat(path); err != nil {
+			return true, ""
+		}
+		return false, fmt.Sprintf("file absent: %s exists", path)
+	case "contains", "regex":
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return false, fmt.Sprintf("file %s: %s unreadable: %v", kind, path, err)
+		}
+		ok, detail := OrionCheckStream(kind, value, "", string(b))
+		if !ok {
+			return false, "file " + path + ": " + detail
+		}
+		return true, ""
+	}
+	return false, fmt.Sprintf("unknown file assertion kind %q (oracle refuses, never passes)", kind)
 }
