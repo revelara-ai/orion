@@ -2,6 +2,7 @@ package polaris
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -32,25 +33,62 @@ func seedProject(t *testing.T, s *contextstore.Store) string {
 	return pid
 }
 
-// TestLoopProceedsWhenPolarisUnreachable: with Polaris unreachable and no cache,
-// Load returns no error, flags reduced context, and yields empty (not nil) data —
-// the loop proceeds.
-func TestLoopProceedsWhenPolarisUnreachable(t *testing.T) {
+// mcpToolServer serves the MCP subset the Consumer uses (initialize + tools/call), returning the
+// JSON text configured per tool name. The caller owns Close (so tests can simulate going offline).
+func mcpToolServer(t *testing.T, byTool map[string]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		w.Header().Set("Mcp-Session-Id", "s1")
+		if len(req.ID) == 0 { // notification (notifications/initialized)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		reply := func(result any) {
+			b, _ := json.Marshal(result)
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": json.RawMessage(b)})
+		}
+		switch req.Method {
+		case "initialize":
+			reply(map[string]any{"serverInfo": map[string]string{"name": "revelara"}})
+		case "tools/call":
+			text := byTool[req.Params.Name]
+			if text == "" {
+				text = "[]"
+			}
+			reply(map[string]any{"content": []map[string]string{{"type": "text", "text": text}}})
+		default:
+			http.Error(w, "unknown method", http.StatusBadRequest)
+		}
+	}))
+}
+
+// TestLoopProceedsWhenMCPUnreachable: with the MCP service unreachable and no cache, Load returns no
+// error, flags reduced context, and yields empty (not nil) data — the loop proceeds.
+func TestLoopProceedsWhenMCPUnreachable(t *testing.T) {
 	ctx := context.Background()
 	s := openStore(t)
 	pid := seedProject(t, s)
 
-	// A closed server's URL → connection refused immediately (unreachable).
 	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	closedURL := closed.URL
-	closed.Close()
-	consumer := NewConsumer(NewClient(closedURL), s, "tok")
+	u := closed.URL
+	closed.Close() // connection refused → unreachable
+
+	consumer := NewConsumer(NewMCPClient(u, "tok"), s)
 	rc, err := consumer.Load(ctx, pid, "time service")
 	if err != nil {
-		t.Fatalf("Load must not error when Polaris is unreachable: %v", err)
+		t.Fatalf("Load must not error when the MCP service is unreachable: %v", err)
 	}
 	if !rc.Reduced {
-		t.Fatal("expected Reduced=true when Polaris is unreachable")
+		t.Fatal("expected Reduced=true when the MCP service is unreachable")
 	}
 	if rc.Sources["controls"] != SourceEmpty {
 		t.Fatalf("controls source = %q, want empty", rc.Sources["controls"])
@@ -60,28 +98,17 @@ func TestLoopProceedsWhenPolarisUnreachable(t *testing.T) {
 	}
 }
 
-// TestCacheHitWorksOffline: a live fetch caches; a later unreachable fetch serves
-// the cached payload and flags reduced context.
+// TestCacheHitWorksOffline: a live tool call caches; a later unreachable call serves the cached
+// payload and flags reduced context.
 func TestCacheHitWorksOffline(t *testing.T) {
 	ctx := context.Background()
 	s := openStore(t)
 	pid := seedProject(t, s)
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/v1/controls":
-			_, _ = w.Write([]byte(`[{"code":"C1","title":"timeouts"}]`))
-		case strings.HasPrefix(r.URL.Path, "/api/knowledge/search"):
-			_, _ = w.Write([]byte(`[]`))
-		case r.URL.Path == "/api/v1/risks":
-			_, _ = w.Write([]byte(`[]`))
-		default:
-			w.WriteHeader(404)
-		}
-	}))
+	srv := mcpToolServer(t, map[string]string{"search_controls": `[{"code":"C1","title":"timeouts"}]`})
 
 	// Live load caches all three kinds.
-	live := NewConsumer(NewClient(srv.URL), s, "tok")
+	live := NewConsumer(NewMCPClient(srv.URL, "tok"), s)
 	rc, err := live.Load(ctx, pid, "time service")
 	if err != nil {
 		t.Fatalf("live load: %v", err)
@@ -90,10 +117,10 @@ func TestCacheHitWorksOffline(t *testing.T) {
 		t.Fatalf("expected live, non-reduced; got reduced=%v sources=%v", rc.Reduced, rc.Sources)
 	}
 	offlineURL := srv.URL
-	srv.Close() // now unreachable (connection refused)
+	srv.Close() // now unreachable
 
 	// Offline load falls back to cache.
-	offline := NewConsumer(NewClient(offlineURL), s, "tok")
+	offline := NewConsumer(NewMCPClient(offlineURL, "tok"), s)
 	rc2, err := offline.Load(ctx, pid, "time service")
 	if err != nil {
 		t.Fatalf("offline load: %v", err)

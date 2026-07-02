@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,9 +21,11 @@ const mcpProtocolVersion = "2025-06-18"
 // the server-issued session id. Every call is time-bounded (Harness Reliability: the MCP service is
 // an external dependency). Hand-rolled + dependency-free (CGO_ENABLED=0), matching internal/acp.
 type MCPClient struct {
-	endpoint  string
-	token     string
-	http      *http.Client
+	endpoint string
+	token    string
+	http     *http.Client
+
+	mu        sync.Mutex // serializes rpc/notify (nextID + sessionID + the HTTP round-trip)
 	sessionID string
 	nextID    int
 }
@@ -131,6 +134,8 @@ func (c *MCPClient) CallTool(ctx context.Context, name string, args any) (ToolRe
 // rpc sends a JSON-RPC request and returns the result payload (or an error, including a
 // JSON-RPC-level error from the server).
 func (c *MCPClient) rpc(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.nextID++
 	id, _ := json.Marshal(c.nextID)
 	body, _ := json.Marshal(mcpEnvelope{JSONRPC: "2.0", ID: id, Method: method, Params: params})
@@ -138,7 +143,7 @@ func (c *MCPClient) rpc(ctx context.Context, method string, params any) (json.Ra
 	if err != nil {
 		return nil, fmt.Errorf("mcp %s: %w", method, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	c.captureSession(resp)
 	raw, err := readRPCResult(resp)
 	if err != nil {
@@ -149,6 +154,8 @@ func (c *MCPClient) rpc(ctx context.Context, method string, params any) (json.Ra
 
 // notify sends a JSON-RPC notification (no id) and ignores the (empty) response.
 func (c *MCPClient) notify(ctx context.Context, method string, params any) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	body, _ := json.Marshal(mcpEnvelope{JSONRPC: "2.0", Method: method, Params: params})
 	resp, err := c.do(ctx, body)
 	if err != nil {
