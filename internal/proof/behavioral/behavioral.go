@@ -41,15 +41,10 @@ func ProveWithThreshold(ctx context.Context, artifactDir string, c testsynth.Con
 		*corpusDirOut = proofDir
 	}
 
-	// Copy the artifact (main.go + go.mod) into the proof-controlled dir.
-	for _, f := range []string{"go.mod", "main.go"} {
-		data, err := os.ReadFile(filepath.Join(artifactDir, f))
-		if err != nil {
-			return truthalign.ModeResult{}, fmt.Errorf("read artifact %s: %w", f, err)
-		}
-		if err := os.WriteFile(filepath.Join(proofDir, f), data, 0o644); err != nil {
-			return truthalign.ModeResult{}, fmt.Errorf("stage artifact %s: %w", f, err)
-		}
+	// Copy the artifact RECURSIVELY into the proof-controlled dir (or-v9f.23:
+	// multi-file/multi-package artifacts; unit cases target subpackages).
+	if err := stageTree(artifactDir, proofDir); err != nil {
+		return truthalign.ModeResult{}, fmt.Errorf("stage artifact: %w", err)
 	}
 	// Write the harness-authored corpus (held by the proof domain).
 	corpus := testsynth.SynthesizeBehavioral(c)
@@ -61,6 +56,17 @@ func ProveWithThreshold(ctx context.Context, artifactDir string, c testsynth.Con
 	for name, content := range testsynth.SynthesizeSupportFiles(c) {
 		if err := os.WriteFile(filepath.Join(proofDir, name), []byte(content), 0o644); err != nil {
 			return truthalign.ModeResult{}, fmt.Errorf("write support file %s: %w", name, err)
+		}
+	}
+	// or-v9f.23: unit cases become IN-PACKAGE obligation tests (restart-narrowed
+	// cases run only in the empirical channel).
+	unitFiles, uerr := testsynth.SynthesizeUnitTests(c.Cases, proofDir)
+	if uerr != nil {
+		return truthalign.ModeResult{}, fmt.Errorf("unit synthesis: %w", uerr)
+	}
+	for rel, content := range unitFiles {
+		if err := os.WriteFile(filepath.Join(proofDir, rel), []byte(content), 0o644); err != nil {
+			return truthalign.ModeResult{}, fmt.Errorf("write unit corpus %s: %w", rel, err)
 		}
 	}
 
@@ -132,4 +138,36 @@ func parseObligations(output string) map[string]truthalign.ObligationStatus {
 		}
 	}
 	return obs
+}
+
+// stageTree copies the artifact tree (Go sources, go.mod/go.sum, and asset
+// files) into dst, skipping dot-dirs and any prior Orion corpus files.
+func stageTree(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, rerr := filepath.Rel(src, path)
+		if rerr != nil {
+			return rerr
+		}
+		if rel == "." {
+			return nil
+		}
+		name := d.Name()
+		if d.IsDir() {
+			if strings.HasPrefix(name, ".") {
+				return filepath.SkipDir
+			}
+			return os.MkdirAll(filepath.Join(dst, rel), 0o755)
+		}
+		if strings.HasPrefix(name, "orion_") && strings.HasSuffix(name, "_test.go") {
+			return nil // never re-stage a prior corpus
+		}
+		data, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		return os.WriteFile(filepath.Join(dst, rel), data, 0o644)
+	})
 }
