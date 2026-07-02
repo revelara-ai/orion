@@ -26,10 +26,11 @@ const (
 // OperatingEnvelope is the schematized "what was proven, under what conditions"
 // record shown in the Delivery pane and attached to the deliverable (Stories 26–27).
 type OperatingEnvelope struct {
-	ProvenLoad             string   `json:"proven_load"`
-	FaultClassesControlled []string `json:"fault_classes_controlled"`
-	Assumptions            []string `json:"assumptions"`
-	Tier                   string   `json:"tier"`
+	ProvenLoad                string   `json:"proven_load"`
+	FaultClassesControlled    []string `json:"fault_classes_controlled"`
+	Assumptions               []string `json:"assumptions"`
+	Tier                      string   `json:"tier"`
+	ReducedReliabilityContext bool     `json:"reduced_reliability_context,omitempty"` // revelara.ai context was unreachable → cache/empty (or-xe7.4)
 }
 
 // Result is the deployment-bar evaluation.
