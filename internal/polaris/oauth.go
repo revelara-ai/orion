@@ -34,6 +34,16 @@ type authServer struct {
 	Issuer                string `json:"issuer"`
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
 	TokenEndpoint         string `json:"token_endpoint"`
+	RegistrationEndpoint  string `json:"registration_endpoint"` // RFC 7591 dynamic client registration (optional)
+}
+
+// scopeList is the requested OAuth scopes, defaulting to the AuthKit MCP scopes when none are set:
+// openid + offline_access (offline_access is what buys a refresh token).
+func (cfg OAuthConfig) scopeList() []string {
+	if len(cfg.Scopes) > 0 {
+		return cfg.Scopes
+	}
+	return []string{"openid", "offline_access"}
 }
 
 // Authorize runs the full browser flow and returns a cached-ready Token. It: discovers the auth
@@ -64,6 +74,13 @@ func (cfg OAuthConfig) Authorize(ctx context.Context) (Token, error) {
 	defer func() { _ = ln.Close() }()
 	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", ln.Addr().(*net.TCPAddr).Port)
 
+	// Resolve the client id: a pre-provisioned ORION_WORKOS_CLIENT_ID, else RFC 7591 dynamic client
+	// registration against the AS (the MCP-client pattern — no pre-registered client needed).
+	clientID, err := cfg.resolveClientID(ctx, httpc, as, redirectURI)
+	if err != nil {
+		return Token{}, err
+	}
+
 	type result struct {
 		code string
 		err  error
@@ -89,7 +106,7 @@ func (cfg OAuthConfig) Authorize(ctx context.Context) (Token, error) {
 	go func() { _ = srv.Serve(ln) }()
 	defer func() { _ = srv.Close() }()
 
-	authURL := authorizeURL(as.AuthorizationEndpoint, cfg, redirectURI, state, challenge)
+	authURL := authorizeURL(as.AuthorizationEndpoint, clientID, cfg.MCPEndpoint, redirectURI, state, challenge, cfg.scopeList())
 	open := cfg.OpenBrowser
 	if open == nil {
 		open = defaultOpenBrowser
@@ -112,7 +129,7 @@ func (cfg OAuthConfig) Authorize(ctx context.Context) (Token, error) {
 			"grant_type":    {"authorization_code"},
 			"code":          {res.code},
 			"redirect_uri":  {redirectURI},
-			"client_id":     {cfg.ClientID},
+			"client_id":     {clientID},
 			"code_verifier": {verifier},
 			"resource":      {cfg.MCPEndpoint},
 		})
@@ -149,7 +166,7 @@ func (cfg OAuthConfig) exchange(ctx context.Context, httpc *http.Client, tokenEn
 	if err != nil {
 		return Token{}, fmt.Errorf("oauth token exchange: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if resp.StatusCode != http.StatusOK {
 		return Token{}, fmt.Errorf("oauth token exchange: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -170,6 +187,68 @@ func (cfg OAuthConfig) exchange(ctx context.Context, httpc *http.Client, tokenEn
 		tok.ExpiresAt = time.Now().Add(time.Duration(out.ExpiresIn) * time.Second).Unix()
 	}
 	return tok, nil
+}
+
+// resolveClientID returns the pre-provisioned client id, or dynamically registers one (RFC 7591)
+// with the authorization server when none is configured and the server advertises a registration
+// endpoint — so Orion connects as an MCP client without a pre-registered WorkOS client (the CIMD/DCR
+// path the polaris MCP setup expects).
+func (cfg OAuthConfig) resolveClientID(ctx context.Context, httpc *http.Client, as authServer, redirectURI string) (string, error) {
+	if cfg.ClientID != "" {
+		return cfg.ClientID, nil
+	}
+	if as.RegistrationEndpoint == "" {
+		return "", fmt.Errorf("oauth: no client id set and the authorization server offers no dynamic registration — set ORION_WORKOS_CLIENT_ID")
+	}
+	return cfg.registerClient(ctx, httpc, as.RegistrationEndpoint, redirectURI)
+}
+
+// registerClient performs RFC 7591 dynamic client registration for a public, loopback-redirect
+// native client (PKCE, no client secret) and returns the issued client_id. The registration
+// endpoint must be https and a trusted host — the same trust boundary discovery enforces.
+func (cfg OAuthConfig) registerClient(ctx context.Context, httpc *http.Client, regEndpoint, redirectURI string) (string, error) {
+	regU, err := requireSecureURL(regEndpoint)
+	if err != nil {
+		return "", fmt.Errorf("oauth register: %w", err)
+	}
+	mcpU, err := requireSecureURL(cfg.MCPEndpoint)
+	if err != nil || !authHostAllowed(regU.Hostname(), mcpU.Hostname(), cfg.AllowedAuthHosts) {
+		return "", fmt.Errorf("oauth register: untrusted registration host %q", regU.Hostname())
+	}
+	body, _ := json.Marshal(map[string]any{
+		"client_name":                "Orion",
+		"application_type":           "native",
+		"token_endpoint_auth_method": "none", // public client — PKCE, no secret
+		"grant_types":                []string{"authorization_code", "refresh_token"},
+		"response_types":             []string{"code"},
+		"redirect_uris":              []string{redirectURI},
+		"scope":                      strings.Join(cfg.scopeList(), " "),
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, regEndpoint, strings.NewReader(string(body)))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := httpc.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("oauth register: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("oauth register: status %d: %s", resp.StatusCode, strings.TrimSpace(string(rb)))
+	}
+	var out struct {
+		ClientID string `json:"client_id"`
+	}
+	if err := json.Unmarshal(rb, &out); err != nil {
+		return "", fmt.Errorf("oauth register: decode: %w", err)
+	}
+	if out.ClientID == "" {
+		return "", fmt.Errorf("oauth register: no client_id in response")
+	}
+	return out.ClientID, nil
 }
 
 // discover resolves the authorization + token endpoints from the MCP resource server's
@@ -296,7 +375,7 @@ func getJSON(ctx context.Context, httpc *http.Client, u string, v any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("GET %s: status %d", u, resp.StatusCode)
 	}
@@ -308,18 +387,18 @@ func getJSON(ctx context.Context, httpc *http.Client, u string, v any) error {
 }
 
 // authorizeURL builds the OAuth authorization request URL.
-func authorizeURL(endpoint string, cfg OAuthConfig, redirectURI, state, challenge string) string {
+func authorizeURL(endpoint, clientID, resource, redirectURI, state, challenge string, scopes []string) string {
 	q := url.Values{
 		"response_type":         {"code"},
-		"client_id":             {cfg.ClientID},
+		"client_id":             {clientID},
 		"redirect_uri":          {redirectURI},
 		"state":                 {state},
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
-		"resource":              {cfg.MCPEndpoint},
+		"resource":              {resource},
 	}
-	if len(cfg.Scopes) > 0 {
-		q.Set("scope", strings.Join(cfg.Scopes, " "))
+	if len(scopes) > 0 {
+		q.Set("scope", strings.Join(scopes, " "))
 	}
 	sep := "?"
 	if strings.Contains(endpoint, "?") {

@@ -38,16 +38,11 @@ func mcpLogin() string {
 	}
 	cfg, _ := cs.Load()
 	endpoint := polaris.ResolveMCPURL(os.Getenv("ORION_POLARIS_MCP_URL"), cfg, polaris.Token{})
-	if endpoint == "" {
-		return "mcp login: no endpoint configured — run /mcp set <url> first"
-	}
-	clientID := os.Getenv("ORION_WORKOS_CLIENT_ID")
-	if clientID == "" {
-		return "mcp login: set $ORION_WORKOS_CLIENT_ID (the WorkOS OAuth client), then retry"
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	tok, err := polaris.OAuthConfig{MCPEndpoint: endpoint, ClientID: clientID}.Authorize(ctx)
+	// Client id is OPTIONAL — the flow registers dynamically (RFC 7591 DCR) when it's unset, and
+	// requests openid+offline_access scopes; no pre-provisioned WorkOS client needed (or-xe7.8).
+	tok, err := polaris.OAuthConfig{MCPEndpoint: endpoint, ClientID: os.Getenv("ORION_WORKOS_CLIENT_ID")}.Authorize(ctx)
 	if err != nil {
 		return "mcp login: " + err.Error()
 	}
@@ -127,11 +122,7 @@ func mcpStatusText(dir string, cs *polaris.ConfigStore) string {
 	}
 	endpoint := polaris.ResolveMCPURL(os.Getenv("ORION_POLARIS_MCP_URL"), cfg, tok)
 	var b strings.Builder
-	if endpoint == "" {
-		b.WriteString("MCP endpoint: (not configured — /mcp set <url>)\n")
-	} else {
-		fmt.Fprintf(&b, "MCP endpoint: %s\n", endpoint)
-	}
+	fmt.Fprintf(&b, "MCP endpoint: %s\n", endpoint)
 	if loggedIn && tok.AccessToken != "" {
 		who := "authenticated"
 		if tok.Org != "" {

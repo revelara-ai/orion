@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/revelara-ai/orion/internal/polaris"
 )
@@ -32,22 +31,18 @@ func polarisURL(flagVal string) string {
 }
 
 // polarisMCPURL resolves the revelara.ai MCP endpoint: flag → $ORION_POLARIS_MCP_URL → the
-// TUI-persisted config (`/mcp set`) → <base>/mcp default.
-func polarisMCPURL(flagVal, base string) string {
+// TUI-persisted config (`/mcp set`) → the production default.
+func polarisMCPURL(flagVal string) string {
 	if flagVal != "" {
 		return flagVal
 	}
-	if u := os.Getenv("ORION_POLARIS_MCP_URL"); u != "" {
-		return u
-	}
+	var cfg polaris.Config
 	if dir, err := credentialsDir(); err == nil {
 		if cs, err := polaris.NewConfigStore(dir); err == nil {
-			if cfg, _ := cs.Load(); cfg.MCPURL != "" {
-				return cfg.MCPURL
-			}
+			cfg, _ = cs.Load()
 		}
 	}
-	return strings.TrimRight(base, "/") + "/mcp"
+	return polaris.ResolveMCPURL(os.Getenv("ORION_POLARIS_MCP_URL"), cfg, polaris.Token{})
 }
 
 // cmdLogin authenticates to Polaris and caches the token (0600, outside the store).
@@ -89,15 +84,12 @@ func cmdLogin(args []string) int {
 		}
 		tok.Org = *org
 	default:
-		// Default: WorkOS AuthKit browser OAuth against the revelara.ai MCP service (or-xe7.2).
-		mcp := polarisMCPURL(*mcpURL, base)
+		// Default: WorkOS AuthKit browser OAuth against the revelara.ai MCP service (or-xe7.2). The
+		// client id is OPTIONAL — when unset, the flow registers dynamically (RFC 7591 DCR, or-xe7.8).
+		mcp := polarisMCPURL(*mcpURL)
 		cid := *clientID
 		if cid == "" {
 			cid = os.Getenv("ORION_WORKOS_CLIENT_ID")
-		}
-		if cid == "" {
-			fmt.Fprintln(os.Stderr, "orion login: set --client-id or $ORION_WORKOS_CLIENT_ID (the WorkOS OAuth client), or use --token for headless")
-			return 2
 		}
 		fmt.Printf("opening your browser to authorize Orion with revelara.ai (%s) ...\n", mcp)
 		tok, err = polaris.OAuthConfig{MCPEndpoint: mcp, ClientID: cid}.Authorize(context.Background())

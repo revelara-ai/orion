@@ -61,15 +61,21 @@ func (s *ConfigStore) Save(c Config) error {
 	return nil
 }
 
+// DefaultMCPURL is the production revelara.ai MCP endpoint (docs/runbooks/mcp-production-setup.md).
+const DefaultMCPURL = "https://api.revelara.ai/mcp"
+
 // ResolveMCPURL picks the revelara.ai MCP endpoint in priority order: an explicit env override
 // (ORION_POLARIS_MCP_URL, passed in), then the persisted config, then the token's own endpoint (an
-// OAuth token carries the MCP endpoint it was issued for as its BaseURL). Returns "" if none is set.
+// OAuth token carries the MCP endpoint it was issued for as its BaseURL), then the production default.
 func ResolveMCPURL(envURL string, cfg Config, tok Token) string {
-	if envURL != "" {
+	switch {
+	case envURL != "":
 		return envURL
-	}
-	if cfg.MCPURL != "" {
+	case cfg.MCPURL != "":
 		return cfg.MCPURL
+	case tok.BaseURL != "":
+		return tok.BaseURL
+	default:
+		return DefaultMCPURL
 	}
-	return tok.BaseURL
 }

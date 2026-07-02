@@ -197,6 +197,75 @@ func TestOAuthErrorPathIgnoresStrayCallback(t *testing.T) {
 
 func containsAny(s, sub string) bool { return len(sub) > 0 && strings.Contains(s, sub) }
 
+// TestOAuthDynamicClientRegistration (or-xe7.8): with no configured client id and an AS that
+// advertises a registration endpoint, the flow registers dynamically (RFC 7591) as a public native
+// client and uses the issued client id for authorize + token; it requests openid + offline_access.
+func TestOAuthDynamicClientRegistration(t *testing.T) {
+	var base string
+	var regBody map[string]any
+	var forms []url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"authorization_servers": []string{base}})
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"authorization_endpoint": base + "/authorize",
+			"token_endpoint":         base + "/token",
+			"registration_endpoint":  base + "/register",
+		})
+	})
+	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&regBody)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "dcr-client-123"})
+	})
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		forms = append(forms, r.Form)
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "at", "refresh_token": "rt", "expires_in": 3600})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	base = srv.URL
+
+	var authClientID, authScope string
+	cfg := OAuthConfig{
+		MCPEndpoint: base, // no ClientID → dynamic registration
+		OpenBrowser: func(authURL string) error {
+			u, _ := url.Parse(authURL)
+			authClientID = u.Query().Get("client_id")
+			authScope = u.Query().Get("scope")
+			go func() {
+				resp, err := http.Get(u.Query().Get("redirect_uri") + "?code=c&state=" + url.QueryEscape(u.Query().Get("state")))
+				if err == nil {
+					_ = resp.Body.Close()
+				}
+			}()
+			return nil
+		},
+	}
+	tok, err := cfg.Authorize(context.Background())
+	if err != nil {
+		t.Fatalf("authorize with DCR: %v", err)
+	}
+	if tok.AccessToken != "at" {
+		t.Errorf("token = %+v", tok)
+	}
+	if regBody["token_endpoint_auth_method"] != "none" || regBody["application_type"] != "native" {
+		t.Errorf("DCR should register a public native client, body = %+v", regBody)
+	}
+	if authClientID != "dcr-client-123" {
+		t.Errorf("authorize should use the DCR'd client id, got %q", authClientID)
+	}
+	if len(forms) != 1 || forms[0].Get("client_id") != "dcr-client-123" {
+		t.Errorf("token exchange should use the DCR'd client id, got %v", forms)
+	}
+	if !strings.Contains(authScope, "openid") || !strings.Contains(authScope, "offline_access") {
+		t.Errorf("authorize scope = %q, want openid + offline_access", authScope)
+	}
+}
+
 // TestPKCEChallengeIsS256: the challenge is the base64url(sha256(verifier)).
 func TestPKCEChallengeIsS256(t *testing.T) {
 	v, ch := pkce()

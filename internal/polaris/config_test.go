@@ -35,9 +35,9 @@ func TestResolveMCPURLPriority(t *testing.T) {
 		t.Errorf("config should be next, got %s", got)
 	}
 	if got := ResolveMCPURL("", Config{}, tok); got != "https://tok/mcp" {
-		t.Errorf("token endpoint should be last, got %s", got)
+		t.Errorf("token endpoint should be next, got %s", got)
 	}
-	if got := ResolveMCPURL("", Config{}, Token{}); got != "" {
-		t.Errorf("none set → empty, got %s", got)
+	if got := ResolveMCPURL("", Config{}, Token{}); got != DefaultMCPURL {
+		t.Errorf("none set → production default, got %s", got)
 	}
 }
