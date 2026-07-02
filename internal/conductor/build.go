@@ -292,7 +292,14 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		Assumptions:            assumptions(model),
 	}
 	securityOK := proof.SecurityClean(buildDir)
-	res := delivery.EvaluateBar(outcome.barVerdict, []string{"behavioral", "empirical", "hazard"}, reliabilitytier.PolicyFor(tier), env, securityOK)
+	// or-v9f.13: the bar is told which modes actually RAN — the assembled proof
+	// when the integrator re-proved, else the representative task's — so
+	// RequireAllModes is a real gate, not a hardcoded formality.
+	barProof := rep.Report
+	if haveAssembled {
+		barProof = assembledReport
+	}
+	res := delivery.EvaluateBar(outcome.barVerdict, barProof.PresentModes(), reliabilitytier.PolicyFor(tier), env, securityOK)
 	// Red Button (or-utm): while engaged, autonomy is revoked — never auto-deliver.
 	if res.Decision == delivery.Deliver && rb.AutonomyRevoked() {
 		res = delivery.Result{Decision: delivery.Escalate, Reason: "red button engaged: autonomy revoked, human delivery required"}

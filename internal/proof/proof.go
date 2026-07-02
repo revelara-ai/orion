@@ -43,6 +43,19 @@ type Report struct {
 	ObligationResults map[string]ObligationResult
 }
 
+// PresentModes lists the proof modes that actually RAN, in report order — the
+// deployment bar consumes this instead of a hardcoded list, so a tier that
+// requires full convergence can genuinely refuse a partial proof (or-v9f.13).
+func (r Report) PresentModes() []string {
+	out := make([]string, 0, len(r.Modes))
+	for _, m := range r.Modes {
+		if m.Result.Mode != "" {
+			out = append(out, m.Result.Mode)
+		}
+	}
+	return out
+}
+
 // aggregateObligations merges per-mode case statuses: a case is Executed if any
 // mode ran it, and Passed only if it ran and passed in EVERY mode that ran it (a
 // never-run case stays absent — a coverage hole the gate treats distinctly).
