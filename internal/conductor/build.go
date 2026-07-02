@@ -310,14 +310,21 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	if haveAssembled {
 		barProof = assembledReport
 	}
-	res := delivery.EvaluateBar(outcome.barVerdict, barProof.PresentModes(), reliabilitytier.PolicyFor(tier), env, securityOK)
+	// or-v9f.12: the runbook is generated ONCE and VERIFIED against the artifact
+	// before the bar — unevidenced operability claims carry UNVERIFIED markers
+	// (visible in the PR) and, at Critical tier, refuse delivery.
+	runbook := delivery.GenerateRunbook(es, model, env)
+	var missingOps []string
+	if b, rerr := os.ReadFile(filepath.Join(buildDir, "main.go")); rerr == nil {
+		runbook, missingOps = delivery.VerifyRunbook(runbook, string(b))
+	}
+	res := delivery.EvaluateBar(outcome.barVerdict, barProof.PresentModes(), reliabilitytier.PolicyFor(tier), env, securityOK, missingOps)
 	// Red Button (or-utm): while engaged, autonomy is revoked — never auto-deliver.
 	if res.Decision == delivery.Deliver && rb.AutonomyRevoked() {
 		res = delivery.Result{Decision: delivery.Escalate, Reason: "red button engaged: autonomy revoked, human delivery required"}
 	}
 	if res.Decision == delivery.Deliver {
 		envJSON, _ := json.Marshal(res.Envelope)
-		runbook := delivery.GenerateRunbook(es, model, env)
 		rbJSON, _ := json.Marshal(runbook)
 		_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
 			epic, e := tx.Epics().LatestForProject(ctx, proj.ID)
@@ -422,7 +429,6 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 					// presented as PR-ready — and, crucially, is never auto-pushed/PR'd under opt-in.
 					// Local review artifact always; a real PR only when opted in + remote + gh exist.
 					if res.Decision == delivery.Deliver {
-						runbook := delivery.GenerateRunbook(es, model, env)
 						if pr, perr := PRHandoff(ctx, root, store.Dir(), d, es, outcome.barVerdict, driftLine, remainder, runbook); perr != nil {
 							prResult = pr // still carries the artifact + commands even if push/gh failed
 							onPhase.emit("Deliver", PhaseWarn, "PR handoff: "+perr.Error())

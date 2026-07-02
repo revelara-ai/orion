@@ -6,6 +6,8 @@ import (
 
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
+	"github.com/revelara-ai/orion/internal/proof/truthalign"
+	"github.com/revelara-ai/orion/internal/reliabilitytier"
 	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
 )
 
@@ -48,4 +50,45 @@ func keys(m map[string]string) []string {
 		ks = append(ks, k)
 	}
 	return ks
+}
+
+// TestVerifyRunbookMarksUnevidencedClaims (or-v9f.12): a runbook claim the
+// artifact cannot honor is marked UNVERIFIED and reported — never repeated as
+// fact to the 3 a.m. operator.
+func TestVerifyRunbookMarksUnevidencedClaims(t *testing.T) {
+	rb := Runbook{Sections: map[string]string{
+		"operational_commands": "- Logs: structured logs on stderr (slog)\n- Stop: SIGTERM (graceful shutdown)",
+	}}
+
+	bare := "package main\nfunc main() {}\n"
+	verified, missing := VerifyRunbook(rb, bare)
+	if len(missing) != 2 {
+		t.Fatalf("bare artifact honors neither claim, got missing=%v", missing)
+	}
+	if !strings.Contains(verified.Sections["operational_commands"], "UNVERIFIED") {
+		t.Errorf("unevidenced claims must be marked:\n%s", verified.Sections["operational_commands"])
+	}
+
+	instrumented := "package main\nimport (\"log/slog\"\n\"os/signal\")\nfunc main() { signal.Notify(nil) ; slog.Info(\"up\") }\n"
+	verified, missing = VerifyRunbook(rb, instrumented)
+	if len(missing) != 0 {
+		t.Fatalf("instrumented artifact honors both claims, got missing=%v", missing)
+	}
+	if strings.Contains(verified.Sections["operational_commands"], "UNVERIFIED") {
+		t.Errorf("verified claims must pass through untouched:\n%s", verified.Sections["operational_commands"])
+	}
+}
+
+// TestCriticalTierRefusesUnverifiedOperability: the highest tier does not ship
+// instructions the artifact cannot honor.
+func TestCriticalTierRefusesUnverifiedOperability(t *testing.T) {
+	env := OperatingEnvelope{ProvenLoad: "100 req/min", FaultClassesControlled: []string{"timeout"}}
+	modes := []string{"behavioral", "empirical", "hazard"}
+	r := EvaluateBar(truthalign.Accept, modes, reliabilitytier.PolicyFor(reliabilitytier.Critical), env, true, []string{"structured-logs"})
+	if r.Decision != Escalate || !strings.Contains(r.Reason, "operability") {
+		t.Fatalf("critical + unverified operability must escalate with a named reason, got %+v", r)
+	}
+	if r := EvaluateBar(truthalign.Accept, modes, reliabilitytier.PolicyFor(reliabilitytier.Standard), env, true, []string{"structured-logs"}); r.Decision != Deliver {
+		t.Fatalf("standard delivers with UNVERIFIED markers visible, got %+v", r)
+	}
 }

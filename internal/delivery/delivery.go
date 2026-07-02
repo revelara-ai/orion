@@ -9,6 +9,7 @@ package delivery
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 	"github.com/revelara-ai/orion/internal/reliabilitytier"
@@ -43,7 +44,7 @@ type Result struct {
 // met only when the proof verdict is Accept AND (for tiers that require it) all
 // three modes converged. A met bar yields a human-mergeable delivery with the
 // operating envelope; otherwise it escalates with a named reason.
-func EvaluateBar(verdict truthalign.Verdict, presentModes []string, policy reliabilitytier.Policy, env OperatingEnvelope, securityOK bool) Result {
+func EvaluateBar(verdict truthalign.Verdict, presentModes []string, policy reliabilitytier.Policy, env OperatingEnvelope, securityOK bool, unverifiedOps []string) Result {
 	if !securityOK {
 		return Result{Decision: Escalate, Reason: "security gate failed: hardcoded secret in the artifact"}
 	}
@@ -58,6 +59,11 @@ func EvaluateBar(verdict truthalign.Verdict, presentModes []string, policy relia
 	// unstated-scaling-assumptions failure the manifesto names.
 	if policy.RequireEnvelope && (env.ProvenLoad == "" || len(env.FaultClassesControlled) == 0) {
 		return Result{Decision: Escalate, Reason: fmt.Sprintf("tier %s requires a complete operating envelope (proven load + controlled fault classes); got load=%q faults=%d", policy.Tier, env.ProvenLoad, len(env.FaultClassesControlled))}
+	}
+	// or-v9f.12: at the highest tier, a runbook claim the artifact cannot honor
+	// is a delivery blocker — the 3 a.m. operator depends on those instructions.
+	if policy.RequireEnvelope && len(unverifiedOps) > 0 {
+		return Result{Decision: Escalate, Reason: fmt.Sprintf("tier %s requires verified operability; runbook claims lack artifact evidence: %s", policy.Tier, strings.Join(unverifiedOps, ", "))}
 	}
 	env.Tier = string(policy.Tier)
 	return Result{Decision: Deliver, HumanMergeable: true, Envelope: &env, Reason: "bar met; human-mergeable (V2.0 no auto-deploy)"}
