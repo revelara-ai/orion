@@ -26,8 +26,8 @@ func TestMCPCommandSetShowClear(t *testing.T) {
 	if out, _ := mcpCommandAsync("clear"); !strings.Contains(out, "cleared") {
 		t.Errorf("clear: %q", out)
 	}
-	if out, _ := mcpCommandAsync("show"); !strings.Contains(out, "not configured") {
-		t.Errorf("after clear, show should report unconfigured: %q", out)
+	if out, _ := mcpCommandAsync("show"); !strings.Contains(out, "api.revelara.ai/mcp") {
+		t.Errorf("after clear, show should fall back to the production default endpoint: %q", out)
 	}
 }
 
@@ -35,7 +35,9 @@ func TestMCPCommandSetShowClear(t *testing.T) {
 // endpoint configured the follow-up reports the missing config (rather than hanging on a browser).
 func TestMCPCommandLoginIsAsync(t *testing.T) {
 	t.Setenv("ORION_DATA_DIR", t.TempDir())
-	t.Setenv("ORION_POLARIS_MCP_URL", "")
+	// Point at an unreachable loopback endpoint so login fails fast at discovery — no prod call, no
+	// browser (discovery happens before the browser step).
+	t.Setenv("ORION_POLARIS_MCP_URL", "http://127.0.0.1:1/mcp")
 
 	immediate, cmd := mcpCommandAsync("login")
 	if cmd == nil {
@@ -48,7 +50,7 @@ func TestMCPCommandLoginIsAsync(t *testing.T) {
 	if !ok {
 		t.Fatalf("async follow-up must yield a CommandResultMsg, got %T", cmd())
 	}
-	if !strings.Contains(res.Text, "endpoint") {
-		t.Errorf("login with no endpoint should report the missing config, got %q", res.Text)
+	if !strings.Contains(res.Text, "mcp login") {
+		t.Errorf("a failed login should report an error, got %q", res.Text)
 	}
 }
