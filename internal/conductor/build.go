@@ -240,15 +240,9 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	// coverage against the delivered WHOLE, not one cluster's slice.
 	var assembledReport proof.Report
 	var haveAssembled bool
-	reprove := func(ctx context.Context, dir string) (bool, error) {
-		r, perr := proof.ProveAllWithThreshold(ctx, dir, contract, model, mutationThresholdFor(dir))
-		if perr != nil {
-			return false, perr
-		}
-		proof.EnforceObligations(requiredIDs, &r)
+	reprove := epicReprover(store, contract, model, es, requiredIDs, proj.ID, onPhase, func(r proof.Report) {
 		assembledReport, haveAssembled = r, true
-		return string(r.Outcome.Verdict) == string(truthalign.Accept), nil
-	}
+	})
 	intDir, integrated, ierr := integrateEpic(ctx, wtMgr, clusters, clusterWT, results, managed.Base, reprove, onPhase)
 	if ierr != nil {
 		return BuildResult{}, fmt.Errorf("epic integration: %w", ierr)
@@ -703,6 +697,33 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		Closed: closed, BuildDir: buildDir, Attempts: attempts,
 		FailureAnalysis: failureAnalysis, Alignment: alignment,
 	}, nil
+}
+
+// epicReprover builds the assembled-tree re-proof closure the integrator runs
+// after each merge. A RED verdict is never swallowed into the rollback
+// (or-v9f.21): the causal analysis reaches the phase stream (the operator sees
+// WHICH obligation went red on the merged tree) and a deduped failure-mode row
+// accumulates the pattern across runs. capture receives every report so the
+// drift check re-evaluates against the assembled proof.
+func epicReprover(store *contextstore.Store, contract testsynth.Contract, model stpa.Model, es spec.ExecutableSpec, requiredIDs []string, projectID string, onPhase PhaseSink, capture func(proof.Report)) func(ctx context.Context, dir string) (bool, error) {
+	return func(ctx context.Context, dir string) (bool, error) {
+		r, perr := proof.ProveAllWithThreshold(ctx, dir, contract, model, mutationThresholdFor(dir))
+		if perr != nil {
+			return false, perr
+		}
+		proof.EnforceObligations(requiredIDs, &r)
+		capture(r)
+		if string(r.Outcome.Verdict) == string(truthalign.Accept) {
+			return true, nil
+		}
+		analysis := analyzeFailure(r, es.ResponseContract.Cases)
+		onPhase.emit("Integrate", PhaseWarn, "assembled-tree re-proof RED — "+analysis)
+		_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
+			_, e := tx.FailureModes().Record(ctx, projectID, "integration-reproof", "assembled-tree", string(r.Outcome.Verdict))
+			return e
+		})
+		return false, nil
+	}
 }
 
 // budgetGate refuses new cluster dispatch once the run's budget ceiling is
