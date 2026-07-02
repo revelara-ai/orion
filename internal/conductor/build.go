@@ -617,11 +617,18 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 
 		// Proof is memoized by artifact content hash: an identical artifact (e.g. a
 		// sibling cluster building the same code) is proven once — the verdict is
-		// deterministic — so the DAG never re-proves the same bytes N times.
+		// deterministic — so the DAG never re-proves the same bytes N times. The memo
+		// is two-tiered: the per-run in-memory proofCache, then the CROSS-RUN
+		// persisted memo keyed by (spec anchor, artifact hash) (or-v9f.6), so a
+		// re-run after fixing an escalation skips proof for every unchanged cluster.
 		var rep proof.Report
 		if cached, ok := proofCache[art.ContentHash]; ok {
 			rep = cached
 			onPhase.emit("Prove", PhaseDone, "reused (identical artifact already proven)")
+		} else if r, ok := recallProofMemo(ctx, store, stateMu, es.Hash, art.ContentHash); ok {
+			proofCache[art.ContentHash] = r
+			rep = r
+			onPhase.emit("Prove", PhaseDone, "reused (persisted proof — unchanged since a prior run)")
 		} else {
 			onPhase.emit("Prove", PhaseRunning, "behavioral + empirical + hazard")
 			r, rerr := proof.ProveAllWithThreshold(ctx, buildDir, contract, model, mutationThresholdFor(buildDir))
@@ -633,6 +640,7 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 			// passing obligation — else downgrade the verdict (the or-y9d kill).
 			proof.EnforceObligations(requiredIDs, &r)
 			proofCache[art.ContentHash] = r
+			persistProofMemo(ctx, store, stateMu, es.Hash, art.ContentHash, r) // best-effort cross-run memo
 			rep = r
 		}
 		report = rep
@@ -769,6 +777,46 @@ func budgetGate(acct *budget.Accountant) error {
 	}
 	s := acct.Snapshot()
 	return fmt.Errorf("budget gate: ceiling reached (tokens=%d dollars=%.2f wall=%s) — no new clusters; raise ORION_BUDGET_* or resolve and re-run", s.Tokens, s.Dollars, s.Wall.Round(time.Second))
+}
+
+// recallProofMemo returns a persisted post-enforcement proof Report for an
+// (spec anchor, artifact hash) pair (or-v9f.6). Best-effort + nil-safe: a miss,
+// a nil store, or an unmarshal error yields ok=false and a fresh proof runs.
+// Store access is serialized under stateMu, like every other store touch here.
+func recallProofMemo(ctx context.Context, store *contextstore.Store, stateMu *sync.Mutex, specHash, contentHash string) (proof.Report, bool) {
+	if store == nil {
+		return proof.Report{}, false
+	}
+	var js string
+	var ok bool
+	withLock(stateMu, func() {
+		var e error
+		js, ok, e = store.ProofMemoGet(ctx, specHash, contentHash)
+		if e != nil {
+			ok = false
+		}
+	})
+	if !ok {
+		return proof.Report{}, false
+	}
+	var r proof.Report
+	if err := json.Unmarshal([]byte(js), &r); err != nil {
+		return proof.Report{}, false
+	}
+	return r, true
+}
+
+// persistProofMemo records a fresh proof so a later run with identical bytes
+// skips it (or-v9f.6). Best-effort: a persist miss never fails the build.
+func persistProofMemo(ctx context.Context, store *contextstore.Store, stateMu *sync.Mutex, specHash, contentHash string, r proof.Report) {
+	if store == nil {
+		return
+	}
+	js, err := json.Marshal(r)
+	if err != nil {
+		return
+	}
+	withLock(stateMu, func() { _ = store.ProofMemoPut(ctx, specHash, contentHash, string(js)) })
 }
 
 // mutationThresholdFor classifies the artifact's reliability tier from its own
