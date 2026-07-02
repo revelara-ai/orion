@@ -20,8 +20,16 @@ import (
 // Prove runs the synthesized behavioral corpus against the artifact in
 // artifactDir and returns the behavioral ModeResult. corpusDirOut, if non-nil,
 // receives the proof-controlled build dir path (for isolation assertions); the
-// dir is otherwise removed.
+// dir is otherwise removed. The mutation gate runs at the Standard threshold;
+// tier-calibrated callers use ProveWithThreshold (or-v9f.11).
 func Prove(ctx context.Context, artifactDir string, c testsynth.Contract, corpusDirOut *string) (truthalign.ModeResult, error) {
+	return ProveWithThreshold(ctx, artifactDir, c, corpusDirOut, reliabilitytier.MutationThreshold(reliabilitytier.Standard))
+}
+
+// ProveWithThreshold is Prove with the mutation-score bar supplied by the caller
+// — the classified reliability tier finally reaches the gate (or-v9f.11): a
+// critical artifact is held to 0.9, a throwaway to 0.
+func ProveWithThreshold(ctx context.Context, artifactDir string, c testsynth.Contract, corpusDirOut *string, mutationThreshold float64) (truthalign.ModeResult, error) {
 	proofDir, err := os.MkdirTemp("", "orion-proof-*")
 	if err != nil {
 		return truthalign.ModeResult{}, fmt.Errorf("proof dir: %w", err)
@@ -61,26 +69,41 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract, corpus
 
 	metrics := map[string]float64{"run_count": 1, "mutation_score": 0}
 	obligations := parseObligations(output) // per-case executed/passed from markers
+	inconclusive := false
 	if pass {
 		// Behavioral quality gate: the corpus must KILL behavior-changing mutants
 		// (green coverage is a vanity metric; mutation score is the signal).
 		killed, total, mErr := MutationScore(ctx, artifactDir, corpus, c.Entry())
 		if mErr == nil {
-			score := MutationScoreValue(killed, total)
-			metrics["mutation_score"] = score
-			if total > 0 && score < reliabilitytier.MutationThreshold(reliabilitytier.Standard) {
-				pass = false
-				output += fmt.Sprintf("\nmutation gate: score %.2f (%d/%d) below threshold — corpus is not fault-catching", score, killed, total)
+			metrics["mutation_score"] = MutationScoreValue(killed, total)
+			var note string
+			pass, inconclusive, note = mutationGate(pass, killed, total, mutationThreshold)
+			if note != "" {
+				output += "\n" + note
 			}
 		}
 	}
 	return truthalign.ModeResult{
-		Mode:        "behavioral",
-		Pass:        pass,
-		Output:      output,
-		Metrics:     metrics,
-		Obligations: obligations,
+		Mode:         "behavioral",
+		Pass:         pass,
+		Inconclusive: inconclusive,
+		Output:       output,
+		Metrics:      metrics,
+		Obligations:  obligations,
 	}, nil
+}
+
+// mutationGate is the deterministic mutation-score decision (or-v9f.11): below
+// the tier threshold fails; ZERO applicable mutants is Inconclusive — the corpus
+// quality is unmeasured, which must never read as a silent pass.
+func mutationGate(pass bool, killed, total int, threshold float64) (bool, bool, string) {
+	switch {
+	case total == 0:
+		return false, true, "mutation gate: no applicable mutants — corpus fault-catching quality is UNMEASURED (inconclusive, not a pass)"
+	case MutationScoreValue(killed, total) < threshold:
+		return false, false, fmt.Sprintf("mutation gate: score %.2f (%d/%d) below threshold %.2f — corpus is not fault-catching", MutationScoreValue(killed, total), killed, total, threshold)
+	}
+	return pass, false, ""
 }
 
 // parseObligations reads ORION_OBLIGATION_RUN/PASS:<caseID> markers from the

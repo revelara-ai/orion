@@ -225,7 +225,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	var assembledReport proof.Report
 	var haveAssembled bool
 	reprove := func(ctx context.Context, dir string) (bool, error) {
-		r, perr := proof.ProveAll(ctx, dir, contract, model)
+		r, perr := proof.ProveAllWithThreshold(ctx, dir, contract, model, mutationThresholdFor(dir))
 		if perr != nil {
 			return false, perr
 		}
@@ -562,7 +562,7 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 			onPhase.emit("Prove", PhaseDone, "reused (identical artifact already proven)")
 		} else {
 			onPhase.emit("Prove", PhaseRunning, "behavioral + empirical + hazard")
-			r, rerr := proof.ProveAll(ctx, buildDir, contract, model)
+			r, rerr := proof.ProveAllWithThreshold(ctx, buildDir, contract, model, mutationThresholdFor(buildDir))
 			if rerr != nil {
 				onPhase.emit("Prove", PhaseFailed, rerr.Error())
 				return taskResult{}, fmt.Errorf("proof: %w", rerr)
@@ -669,6 +669,19 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		Closed: closed, BuildDir: buildDir, Attempts: attempts,
 		FailureAnalysis: failureAnalysis, Alignment: alignment,
 	}, nil
+}
+
+// mutationThresholdFor classifies the artifact's reliability tier from its own
+// source (the same detector fleet the delivery tail uses) and returns the
+// mutation-score bar that tier warrants — a Critical artifact is held to 0.9,
+// not the hardcoded Standard 0.6 (or-v9f.11).
+func mutationThresholdFor(artifactDir string) float64 {
+	tier := reliabilitytier.Standard
+	if b, err := os.ReadFile(filepath.Join(artifactDir, "main.go")); err == nil {
+		findings := reliabilityscan.ScanSource(string(b))
+		tier = reliabilitytier.Classify(reliabilityscan.DeriveDimensions(findings))
+	}
+	return reliabilitytier.MutationThreshold(tier)
 }
 
 // memMaintenance records the proven outcome into memory + bounds the tiers (or-hd3.*). Best-effort

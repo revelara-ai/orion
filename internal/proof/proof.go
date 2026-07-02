@@ -17,6 +17,7 @@ import (
 	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
+	"github.com/revelara-ai/orion/internal/reliabilitytier"
 )
 
 // ModeReport is one mode's result plus its mode-specific detail (persisted as the
@@ -158,8 +159,15 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (Repor
 
 // ProveAll runs all three modes (behavioral + empirical + hazard) against the
 // artifact and the ratified STPA model, and converges requiring all three. This
-// is the full credibility-core verdict.
+// is the full credibility-core verdict. The mutation gate runs at the Standard
+// threshold; tier-calibrated callers use ProveAllWithThreshold (or-v9f.11).
 func ProveAll(ctx context.Context, artifactDir string, c testsynth.Contract, model stpa.Model) (Report, error) {
+	return ProveAllWithThreshold(ctx, artifactDir, c, model, reliabilitytier.MutationThreshold(reliabilitytier.Standard))
+}
+
+// ProveAllWithThreshold is ProveAll with the mutation-score bar supplied by the
+// caller — the classified reliability tier reaches the behavioral gate.
+func ProveAllWithThreshold(ctx context.Context, artifactDir string, c testsynth.Contract, model stpa.Model, mutationThreshold float64) (Report, error) {
 	// Fast-feedback tier (cheapest first): a static check (compile + vet). If the
 	// generated code does not compile, the behavioral/empirical/hazard modes cannot run
 	// — return a Reject with the diagnostics immediately, skipping minutes of pointless
@@ -169,7 +177,7 @@ func ProveAll(ctx context.Context, artifactDir string, c testsynth.Contract, mod
 		return Report{Outcome: truthalign.Converge(mr), Modes: []ModeReport{{Result: mr}}}, nil
 	}
 
-	bmr, err := behavioral.Prove(ctx, artifactDir, c, nil)
+	bmr, err := behavioral.ProveWithThreshold(ctx, artifactDir, c, nil, mutationThreshold)
 	if err != nil {
 		return Report{}, err
 	}
