@@ -15,9 +15,12 @@ import (
 // up to the bound; a dependent cluster waits until its dependency cluster Accepts; concurrency
 // never exceeds N. Run under -race.
 func TestIndependentClustersRunInParallelBounded(t *testing.T) {
+	// Disjoint file scopes: undeclared scopes lease the whole tree and would
+	// serialize (or-v9f.10) — this test's subject is the parallelism of
+	// independent, non-overlapping clusters.
 	tasks := []orchestrator.PlanTask{
-		{ID: "a1"}, {ID: "b1"}, {ID: "c1"},
-		{ID: "d1", DependsOn: []string{"a1"}}, // cluster D depends on cluster A
+		{ID: "a1", FileScope: "a/"}, {ID: "b1", FileScope: "b/"}, {ID: "c1", FileScope: "c/"},
+		{ID: "d1", FileScope: "d/", DependsOn: []string{"a1"}}, // cluster D depends on cluster A
 	}
 	clusters := []decomposer.TaskCluster{
 		{Key: "A", Members: []string{"a1"}},

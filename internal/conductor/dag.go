@@ -2,6 +2,7 @@ package conductor
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/revelara-ai/orion/internal/decomposer"
@@ -152,6 +153,27 @@ func runClusterDAG(clusters []decomposer.TaskCluster, tasks []orchestrator.PlanT
 		}
 	}
 
+	// Cluster leases (or-v9f.10): the union of each member task's declared file
+	// scope. The dispatch loop never runs two clusters with overlapping leases
+	// concurrently — path leasing enforced by the scheduler, not trusted to the
+	// declarations being right.
+	leases := map[string][]string{}
+	for _, cl := range clusters {
+		var set []string
+		declared := true
+		for _, t := range members[cl.Key] {
+			ls := leaseSet(t.FileScope)
+			if ls == nil {
+				declared = false // one undeclared task -> the cluster leases the whole tree
+				break
+			}
+			set = append(set, ls...)
+		}
+		if declared {
+			leases[cl.Key] = set
+		} // else leases[cl.Key] stays nil = exclusive
+	}
+
 	var mu sync.Mutex
 	state := map[string]string{}  // clusterKey -> ""(pending)|running|Accept|Reject|Blocked
 	accepted := map[string]bool{} // taskID -> reached Accept (global)
@@ -207,6 +229,20 @@ func runClusterDAG(clusters []decomposer.TaskCluster, tasks []orchestrator.PlanT
 					completed++
 					continue
 				}
+			}
+			// Lease check (or-v9f.10): a cluster whose lease overlaps an in-flight
+			// cluster's stays PENDING (not blocked) and re-tries after the next
+			// completion releases the lease. Deadlock-free: an empty in-flight set
+			// holds no leases.
+			leased := false
+			for other, st := range state {
+				if st == "running" && other != cl.Key && scopesOverlap(leases[cl.Key], leases[other]) {
+					leased = true
+					break
+				}
+			}
+			if leased {
+				continue
 			}
 			state[cl.Key] = "running"
 			inflight++
@@ -276,4 +312,36 @@ func runClusterDAG(clusters []decomposer.TaskCluster, tasks []orchestrator.PlanT
 		mu.Unlock()
 	}
 	return collected, nil
+}
+
+// ── file-scope leases (or-v9f.10) ────────────────────────────────────────────
+
+// leaseSet expands a task's declared FileScope (comma-separated path prefixes)
+// into a lease set. An UNDECLARED scope returns nil, which scopesOverlap treats
+// as the whole tree — a cluster that declares nothing could touch anything, so
+// it runs exclusively (conservative, fail-safe).
+func leaseSet(fileScope string) []string {
+	var out []string
+	for _, p := range strings.Split(fileScope, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// scopesOverlap reports whether two lease sets can collide: any prefix pair
+// where one contains the other. nil (undeclared) collides with everything.
+func scopesOverlap(a, b []string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return true
+	}
+	for _, x := range a {
+		for _, y := range b {
+			if strings.HasPrefix(x, y) || strings.HasPrefix(y, x) {
+				return true
+			}
+		}
+	}
+	return false
 }
