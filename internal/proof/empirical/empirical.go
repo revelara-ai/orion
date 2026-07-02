@@ -25,6 +25,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/internal/proof/execprobe"
+	"github.com/revelara-ai/orion/internal/proof/unitprobe"
 	"github.com/revelara-ai/orion/internal/proof/proofexec"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
@@ -46,21 +47,27 @@ type ProbeResult struct {
 func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truthalign.ModeResult, ProbeResult, error) {
 	// or-v9f.3: exec cases take the real-binary channel; http cases keep the
 	// live-service probe. A contract may carry either or both.
-	var httpCases, execCases []spec.BehavioralCase
+	var httpCases, execCases, unitCases, fileCases []spec.BehavioralCase
 	for _, cs := range c.Cases {
-		if cs.Kind == spec.KindExec {
+		switch cs.Kind {
+		case spec.KindExec:
 			execCases = append(execCases, cs)
-		} else {
+		case spec.KindUnit:
+			unitCases = append(unitCases, cs)
+		case spec.KindFile:
+			fileCases = append(fileCases, cs)
+		default:
 			httpCases = append(httpCases, cs)
 		}
 	}
+	_ = fileCases // routed in the round loop below (Layer C)
 	hasHTTP := c.Route != "" || len(httpCases) > 0
 	// The route to probe comes from the contract or the first declared http case —
 	// never a silent "/time" default (that imposed the time domain on every probe).
 	if c.Route == "" && len(httpCases) > 0 {
 		c.Route = httpCases[0].Request.Path
 	}
-	if !hasHTTP && len(execCases) == 0 {
+	if !hasHTTP && len(execCases) == 0 && len(unitCases) == 0 && len(fileCases) == 0 {
 		return failMode("empirical: nothing to probe (contract declares neither a route nor any cases)"),
 			ProbeResult{Detail: "no route"}, nil
 	}
@@ -79,10 +86,28 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truth
 		return failMode("stage artifact: " + err.Error()), ProbeResult{Detail: "stage failed"}, nil
 	}
 	bin := filepath.Join(binDir, "svc")
-	if out, code, err := proofexec.GoToolchain(ctx, binDir, "build", "-o", "svc", "."); err != nil {
-		return truthalign.ModeResult{}, ProbeResult{}, fmt.Errorf("empirical build exec: %w", err)
-	} else if code != 0 {
-		return failMode("build failed: " + strings.TrimSpace(out)), ProbeResult{Detail: "build failed"}, nil
+	if hasHTTP || len(execCases) > 0 {
+		if out, code, err := proofexec.GoToolchain(ctx, binDir, "build", "-o", "svc", "."); err != nil {
+			return truthalign.ModeResult{}, ProbeResult{}, fmt.Errorf("empirical build exec: %w", err)
+		} else if code != 0 {
+			return failMode("build failed: " + strings.TrimSpace(out)), ProbeResult{Detail: "build failed"}, nil
+		}
+	}
+	// or-v9f.23: unit cases run through the sandboxed driver built WITH the
+	// artifact module; a driver that cannot build leaves the obligations
+	// unexecuted (loud coverage hole via EnforceObligations, never a pass).
+	var unitDriver string
+	unitBuildDetail := ""
+	if len(unitCases) > 0 {
+		d, ok, detail, derr := unitprobe.BuildDriver(ctx, binDir, unitCases)
+		if derr != nil {
+			return truthalign.ModeResult{}, ProbeResult{}, derr
+		}
+		if ok {
+			unitDriver = d
+		} else {
+			unitBuildDetail = detail
+		}
 	}
 
 	var addr string
@@ -121,6 +146,26 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truth
 			pr = probeContract(addr, c)
 		} else {
 			pr = ProbeResult{PortOpen: true, ResponseContractSatisfied: true, Detail: "ok"}
+		}
+		if len(unitCases) > 0 {
+			if unitDriver != "" {
+				obs, fails := unitprobe.RunRound(ctx, unitDriver, unitCases)
+				if pr.Cases == nil {
+					pr.Cases = map[string]truthalign.ObligationStatus{}
+				}
+				for id, st := range obs {
+					pr.Cases[id] = st
+					if !st.Passed {
+						pr.ResponseContractSatisfied = false
+					}
+				}
+				if fails != "" {
+					pr.Detail = joinDetail(pr.Detail, fails)
+				}
+			} else {
+				pr.ResponseContractSatisfied = false
+				pr.Detail = joinDetail(pr.Detail, unitBuildDetail)
+			}
 		}
 		if len(execCases) > 0 {
 			obs, fails := execprobe.RunRound(ctx, bin, execCases, scale)
@@ -220,12 +265,26 @@ func stageArtifact(src, dst string) error {
 	}
 	staged := 0
 	for _, e := range entries {
+		name := e.Name()
 		if e.IsDir() {
+			// or-v9f.23: multi-package artifacts stage recursively (dot-dirs skipped).
+			if strings.HasPrefix(name, ".") {
+				continue
+			}
+			if err := os.MkdirAll(filepath.Join(dst, name), 0o755); err != nil {
+				return err
+			}
+			if err := stageArtifact(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
+				return err
+			}
+			staged++
 			continue
 		}
-		name := e.Name()
 		if name != "go.mod" && name != "go.sum" && !strings.HasSuffix(name, ".go") {
 			continue
+		}
+		if strings.HasPrefix(name, "orion_") && strings.HasSuffix(name, "_test.go") {
+			continue // never stage a prior corpus
 		}
 		data, err := os.ReadFile(filepath.Join(src, name))
 		if err != nil {
@@ -471,4 +530,12 @@ func checkLiveAssertions(body []byte, as []spec.BodyAssertion) (bool, string) {
 		}
 	}
 	return true, "ok"
+}
+
+// joinDetail concatenates round details, dropping the empty/ok placeholder.
+func joinDetail(cur, more string) string {
+	if cur == "" || cur == "ok" {
+		return more
+	}
+	return cur + "; " + more
 }
