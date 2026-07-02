@@ -20,12 +20,14 @@ import (
 	"fmt"
 	"os/exec"
 	"sort"
+	"strings"
 )
 
 // Spec describes a sandboxed execution.
 type Spec struct {
 	Workdir  string            // the only writable directory (the worktree)
 	Argv     []string          // command to run (argv[0] is the program)
+	Stdin    string            // fed to the process's stdin (or-v9f.3 exec cases); empty = no input
 	Env      map[string]string // scrubbed environment (no ambient creds)
 	ROBinds  []string          // host paths to expose read-only (e.g. a static helper)
 	AllowNet bool              // default false → egress denied
@@ -120,6 +122,9 @@ func (bwrapBackend) Run(ctx context.Context, s Spec) (Result, error) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	if s.Stdin != "" {
+		cmd.Stdin = strings.NewReader(s.Stdin)
+	}
 	err := cmd.Run()
 	res := Result{Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: 0}
 	if err != nil {
@@ -157,6 +162,9 @@ func (noneBackend) Run(ctx context.Context, s Spec) (Result, error) {
 	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if s.Stdin != "" {
+		cmd.Stdin = strings.NewReader(s.Stdin)
+	}
 	err := cmd.Run()
 	res := Result{Stdout: stdout.String(), Stderr: stderr.String()}
 	if err != nil {

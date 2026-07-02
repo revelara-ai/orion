@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
+	"github.com/revelara-ai/orion/internal/proof/execprobe"
 	"github.com/revelara-ai/orion/internal/proof/proofexec"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
@@ -43,13 +44,24 @@ type ProbeResult struct {
 // service against the contract. The service runs in its own process group and is
 // reaped after the probe.
 func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truthalign.ModeResult, ProbeResult, error) {
-	// The route to probe comes from the contract or the first declared case — never a
-	// silent "/time" default (that imposed the time domain on every empirical probe).
-	if c.Route == "" && len(c.Cases) > 0 {
-		c.Route = c.Cases[0].Request.Path
+	// or-v9f.3: exec cases take the real-binary channel; http cases keep the
+	// live-service probe. A contract may carry either or both.
+	var httpCases, execCases []spec.BehavioralCase
+	for _, cs := range c.Cases {
+		if cs.Kind == spec.KindExec {
+			execCases = append(execCases, cs)
+		} else {
+			httpCases = append(httpCases, cs)
+		}
 	}
-	if c.Route == "" {
-		return failMode("empirical: no route to probe (contract declares neither a route nor any cases)"),
+	hasHTTP := c.Route != "" || len(httpCases) > 0
+	// The route to probe comes from the contract or the first declared http case —
+	// never a silent "/time" default (that imposed the time domain on every probe).
+	if c.Route == "" && len(httpCases) > 0 {
+		c.Route = httpCases[0].Request.Path
+	}
+	if !hasHTTP && len(execCases) == 0 {
+		return failMode("empirical: nothing to probe (contract declares neither a route nor any cases)"),
 			ProbeResult{Detail: "no route"}, nil
 	}
 	binDir, err := os.MkdirTemp("", "orion-lookout-*")
@@ -73,34 +85,67 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truth
 		return failMode("build failed: " + strings.TrimSpace(out)), ProbeResult{Detail: "build failed"}, nil
 	}
 
-	port, err := freePort()
-	if err != nil {
-		return truthalign.ModeResult{}, ProbeResult{}, err
-	}
-
-	runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	svc := exec.CommandContext(runCtx, bin)
-	svc.Env = []string{"PORT=" + fmt.Sprint(port), "PATH=/usr/bin:/bin"}
-	svc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := svc.Start(); err != nil {
-		return failMode("service did not start: " + err.Error()), ProbeResult{Detail: "start failed"}, nil
-	}
-	defer func() {
-		if svc.Process != nil {
-			_ = syscall.Kill(-svc.Process.Pid, syscall.SIGKILL)
-			_, _ = svc.Process.Wait()
+	var addr string
+	if hasHTTP {
+		port, err := freePort()
+		if err != nil {
+			return truthalign.ModeResult{}, ProbeResult{}, err
 		}
-	}()
+		runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		svc := exec.CommandContext(runCtx, bin)
+		svc.Env = []string{"PORT=" + fmt.Sprint(port), "PATH=/usr/bin:/bin"}
+		svc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := svc.Start(); err != nil {
+			return failMode("service did not start: " + err.Error()), ProbeResult{Detail: "start failed"}, nil
+		}
+		defer func() {
+			if svc.Process != nil {
+				_ = syscall.Kill(-svc.Process.Pid, syscall.SIGKILL)
+				_, _ = svc.Process.Wait()
+			}
+		}()
+		addr = fmt.Sprintf("127.0.0.1:%d", port)
+	}
 
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	// or-v9f.20: the running service is probed N times — reality is sampled, not
-	// glimpsed. All-pass is a pass, all-fail is a deterministic fail, and a MIX is
-	// Inconclusive: a flaky pass must never read as Accept.
+	// or-v9f.20: reality is sampled, not glimpsed — N rounds; a MIX is
+	// Inconclusive. or-v9f.3: each round runs the live-service probe (http cases)
+	// and/or the real-binary exec probe; their per-case obligations merge into one
+	// ProbeResult so aggregateObligations and EnforceObligations see one world.
 	n := runCount()
+	scale := execprobe.TimeScale()
 	prs := make([]ProbeResult, 0, n)
 	for i := 0; i < n; i++ {
-		prs = append(prs, probeContract(addr, c))
+		var pr ProbeResult
+		if hasHTTP {
+			pr = probeContract(addr, c)
+		} else {
+			pr = ProbeResult{PortOpen: true, ResponseContractSatisfied: true, Detail: "ok"}
+		}
+		if len(execCases) > 0 {
+			obs, fails := execprobe.RunRound(ctx, bin, execCases, scale)
+			if pr.Cases == nil {
+				pr.Cases = map[string]truthalign.ObligationStatus{}
+			}
+			execPass := true
+			for id, st := range obs {
+				pr.Cases[id] = st
+				if !st.Passed {
+					execPass = false
+				}
+			}
+			if !execPass {
+				pr.ResponseContractSatisfied = false
+				if fails != "" {
+					if pr.Detail == "ok" || pr.Detail == "" {
+						pr.Detail = fails
+					} else {
+						pr.Detail += "; " + fails
+					}
+				}
+			}
+		}
+		prs = append(prs, pr)
 	}
 	mode, merged := modeFromRuns(prs)
 	return mode, merged, nil
