@@ -56,6 +56,13 @@ func ProveWithThreshold(ctx context.Context, artifactDir string, c testsynth.Con
 	if err := os.WriteFile(filepath.Join(proofDir, "orion_behavioral_test.go"), []byte(corpus), 0o644); err != nil {
 		return truthalign.ModeResult{}, fmt.Errorf("write corpus: %w", err)
 	}
+	// or-v9f.3: exec cases assert through the embedded casecheck oracle — the
+	// IDENTICAL semantics the empirical prober compiles in (§4.1).
+	for name, content := range testsynth.SynthesizeSupportFiles(c) {
+		if err := os.WriteFile(filepath.Join(proofDir, name), []byte(content), 0o644); err != nil {
+			return truthalign.ModeResult{}, fmt.Errorf("write support file %s: %w", name, err)
+		}
+	}
 
 	// Run the tests independently (the baseline) INSIDE the proof sandbox (network
 	// + filesystem isolated) so the generated code under test cannot read host

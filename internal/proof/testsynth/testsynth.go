@@ -92,12 +92,27 @@ var (
 	_ = strings.Contains
 	_ = time.Parse
 	_ = fmt.Println
+	_ = httptest.NewRecorder
 )
 `)
+	hasExec := false
 	for _, cs := range cases {
+		if cs.Kind == spec.KindExec {
+			hasExec = true
+			b.WriteString(execCaseTest(cs))
+			continue
+		}
 		b.WriteString(caseTest(cs, c.Entry()))
 	}
-	return b.String()
+	out := b.String()
+	if hasExec {
+		// Exec cases need extra stdlib imports; injected as a second import block
+		// after the header so the http emission stays byte-identical when no
+		// exec case is present (golden-pinned).
+		i := strings.Index(out, ")\n")
+		out = out[:i+2] + execImports + out[i+2:]
+	}
+	return out
 }
 
 // caseTest emits one obligation test for a behavioral case (in-process via the
