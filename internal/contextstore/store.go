@@ -41,9 +41,17 @@ type Store struct {
 // Open opens (creating if needed) the Context Store under dir, enabling WAL,
 // foreign keys, and a busy timeout, then applies the schema. Crash-safe writes
 // depend on WAL + transactional commits.
+//
+// Concurrency contract (or-v9f.22): transactions BEGIN immediate (_txlock), so
+// writers serialize ACROSS PROCESSES through SQLite's busy_timeout — two orion
+// processes on one store never race a read-modify-write to a snapshot-upgrade
+// error, and application invariants held inside WithTx (single-active project,
+// queue promotion) hold machine-wide. In-process access is additionally
+// serialized by the single connection (SetMaxOpenConns(1)); WAL readers are
+// unaffected by the reserved write lock.
 func Open(dir string) (*Store, error) {
 	path := filepath.Join(dir, DBFile)
-	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
+	dsn := "file:" + path + "?_txlock=immediate&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("contextstore open: %w", err)
