@@ -165,6 +165,27 @@ CREATE TABLE IF NOT EXISTS proof_memo (
     PRIMARY KEY (spec_hash, content_hash)
 );
 
+-- shadow_plans (or-809): the ModuleProposer runs in SHADOW alongside the oracle
+-- decomposer; each shadow run records how the proposer's plan compares to the
+-- template's (coverage superset, floor coverage, cluster-count non-regression).
+-- The measured window over these rows is the cutover criterion; the proposer
+-- affects nothing while they are collected.
+CREATE TABLE IF NOT EXISTS shadow_plans (
+    id                TEXT PRIMARY KEY,
+    project_id        TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    spec_hash         TEXT NOT NULL,
+    proposer_modules  INTEGER NOT NULL DEFAULT 0,
+    oracle_modules    INTEGER NOT NULL DEFAULT 0,
+    proposer_clusters INTEGER NOT NULL DEFAULT 0,
+    oracle_clusters   INTEGER NOT NULL DEFAULT 0,
+    superset_ok       INTEGER NOT NULL DEFAULT 0,
+    floor_ok          INTEGER NOT NULL DEFAULT 0,
+    coverage_gate_ok  INTEGER NOT NULL DEFAULT 0,
+    missing           TEXT NOT NULL DEFAULT '[]',
+    created_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_shadow_plans_project ON shadow_plans(project_id);
+
 CREATE TABLE IF NOT EXISTS polaris_context (
     id          TEXT PRIMARY KEY,
     project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

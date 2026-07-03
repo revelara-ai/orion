@@ -353,6 +353,9 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			if provider != nil {
 				gen = NativeGenerator(provider, c.Budget())
 				aligner = NativeAligner(provider)
+				// or-809: give the plan path a semantic ModuleProposer (runs in
+				// SHADOW behind ORION_MODULE_PROPOSER; the oracle still drives).
+				c.SetModuleProposer(NativeModuleProposer(provider))
 			}
 			res, err := BuildAndProve(ctx, st, gen, aligner, func(e PhaseEvent) { phases = append(phases, e) }, OutputRoot())
 			if err != nil {
