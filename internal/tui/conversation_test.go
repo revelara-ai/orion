@@ -120,9 +120,9 @@ func TestConversationQuit(t *testing.T) {
 	m := newTestConvo(t)
 	reply := make(chan acp.PermissionResult, 1)
 	m = feed(m, permMsg{req: acp.PermissionRequest{}, reply: reply})
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD}) // Ctrl+D is the exit key
 	if !next.(Conversation).quitting || cmd == nil {
-		t.Fatal("ctrl+c should quit")
+		t.Fatal("ctrl+d should quit")
 	}
 	if res := <-reply; res.Outcome != "denied" {
 		t.Fatal("quit must unblock a pending gate with a denial")

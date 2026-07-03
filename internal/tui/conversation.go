@@ -128,6 +128,7 @@ type Conversation struct {
 	inFlight      bool
 	pendingPerm   chan acp.PermissionResult
 	quitting      bool
+	quitArmed     bool   // a Ctrl+C at an idle empty prompt arms quit; a second one exits
 	brain         string // active brain label (native · model / offline …)
 
 	// Init status banner (or-gik.3): the readiness report + identity, supplied by the launcher
@@ -254,6 +255,21 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyMsg:
+		wasArmed := m.quitArmed
+		m.quitArmed = false // any keypress disarms the pending double-Ctrl+C quit
+
+		// Ctrl+D exits immediately (EOF), like a shell.
+		if t.Type == tea.KeyCtrlD {
+			return m, m.quit()
+		}
+		// Alt+Enter / Ctrl+J insert a newline into the multi-line input; plain Enter
+		// submits. (Terminals rarely distinguish Shift+Enter, so Alt+Enter is the
+		// portable "newline" chord.)
+		if (t.Type == tea.KeyEnter && t.Alt) || t.Type == tea.KeyCtrlJ {
+			m.input.InsertString("\n")
+			m.relayout()
+			return m, nil
+		}
 		switch t.Type {
 		case tea.KeyUp:
 			// Recall the previous submitted line (shell-style input history). Transcript scroll moves
@@ -274,19 +290,11 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch t.Type {
-		case tea.KeyCtrlC, tea.KeyEsc:
-			m.quitting = true
-			if m.pendingPerm != nil { // unblock the waiting gate goroutine
-				m.pendingPerm <- acp.PermissionResult{Outcome: "denied"}
-				m.pendingPerm = nil
-			}
-			m.oc.Interrupt()
-			// Cancel is a pipe write; do it OFF the event loop so a stalled write can
-			// never freeze quit. Run()'s deferred Close unblocks/ends this goroutine.
-			if client, sid := m.client, m.sid; client != nil {
-				go func() { _ = client.Cancel(context.Background(), sid) }()
-			}
-			return m, tea.Quit
+		case tea.KeyCtrlC:
+			return m, m.handleCtrlC(wasArmed)
+		case tea.KeyEsc:
+			m.handleEsc()
+			return m, nil
 		case tea.KeyEnter:
 			return m, m.handleEnter()
 		}
@@ -386,6 +394,74 @@ func (m *Conversation) handleEnter() tea.Cmd {
 	m.inFlight = true
 	m.render()
 	return tea.Batch(m.promptCmd(text), m.sp.Tick)
+}
+
+// cancelInFlight interrupts a running turn (or a pending permission) WITHOUT exiting the
+// app. Returns whether anything was actually cancelled. The pipe Cancel runs OFF the
+// event loop so a stalled write can never freeze the UI.
+func (m *Conversation) cancelInFlight() bool {
+	cancelled := false
+	if m.pendingPerm != nil { // unblock the waiting gate goroutine
+		m.pendingPerm <- acp.PermissionResult{Outcome: "denied"}
+		m.pendingPerm = nil
+		cancelled = true
+	}
+	if m.inFlight {
+		m.inFlight = false
+		cancelled = true
+	}
+	if cancelled {
+		m.oc.Interrupt()
+		if client, sid := m.client, m.sid; client != nil {
+			go func() { _ = client.Cancel(context.Background(), sid) }()
+		}
+	}
+	return cancelled
+}
+
+// handleCtrlC implements shell-style Ctrl+C: cancel a turn in flight; else clear a
+// drafted line; else (idle + empty) arm on the first press and exit on the second.
+func (m *Conversation) handleCtrlC(wasArmed bool) tea.Cmd {
+	if m.cancelInFlight() {
+		m.msgs = append(m.msgs, msg{role: "orion", text: "⨯ cancelled"})
+		m.render()
+		return nil
+	}
+	if strings.TrimSpace(m.input.Value()) != "" {
+		m.input.Reset()
+		m.relayout()
+		return nil
+	}
+	if !wasArmed {
+		m.quitArmed = true // first press at an empty prompt: arm, don't exit
+		return nil
+	}
+	return m.quit()
+}
+
+// handleEsc cancels an in-flight turn (stops streaming); otherwise clears a drafted line.
+func (m *Conversation) handleEsc() {
+	if m.cancelInFlight() {
+		m.msgs = append(m.msgs, msg{role: "orion", text: "⨯ cancelled"})
+		m.render()
+		return
+	}
+	if strings.TrimSpace(m.input.Value()) != "" {
+		m.input.Reset()
+		m.relayout()
+	}
+}
+
+// quit tears the session down: interrupt the conductor, cancel the session (off the
+// event loop), and end the program.
+func (m *Conversation) quit() tea.Cmd {
+	m.quitting = true
+	m.cancelInFlight()
+	m.oc.Interrupt() // interrupt even if nothing was in flight
+	if client, sid := m.client, m.sid; client != nil {
+		go func() { _ = client.Cancel(context.Background(), sid) }()
+	}
+	return tea.Quit
 }
 
 // promptCmd runs one prompt turn in its own goroutine (the Update loop stays
@@ -633,7 +709,12 @@ func (m Conversation) View() string {
 	}
 	bottom := inputPane.Width(paneW).Render(status + "\n" + m.input.View())
 
-	hint := dimStyle.Render("  enter send · ↑/↓ history · pgup/pgdn scroll · tab complete · ctrl+c quit")
+	hint := dimStyle.Render("  enter send · alt+enter newline · ↑/↓ history · pgup/pgdn scroll · tab complete · esc/ctrl+c cancel · ctrl+d quit")
+	if m.quitArmed {
+		hint = warnGlyph.Render("  press ctrl+c again to exit") + dimStyle.Render(" · or any key to keep going")
+	} else if m.inFlight {
+		hint = dimStyle.Render("  esc/ctrl+c cancel · pgup/pgdn scroll · ctrl+d quit")
+	}
 
 	parts := []string{header, top}
 	if palette != "" {
