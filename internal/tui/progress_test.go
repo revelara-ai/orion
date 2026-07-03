@@ -55,3 +55,15 @@ func TestProofProgressEventsRendered(t *testing.T) {
 		t.Fatalf("expected start/finish per mode:\n%s", view)
 	}
 }
+
+func TestProgressBusCarriesActor(t *testing.T) {
+	b := NewProgressBus(time.Second)
+	b.EmitActivity("research", "web_search", 1, "running")
+	ev := b.Events()
+	if len(ev) != 1 {
+		t.Fatalf("want 1 event, got %d", len(ev))
+	}
+	if ev[0].Actor != "research" || ev[0].Depth != 1 || ev[0].Detail != "web_search" || ev[0].Status != "running" {
+		t.Fatalf("actor not carried: %+v", ev[0])
+	}
+}
