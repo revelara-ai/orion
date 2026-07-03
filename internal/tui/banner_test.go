@@ -26,8 +26,8 @@ func sampleReport() health.Report {
 func sampleIdentity() Identity {
 	return Identity{
 		Version: "0.0.0-dev+abc1234", Branch: "main",
-		Brain:   "native · claude-opus-4-8 · 1M context · Anthropic",
-		Cwd:     "~/go/src/orion", Session: "20260627_1003", Budget: "0 tok · $0.00",
+		Brain: "native · claude-opus-4-8 · 1M context · Anthropic",
+		Cwd:   "~/go/src/orion", Session: "20260627_1003", Budget: "0 tok · $0.00",
 	}
 }
 

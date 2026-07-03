@@ -52,7 +52,9 @@ func conductorBrain(oc *orchestrator.Conductor) (acpServer, string) {
 		if model == "" {
 			model = llm.DefaultAnthropicModel
 		}
-		return conductor.NewOrionAgent(llm.NewAnthropic(key, model), oc, role), "native · " + model
+		agent := conductor.NewOrionAgent(llm.NewAnthropic(key, model), oc, role)
+		agent.SetModel(model, func(m string) llm.Provider { return llm.NewAnthropic(key, m) })
+		return agent, "native · " + model
 	}
 	return conductor.NewConductorAgent(role, oc), "offline — set ANTHROPIC_API_KEY for the full grill"
 }
@@ -252,9 +254,16 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CommandResultMsg:
-		// The deferred outcome of an async slash-command (e.g. /mcp login) — appended when its
-		// follow-up tea.Cmd completes.
-		m.msgs = append(m.msgs, msg{role: "orion", kind: "command", text: t.Text})
+		// The deferred outcome of an async slash-command (e.g. /mcp login, /compact, /model)
+		// — appended when its follow-up tea.Cmd completes. A "MODEL:<id> · <text>" result
+		// from /model updates the brain label too.
+		txt := t.Text
+		if rest, ok := strings.CutPrefix(txt, "MODEL:"); ok {
+			id, disp, _ := strings.Cut(rest, " · ")
+			m.brain = "native · " + id
+			txt = disp
+		}
+		m.msgs = append(m.msgs, msg{role: "orion", kind: "command", text: txt})
 		m.render()
 		return m, nil
 
@@ -530,6 +539,25 @@ func (m *Conversation) quit() tea.Cmd {
 		go func() { _ = client.Cancel(context.Background(), sid) }()
 	}
 	return tea.Quit
+}
+
+// controlCmd runs an out-of-turn session control op (/compact, /model) off the Update
+// loop and returns its result as a CommandResultMsg. Compaction makes an LLM call, so it
+// is generously time-bounded.
+func (m Conversation) controlCmd(op, arg string) tea.Cmd {
+	client, sid := m.client, m.sid
+	return func() tea.Msg {
+		if client == nil {
+			return CommandResultMsg{Text: op + ": not connected"}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		res, err := client.Control(ctx, sid, op, arg)
+		if err != nil {
+			return CommandResultMsg{Text: op + ": " + err.Error()}
+		}
+		return CommandResultMsg{Text: res}
+	}
 }
 
 // promptCmd runs one prompt turn in its own goroutine (the Update loop stays
