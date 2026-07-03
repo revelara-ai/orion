@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/polaris"
@@ -46,6 +47,16 @@ func mcpClientFromCredentials(store *contextstore.Store) *polaris.MCPClient {
 	endpoint := polaris.ResolveMCPURL(os.Getenv("ORION_POLARIS_MCP_URL"), cfg, tok)
 	if endpoint == "" {
 		return nil
+	}
+	// WorkOS AuthKit access tokens live only ~5 minutes, so the cached one is almost
+	// always stale by the next turn. Refresh it (via the stored refresh token) before
+	// building the client, so the MCP surface stays live across a session instead of
+	// dying minutes after login. Best-effort: if refresh fails we still hand the cached
+	// token to the client, and the handshake's auth error is what surfaces to the user.
+	rctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if fresh, _, ferr := polaris.EnsureFreshToken(rctx, ts, endpoint, time.Now()); ferr == nil {
+		tok = fresh
 	}
 	return polaris.NewMCPClient(endpoint, tok.AccessToken)
 }

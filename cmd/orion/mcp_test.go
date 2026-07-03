@@ -3,9 +3,46 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/revelara-ai/orion/internal/polaris"
 	"github.com/revelara-ai/orion/internal/tui"
 )
+
+// mcpAuthStatusLine must report token VALIDITY, not mere presence: a cached-but-
+// expired token that predates client-id persistence reads as "session expired — run
+// /mcp login", not "logged in". This is the defect that made /mcp status claim the
+// user was authenticated when the token had lapsed 20h earlier.
+func TestMCPAuthStatusLine(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	valid := now.Add(time.Hour).Unix()
+	expired := now.Add(-time.Hour).Unix()
+
+	cases := []struct {
+		name     string
+		tok      polaris.Token
+		loggedIn bool
+		want     string // substring
+		notWant  string
+	}{
+		{"never logged in", polaris.Token{}, false, "not logged in", "auth: logged in"},
+		{"valid session", polaris.Token{AccessToken: "a", Org: "acme", ExpiresAt: valid}, true, "logged in", "expired"},
+		{"expired but refreshable", polaris.Token{AccessToken: "a", RefreshToken: "r", ClientID: "c", ExpiresAt: expired}, true, "refresh", ""},
+		{"expired unrefreshable", polaris.Token{AccessToken: "a", RefreshToken: "r", ExpiresAt: expired}, true, "session expired", ""},
+	}
+	for _, c := range cases {
+		got := mcpAuthStatusLine(c.tok, c.loggedIn, now)
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s: %q missing %q", c.name, got, c.want)
+		}
+		if c.notWant != "" && strings.Contains(got, c.notWant) {
+			t.Errorf("%s: %q should not contain %q", c.name, got, c.notWant)
+		}
+		if c.name == "expired unrefreshable" && !strings.Contains(got, "login") {
+			t.Errorf("%s: %q should tell the user to /mcp login", c.name, got)
+		}
+	}
+}
 
 // TestMCPCommandSetShowClear (or-xe7.7): set persists the endpoint, show reflects it + auth status,
 // clear removes it — all synchronous (no tea.Cmd).

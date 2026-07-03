@@ -22,7 +22,12 @@ type Token struct {
 	RefreshToken string `json:"refresh_token,omitempty"`
 	BaseURL      string `json:"base_url"`
 	Org          string `json:"org,omitempty"`
-	ExpiresAt    int64  `json:"expires_at,omitempty"` // unix seconds; 0 = unknown/non-expiring
+	// ClientID is the OAuth client the token was issued to. It MUST be persisted: a
+	// refresh grant requires it, and under dynamic client registration (no
+	// ORION_WORKOS_CLIENT_ID) it is the only record of the client the refresh token is
+	// bound to. Without it an expired token can never be refreshed silently.
+	ClientID  string `json:"client_id,omitempty"`
+	ExpiresAt int64  `json:"expires_at,omitempty"` // unix seconds; 0 = unknown/non-expiring
 }
 
 // TokenStore persists the credential to a 0600 file, deliberately SEPARATE from

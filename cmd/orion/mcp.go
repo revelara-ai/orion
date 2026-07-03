@@ -123,14 +123,27 @@ func mcpStatusText(dir string, cs *polaris.ConfigStore) string {
 	endpoint := polaris.ResolveMCPURL(os.Getenv("ORION_POLARIS_MCP_URL"), cfg, tok)
 	var b strings.Builder
 	fmt.Fprintf(&b, "MCP endpoint: %s\n", endpoint)
-	if loggedIn && tok.AccessToken != "" {
-		who := "authenticated"
-		if tok.Org != "" {
-			who = "org " + tok.Org
-		}
-		fmt.Fprintf(&b, "auth: logged in (%s)", who)
-	} else {
-		b.WriteString("auth: not logged in (/mcp login)")
-	}
+	b.WriteString(mcpAuthStatusLine(tok, loggedIn, time.Now()))
 	return b.String()
+}
+
+// mcpAuthStatusLine reports auth status by token VALIDITY, not mere presence. A cached
+// token whose short-lived access token has lapsed is NOT "logged in": if it can still
+// be refreshed silently (has a refresh token + client id) it renews on next use; if it
+// cannot (an old credential with no client id) the developer must re-run /mcp login.
+func mcpAuthStatusLine(tok polaris.Token, loggedIn bool, now time.Time) string {
+	if !loggedIn || tok.AccessToken == "" {
+		return "auth: not logged in (/mcp login)"
+	}
+	who := "authenticated"
+	if tok.Org != "" {
+		who = "org " + tok.Org
+	}
+	if !tok.Expired(now) {
+		return fmt.Sprintf("auth: logged in (%s)", who)
+	}
+	if tok.RefreshToken != "" && tok.ClientID != "" {
+		return fmt.Sprintf("auth: logged in (%s) · access token expired, refreshes automatically on next use", who)
+	}
+	return "auth: session expired — run /mcp login to reconnect"
 }

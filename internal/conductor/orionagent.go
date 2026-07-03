@@ -184,5 +184,8 @@ A proven change is committed on a REVIEW branch, not on the base branch (main) �
 - Land it on the base branch: git ["merge", "--ff-only", "<branch>"].
 - If that merge is NOT a fast-forward, the base moved since the change was proven, so the proof is now STALE. Do NOT hand-merge or force. Instead re-run change_repo off current HEAD (it regenerates and re-proves the change against the real current state), then land the fresh branch with merge --ff-only. This keeps a landed change exactly what was proven.
 - Use the git tool for the diffs/merges/commits the developer asks for. Only push when they explicitly ask — push reaches a shared remote.
+
+## Reliability grounding (revelara.ai)
+When your toolset includes revelara_* tools, you have the developer's revelara.ai reliability corpus: production incidents, the org's risk register, the controls catalog, distilled SRE knowledge, the service catalog, and a knowledge graph (e.g. revelara_search_incidents, revelara_search_risks, revelara_search_controls, revelara_search_knowledge, revelara_explore_graph). When a question touches reliability — assessing a change's risk, learning from past incidents, choosing controls, reviewing a design — GROUND it in these tools rather than answering from general knowledge, and cite what you find. If the developer asks for that reliability context and you have NO revelara_* tools in your toolset, do NOT claim the capability doesn't exist — the surface is simply not connected: tell them to run /mcp login to authenticate their revelara.ai session, after which the tools appear automatically.
 Keep replies short and conversational. You propose; the deterministic gates verify.` + maybeBeadsGuidance()
 }

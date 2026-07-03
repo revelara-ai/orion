@@ -125,7 +125,7 @@ func (cfg OAuthConfig) Authorize(ctx context.Context) (Token, error) {
 		if res.code == "" {
 			return Token{}, fmt.Errorf("oauth: no authorization code in redirect")
 		}
-		return cfg.exchange(ctx, httpc, as.TokenEndpoint, url.Values{
+		tok, err := cfg.exchange(ctx, httpc, as.TokenEndpoint, url.Values{
 			"grant_type":    {"authorization_code"},
 			"code":          {res.code},
 			"redirect_uri":  {redirectURI},
@@ -133,6 +133,10 @@ func (cfg OAuthConfig) Authorize(ctx context.Context) (Token, error) {
 			"code_verifier": {verifier},
 			"resource":      {cfg.MCPEndpoint},
 		})
+		// Persist the client id the token was issued to — refresh needs it, and under DCR
+		// this is the only record of the (dynamically-registered) client.
+		tok.ClientID = clientID
+		return tok, err
 	}
 }
 
@@ -146,12 +150,14 @@ func (cfg OAuthConfig) Refresh(ctx context.Context, refreshToken string) (Token,
 	if err != nil {
 		return Token{}, err
 	}
-	return cfg.exchange(ctx, httpc, as.TokenEndpoint, url.Values{
+	tok, err := cfg.exchange(ctx, httpc, as.TokenEndpoint, url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
 		"client_id":     {cfg.ClientID},
 		"resource":      {cfg.MCPEndpoint},
 	})
+	tok.ClientID = cfg.ClientID // carry the client id forward for the NEXT refresh
+	return tok, err
 }
 
 // exchange POSTs the token request and maps the response onto a Token.

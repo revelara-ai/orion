@@ -1,5 +1,5 @@
 // Package tui is Orion's terminal UI, built on the charmbracelet stack
-// (bubbletea Model/Update/View, lipgloss styling, bubbles viewport/textinput/
+// (bubbletea Model/Update/View, lipgloss styling, bubbles viewport/textarea/
 // spinner). It is the authoritative control plane and conversational surface
 // (PRD UI Navigation; SPEC §0 "chat-first, not a fleet dashboard").
 //
@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -118,7 +118,7 @@ type Conversation struct {
 	oc     *orchestrator.Conductor
 	gate   *programGate
 
-	input textinput.Model
+	input textarea.Model
 	vp    viewport.Model
 	sp    spinner.Model
 	msgs  []msg
@@ -150,14 +150,31 @@ type Conversation struct {
 
 // NewConversation builds the pane bound to a connected ACP client + session.
 func NewConversation(client *ACPClient, sid string, oc *orchestrator.Conductor, gate *programGate) Conversation {
-	ti := textinput.New()
+	// A textarea (not a single-line textinput) so long lines WRAP and the box grows
+	// vertically from the bottom instead of scrolling horizontally off the edge — the
+	// height is driven each frame by relayout (wrappedRows). Line numbers off, cursor-
+	// line highlight off, so it reads as a plain prompt inside the input pane.
+	ti := textarea.New()
 	ti.Placeholder = "" // blank: the banner already explains what to do (or-gik.3)
-	ti.Prompt = "› "
-	ti.PromptStyle = lipgloss.NewStyle().Foreground(cIndigo)
-	ti.Cursor.Style = lipgloss.NewStyle().Foreground(cLavender)
-	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(cFaint)
-	ti.Focus()
+	ti.ShowLineNumbers = false
 	ti.CharLimit = 0
+	// Prompt only on the first display row; soft-wrapped continuation rows align
+	// under the text (a single wrapped line reads as ONE entry, not several).
+	ti.SetPromptFunc(2, func(displayLine int) string {
+		if displayLine == 0 {
+			return "› "
+		}
+		return ""
+	})
+	ti.FocusedStyle.Base = lipgloss.NewStyle()
+	ti.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	ti.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(cIndigo)
+	ti.FocusedStyle.Text = lipgloss.NewStyle().Foreground(cText)
+	ti.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(cFaint)
+	ti.BlurredStyle = ti.FocusedStyle
+	ti.Cursor.Style = lipgloss.NewStyle().Foreground(cLavender)
+	ti.SetHeight(1)
+	ti.Focus()
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(cLavender) // the star-glow accent
@@ -165,7 +182,7 @@ func NewConversation(client *ACPClient, sid string, oc *orchestrator.Conductor, 
 }
 
 // Init satisfies tea.Model.
-func (m Conversation) Init() tea.Cmd { return textinput.Blink }
+func (m Conversation) Init() tea.Cmd { return m.input.Focus() }
 
 // Update handles input, window sizing, streamed updates, permission requests, and
 // turn completion. The Update loop NEVER blocks on the Conductor.
@@ -173,25 +190,11 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch t := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = t.Width, t.Height
-		// Two panes inside borders: header(1) + top border(2) + input pane(4) +
-		// hint(1) = 8 rows of chrome; the transcript fills the rest.
-		bodyH := t.Height - 8
-		if bodyH < 3 {
-			bodyH = 3
-		}
-		bodyW := t.Width - 2 // inside the transcript pane's border
-		if bodyW < 1 {
-			bodyW = 1 // never floor ABOVE the terminal width — that overflows a tiny term
-		}
 		if !m.ready {
-			m.vp = viewport.New(bodyW, bodyH)
+			m.vp = viewport.New(1, 1) // real dimensions come from relayout below
 			m.ready = true
-		} else {
-			m.vp.Width, m.vp.Height = bodyW, bodyH
 		}
-		if iw := t.Width - 6; iw > 8 { // inside the input pane border + padding + prompt
-			m.input.Width = iw
-		}
+		m.relayout()
 		m.render()
 		return m, nil
 
@@ -266,6 +269,7 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.paletteIdx = (m.clampPalette(len(matches)) + 1) % len(matches)
 				m.input.SetValue("/" + matches[m.paletteIdx].Name)
 				m.input.CursorEnd()
+				m.relayout()
 			}
 			return m, nil
 		}
@@ -287,9 +291,19 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.handleEnter()
 		}
 	}
+	wasBottom := m.vp.AtBottom()
+	prevVPHeight := m.vp.Height
 	var cmd, vcmd tea.Cmd
 	m.input, cmd = m.input.Update(message)
 	m.vp, vcmd = m.vp.Update(message)
+	// Typing may have changed the wrapped input height — reflow the split so the box
+	// grows/shrinks and the viewport tracks it. Re-pin the tail ONLY when the input
+	// resized the viewport (never on a plain scroll event like the mouse wheel, which
+	// must be free to move off the bottom).
+	m.relayout()
+	if wasBottom && m.vp.Height != prevVPHeight {
+		m.vp.GotoBottom()
+	}
 	return m, tea.Batch(cmd, vcmd)
 }
 
@@ -314,6 +328,7 @@ func (m *Conversation) historyPrev() {
 	m.histIdx--
 	m.input.SetValue(m.history[m.histIdx])
 	m.input.CursorEnd()
+	m.relayout()
 }
 
 // historyNext moves toward newer lines, restoring the stashed draft at the live line.
@@ -328,6 +343,7 @@ func (m *Conversation) historyNext() {
 		m.input.SetValue(m.history[m.histIdx])
 	}
 	m.input.CursorEnd()
+	m.relayout()
 }
 
 // handleEnter routes the current line: a permission response if one is pending,
@@ -351,6 +367,7 @@ func (m *Conversation) handleEnter() tea.Cmd {
 		return nil
 	}
 	m.input.Reset()
+	m.relayout() // collapse the box back to one row now that it's cleared
 
 	if m.pendingPerm != nil {
 		outcome := "denied"
@@ -385,6 +402,49 @@ func (m Conversation) promptCmd(text string) tea.Cmd {
 	}
 }
 
+// inputChromeRows is the fixed vertical chrome the layout spends outside the
+// transcript viewport content and the input's own wrapped rows: header(1) +
+// transcript border(2) + input pane border(2) + status line(1) + hint(1). The
+// viewport gets whatever height remains after the input box claims its rows, so the
+// box grows UP from the bottom as text wraps and the whole layout still fills the
+// terminal exactly (no overflow, no tear).
+const inputChromeRows = 7
+
+// relayout recomputes the responsive split between the transcript viewport and the
+// auto-growing input box for the current terminal size + input content. Called on
+// resize and on every input change so the box tracks wrapping in real time.
+func (m *Conversation) relayout() {
+	if !m.ready {
+		return
+	}
+	paneW := m.width - 2
+	if paneW < 1 {
+		paneW = 1 // tiny terminal: degrade narrow rather than overflow the width
+	}
+	// The input pane is bordered + padded (0,1); its inner text area is paneW-2 wide,
+	// and the textarea fits its prompt + wrapped content into exactly that.
+	inputOuter := paneW - 2
+	if inputOuter < 3 {
+		inputOuter = 3
+	}
+	m.input.SetWidth(inputOuter)
+	// Grow to fit the wrapped content, capped so the transcript keeps at least 3 rows.
+	maxRows := m.height - inputChromeRows - 3
+	if maxRows < 1 {
+		maxRows = 1
+	}
+	rows := min(wrappedRows(m.input.Value(), m.input.Width()), maxRows)
+	if rows < 1 {
+		rows = 1
+	}
+	m.input.SetHeight(rows)
+	vpH := m.height - inputChromeRows - rows
+	if vpH < 1 {
+		vpH = 1
+	}
+	m.vp.Width, m.vp.Height = paneW, vpH
+}
+
 func (m *Conversation) render() {
 	if !m.ready {
 		return
@@ -398,6 +458,29 @@ func (m *Conversation) render() {
 	}
 }
 
+// wrappedRows reports how many display rows a value occupies once soft-wrapped to
+// the given content width — the height oracle for the auto-growing input box. Each
+// hard newline starts a new row; a logical line wider than width wraps to more. It
+// measures with lipgloss so the count matches the rendered layout exactly (no
+// over/under-draw), which is what keeps the input box from tearing on wrap.
+func wrappedRows(s string, width int) int {
+	if width < 1 {
+		width = 1
+	}
+	rows := 0
+	for _, line := range strings.Split(s, "\n") {
+		h := lipgloss.Height(lipgloss.NewStyle().Width(width).Render(line))
+		if h < 1 {
+			h = 1
+		}
+		rows += h
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	return rows
+}
+
 func (m Conversation) renderTranscript() string {
 	w := m.vp.Width // wrap to the transcript pane's inner width
 	if w <= 0 {
@@ -406,15 +489,36 @@ func (m Conversation) renderTranscript() string {
 	if w <= 0 {
 		w = 80
 	}
+	// The active (streaming) message renders RAW (fast, no per-token markdown); every
+	// other message renders as Markdown. It is the most recent ORION agent_message
+	// bubble while a turn is in flight — tracked by a backward scan, NOT just the tail,
+	// so a trailing tool_call bubble doesn't flip the just-streamed narration to
+	// markdown mid-turn (which could markdown-render a half-open code fence).
+	active := -1
+	if m.inFlight {
+		for i := len(m.msgs) - 1; i >= 0; i-- {
+			if m.msgs[i].role == "orion" && m.msgs[i].kind == "agent_message" {
+				active = i
+				break
+			}
+		}
+	}
 	var b strings.Builder
-	for _, mm := range m.msgs {
-		b.WriteString(m.renderMsg(mm, w))
+	for i, mm := range m.msgs {
+		b.WriteString(m.renderMsg(mm, w, i == active))
 		b.WriteString("\n\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func (m Conversation) renderMsg(mm msg, w int) string {
+// indentLines prefixes every line of s with prefix, without a wrapping style — used to
+// indent rendered-Markdown/diff output whose wrapping is already final (a lipgloss width
+// style here would re-wrap and corrupt the ANSI).
+func indentLines(s, prefix string) string {
+	return prefix + strings.ReplaceAll(s, "\n", "\n"+prefix)
+}
+
+func (m Conversation) renderMsg(mm msg, w int, active bool) string {
 	if w < 8 {
 		w = 8
 	}
@@ -446,7 +550,15 @@ func (m Conversation) renderMsg(mm msg, w int) string {
 	case "command":
 		return label + specCard.Width(cw-4).MarginLeft(2).Render(mm.text)
 	default:
-		return label + orionText.Width(cw).MarginLeft(2).Render(mm.text)
+		// Orion conversational prose (kind "" | "agent_message"). While this bubble is
+		// actively streaming, render it RAW (fast, no per-token markdown, no half-open
+		// code fences). A completed bubble renders as Markdown — or, if it is structurally
+		// a unified diff, with +/- coloring. Both own their own wrapping, so they are
+		// emitted verbatim with a 2-column indent (never re-wrapped through lipgloss).
+		if active {
+			return label + orionText.Width(cw).MarginLeft(2).Render(mm.text)
+		}
+		return label + indentLines(renderProse(mm.text, cw), "  ")
 	}
 }
 
@@ -633,7 +745,10 @@ func Run(oc *orchestrator.Conductor, bannerReport health.Report, bannerID Identi
 	conv.bannerID = bannerID
 	conv.bannerSet = true
 	conv.commands = commands
-	p := tea.NewProgram(conv, tea.WithAltScreen())
+	// WithMouseCellMotion enables mouse reporting so the wheel scrolls the transcript
+	// viewport (which already handles wheel events). Trade-off: native terminal text
+	// selection now needs Shift (or Option on macOS) held.
+	p := tea.NewProgram(conv, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	gate.setProgram(p)
 	_, err = p.Run()
 	if err != nil {
