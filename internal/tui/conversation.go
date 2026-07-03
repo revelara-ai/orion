@@ -19,6 +19,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -308,6 +309,15 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyNext()
 			return m, nil
 		case tea.KeyTab:
+			// Tab cycles + completes an @-file token when one is being typed.
+			if token, matches := m.atCompletions(); len(matches) > 0 {
+				m.paletteIdx = (m.clampPalette(len(matches)) + 1) % len(matches)
+				v := strings.TrimSuffix(m.input.Value(), token) + matches[m.paletteIdx]
+				m.input.SetValue(v)
+				m.input.CursorEnd()
+				m.relayout()
+				return m, nil
+			}
 			// Tab cycles + completes the command palette (shown while typing a bare /prefix).
 			if matches := m.paletteMatches(); len(matches) > 0 {
 				m.paletteIdx = (m.clampPalette(len(matches)) + 1) % len(matches)
@@ -779,6 +789,9 @@ func (m Conversation) View() string {
 		paneW = 1 // tiny terminal: degrade narrow rather than overflow the width
 	}
 	palette := m.renderPalette()
+	if palette == "" {
+		palette = m.renderAtPalette() // @-file completion popup (mutually exclusive with /palette)
+	}
 	body := m.vp.View()
 	if !m.ready || len(m.msgs) == 0 {
 		if m.bannerSet {
@@ -805,7 +818,7 @@ func (m Conversation) View() string {
 	if offline {
 		brainTint = lipgloss.NewStyle().Foreground(cWarning)
 	}
-	header := bannerStyle.Render("✦ Orion") + dimStyle.Render("  ·  ") + brainTint.Render(m.brain)
+	header := bannerStyle.Render("✦ Orion") + dimStyle.Render("  ·  ") + brainTint.Render(m.brain) + dimStyle.Render("  ·  "+shortCwd())
 
 	// Top pane: the conversation transcript (scrollable viewport).
 	top := transPane.Width(paneW).Render(body)
@@ -861,13 +874,106 @@ func (m Conversation) renderPalette() string {
 	return b.String()
 }
 
+// atCompletions detects an "@<prefix>" file token being typed at the end of the input and
+// returns that token plus matching paths under the working directory. Empty unless the
+// last whitespace-separated field starts with "@" and sits at the cursor.
+func (m Conversation) atCompletions() (string, []string) {
+	v := m.input.Value()
+	i := strings.LastIndexAny(v, " \t\n")
+	last := v[i+1:] // the token under the cursor
+	if !strings.HasPrefix(last, "@") {
+		return "", nil
+	}
+	return last, globFiles(last[1:], 8)
+}
+
+// globFiles lists up to limit paths (relative to the cwd) whose path starts with prefix,
+// marking directories with a trailing slash.
+func globFiles(prefix string, limit int) []string {
+	matches, _ := filepath.Glob(prefix + "*")
+	if len(matches) > limit {
+		matches = matches[:limit]
+	}
+	for i, p := range matches {
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			matches[i] = p + "/"
+		}
+	}
+	return matches
+}
+
+// renderAtPalette renders the @-file completion popup (matching paths + the selection),
+// mirroring the slash-command palette. Empty when no @token is being typed.
+func (m Conversation) renderAtPalette() string {
+	_, matches := m.atCompletions()
+	if len(matches) == 0 {
+		return ""
+	}
+	idx := m.clampPalette(len(matches))
+	sel := lipgloss.NewStyle().Foreground(cLavender)
+	var b strings.Builder
+	b.WriteString(dimStyle.Render("files · tab complete"))
+	for i, f := range matches {
+		if i == idx {
+			b.WriteString("\n" + sel.Render("▸ @"+f))
+		} else {
+			b.WriteString("\n" + dimStyle.Render("  @"+f))
+		}
+	}
+	return b.String()
+}
+
 func (m Conversation) spendLine() string {
 	s := m.oc.Budget().Snapshot()
-	line := fmt.Sprintf("spend: %d tok · $%.2f · %s", s.Tokens, s.Dollars, s.Wall.Round(time.Second))
+	line := fmt.Sprintf("spend: %d tok · $%.2f · %s · ctx ~%s", s.Tokens, s.Dollars, s.Wall.Round(time.Second), humanTokens(s.Tokens))
 	if s.HasCeiling {
 		line += fmt.Sprintf(" · ceiling:%s", s.State)
 	}
 	return line
+}
+
+// contextReport is the /context (a.k.a. /cost) output: token/spend usage this session.
+func (m Conversation) contextReport() string {
+	s := m.oc.Budget().Snapshot()
+	out := fmt.Sprintf("context this session: ~%s tokens · $%.2f · %s", humanTokens(s.Tokens), s.Dollars, s.Wall.Round(time.Second))
+	if s.HasCeiling {
+		out += fmt.Sprintf(" · ceiling:%s", s.State)
+	}
+	return out
+}
+
+// shortCwd is the working directory with $HOME collapsed to ~ (empty if unavailable).
+func shortCwd() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	if home, herr := os.UserHomeDir(); herr == nil && home != "" && strings.HasPrefix(wd, home) {
+		return "~" + wd[len(home):]
+	}
+	return wd
+}
+
+// humanTokens renders a token count compactly (e.g. 12000 → "12.0k").
+func humanTokens(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	return fmt.Sprintf("%.1fk", float64(n)/1000)
+}
+
+// newSession resets the conversation context by opening a fresh ACP session — the model's
+// per-session history is keyed by the session id, so a new id starts a clean context.
+// Best-effort + time-bounded so a busy agent can't stall /clear.
+func (m *Conversation) newSession() {
+	if m.client == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if sid, err := m.client.SessionNew(ctx); err == nil && sid != "" {
+		m.sid = sid
+	}
 }
 
 // programGate is the TUI's ACP permission gate: it surfaces a request to the
