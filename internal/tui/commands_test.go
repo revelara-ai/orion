@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -69,7 +69,7 @@ func TestResolveAsyncCommand(t *testing.T) {
 // prefix, filters by that prefix, and the selection index clamps into range.
 func TestCommandPalette(t *testing.T) {
 	m := &Conversation{commands: []Command{{Name: "status"}, {Name: "doctor"}, {Name: "mcp"}}}
-	m.input = textinput.New()
+	m.input = textarea.New()
 
 	m.input.SetValue("hello") // not a slash-command → closed
 	if got := m.paletteMatches(); len(got) != 0 {
@@ -102,7 +102,7 @@ func TestCommandPalette(t *testing.T) {
 // unsent draft at the live line and collapsing consecutive duplicates.
 func TestInputHistoryRecall(t *testing.T) {
 	m := &Conversation{}
-	m.input = textinput.New()
+	m.input = textarea.New()
 
 	m.historyPrev() // empty history → no-op
 	if m.input.Value() != "" {
