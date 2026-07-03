@@ -111,3 +111,97 @@ func TestRecallSpecAnchorVerified(t *testing.T) {
 		t.Fatal("expected anchor mismatch after a post-approval decision change")
 	}
 }
+
+// TestRecallLastProvenSpecFallsBackToDelivered: on Accept the project leaves the
+// active slot (or-v9f.1), so RecallSpec (active-only) can no longer see it. The
+// show_code read path must still resolve the just-proven spec via the delivered
+// fallback — otherwise show_code falsely reports "no proven spec" for code it just
+// wrote (the state-consistency defect behind internal/conductor
+// TestShowCodeReportsLocationAndContent).
+func TestRecallLastProvenSpecFallsBackToDelivered(t *testing.T) {
+	c, ctx := storeConductor(t)
+	if _, err := c.Submit(ctx, flowIntent); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	answerFunctional(t, c, ctx)
+	if _, err := c.ApproveAssumptions(ctx); err != nil {
+		t.Fatalf("approve assumptions: %v", err)
+	}
+	accepted, err := c.ApproveSpec(ctx)
+	if err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	// While the spec is active, both resolvers agree on the same anchor.
+	if es, rerr := c.RecallLastProvenSpec(ctx); rerr != nil || es.Hash != accepted.Hash {
+		t.Fatalf("active: RecallLastProvenSpec = (%q, %v), want %q", es.Hash, rerr, accepted.Hash)
+	}
+
+	// Deliver: move the project out of the active slot exactly as the build path does.
+	proj, _, err := c.Store().CurrentProjectSpec(ctx)
+	if err != nil {
+		t.Fatalf("resolve active project: %v", err)
+	}
+	if err := c.Store().WithTx(ctx, func(tx *contextstore.Tx) error {
+		return tx.Projects().SetStatus(ctx, proj.ID, "delivered")
+	}); err != nil {
+		t.Fatalf("deliver: %v", err)
+	}
+
+	// Precondition of the bug: the active slot is now empty, so RecallSpec fails.
+	if _, err := c.RecallSpec(ctx); err == nil {
+		t.Fatal("expected RecallSpec to fail once the project has left the active slot")
+	}
+	// The fix: show_code's resolver falls back to the delivered spec, anchor intact.
+	recalled, err := c.RecallLastProvenSpec(ctx)
+	if err != nil {
+		t.Fatalf("post-delivery RecallLastProvenSpec: %v", err)
+	}
+	if recalled.Hash != accepted.Hash || !recalled.VerifyAnchor() {
+		t.Fatalf("delivered recall anchor mismatch: %q vs %q", recalled.Hash, accepted.Hash)
+	}
+}
+
+// TestPlanViewResolvesDeliveredProject: `orion plan show` (PlanView) must still
+// render the plan after Accept moves the project out of the active slot (or-v9f.1).
+// This is the post-delivery read regression behind the TestV20Loop plan/proof
+// predicates: the flow decomposes the plan during the build (while active), then
+// delivery empties the active slot — a strict-active resolver would then report
+// "no current spec" for the code just built.
+func TestPlanViewResolvesDeliveredProject(t *testing.T) {
+	c, ctx := storeConductor(t)
+	if _, err := c.Submit(ctx, flowIntent); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	answerFunctional(t, c, ctx)
+	if _, err := c.ApproveAssumptions(ctx); err != nil {
+		t.Fatalf("approve assumptions: %v", err)
+	}
+	if _, err := c.ApproveSpec(ctx); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	// Decompose + persist the plan while the project is active (as the build does).
+	if _, err := c.PlanView(ctx); err != nil {
+		t.Fatalf("plan (active): %v", err)
+	}
+
+	// Deliver: move the project out of the active slot exactly as the build path does.
+	proj, _, err := c.Store().CurrentProjectSpec(ctx)
+	if err != nil {
+		t.Fatalf("resolve active project: %v", err)
+	}
+	if err := c.Store().WithTx(ctx, func(tx *contextstore.Tx) error {
+		return tx.Projects().SetStatus(ctx, proj.ID, "delivered")
+	}); err != nil {
+		t.Fatalf("deliver: %v", err)
+	}
+
+	// Post-delivery: the active slot is empty, yet the plan must still resolve.
+	pv, err := c.PlanView(ctx)
+	if err != nil {
+		t.Fatalf("post-delivery PlanView: %v", err)
+	}
+	if len(pv.Tasks) == 0 {
+		t.Fatal("post-delivery plan has no tasks")
+	}
+}
