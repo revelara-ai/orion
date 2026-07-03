@@ -24,10 +24,40 @@ type Command struct {
 // CommandResultMsg carries the outcome of an async command's follow-up work back into the transcript.
 type CommandResultMsg struct{ Text string }
 
-// handleCommand dispatches a leading-slash line to a slash-command and prints its output into
-// the transcript. /help is built in; an unknown command is reported, never sent to the
-// conductor. It returns no tea.Cmd — command handlers are synchronous, fast, local admin ops.
+// builtinCommands are the TUI-intrinsic slash-commands: they need model access (clear the
+// transcript, quit, read the budget) so they are dispatched in handleCommand rather than as
+// injected Command funcs. They also appear in /help and the palette.
+func builtinCommands() []Command {
+	return []Command{
+		{Name: "help", Help: "show this list"},
+		{Name: "clear", Help: "clear the conversation + reset context"},
+		{Name: "context", Help: "show token usage this session"},
+		{Name: "exit", Help: "quit Orion"},
+	}
+}
+
+// handleCommand dispatches a leading-slash line. Intrinsic commands (/clear, /exit,
+// /context) are handled here (they touch the model); others fall to the injected
+// Command set. An unknown command is reported, never sent to the conductor.
 func (m *Conversation) handleCommand(text string) tea.Cmd {
+	name, _, _ := strings.Cut(strings.TrimPrefix(text, "/"), " ")
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "clear":
+		m.input.Reset()
+		m.msgs = nil
+		m.permExpanded = false
+		m.newSession() // a fresh ACP session so the model's context is reset too
+		m.render()
+		return nil
+	case "exit", "quit":
+		return m.quit()
+	case "context", "cost":
+		m.input.Reset()
+		m.msgs = append(m.msgs, msg{role: "you", text: text})
+		m.msgs = append(m.msgs, msg{role: "orion", kind: "command", text: m.contextReport()})
+		m.render()
+		return nil
+	}
 	m.input.Reset()
 	m.msgs = append(m.msgs, msg{role: "you", text: text})
 	// An async command prints its immediate line now and returns a tea.Cmd whose CommandResultMsg
@@ -82,7 +112,7 @@ func (m Conversation) paletteMatches() []Command {
 		return nil
 	}
 	prefix := strings.ToLower(strings.TrimPrefix(v, "/"))
-	all := append([]Command{{Name: "help", Help: "show this list"}}, m.commands...)
+	all := append(builtinCommands(), m.commands...)
 	sort.SliceStable(all, func(i, j int) bool { return all[i].Name < all[j].Name })
 	out := make([]Command, 0, len(all))
 	for _, c := range all {
@@ -105,9 +135,9 @@ func (m Conversation) clampPalette(n int) int {
 	}
 }
 
-// commandHelp lists the built-in /help plus every injected command, sorted.
+// commandHelp lists the built-in intrinsic commands plus every injected command, sorted.
 func (m *Conversation) commandHelp() string {
-	rows := append([]Command{{Name: "help", Help: "show this list"}}, m.commands...)
+	rows := append(builtinCommands(), m.commands...)
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 	var b strings.Builder
 	b.WriteString("commands (prefix with /):\n")
