@@ -13,6 +13,9 @@ import (
 type ProgressEvent struct {
 	Phase     string
 	Detail    string
+	Actor     string
+	Depth     int
+	Status    string
 	Heartbeat bool
 	At        time.Time
 }
@@ -40,6 +43,18 @@ func (b *ProgressBus) Emit(phase, detail string) {
 	defer b.mu.Unlock()
 	t := b.now()
 	b.events = append(b.events, ProgressEvent{Phase: phase, Detail: detail, At: t})
+	b.last = t
+}
+
+// EmitActivity records a who-is-doing-what event (actor + activity + call-stack
+// depth + status). Resets the heartbeat window like Emit.
+func (b *ProgressBus) EmitActivity(actor, activity string, depth int, status string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	t := b.now()
+	b.events = append(b.events, ProgressEvent{
+		Phase: activity, Detail: activity, Actor: actor, Depth: depth, Status: status, At: t,
+	})
 	b.last = t
 }
 
