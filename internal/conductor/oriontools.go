@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/brownfield"
 	"github.com/revelara-ai/orion/internal/llm"
@@ -25,14 +26,14 @@ import (
 // tools are the only way it touches the store, and the completeness/compile/
 // accept gates stay the deterministic truth source — the agent proposes, the
 // gates verify (no agent grades its own homework).
-func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSession) *tools.Registry {
+func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSession, emit func(acp.Update)) *tools.Registry {
 	r := tools.NewRegistry()
 	registerChangeTools(r, cs, c, provider)
 	registerBeadsTool(r, c)
 	registerMCPTools(r, c.Store())  // revelara.ai MCP tools, when authenticated (or-xe7.10)
 	registerWorkspaceTools(r, c)      // bash + file I/O + search — general workspace agency (or-5j1)
 	registerWebTools(r)               // web_fetch + keyless web_search — web reach (or-5j1 slice 2)
-	registerSubagentTool(r, c, provider) // spawn_subagent — bounded nested delegation (or-5j1 slice 3)
+	registerSubagentTool(r, c, provider, emit) // spawn_subagent — bounded nested delegation (or-5j1 slice 3)
 
 	r.Register(tools.Tool{
 		Name:        "submit_intent",

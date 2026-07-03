@@ -11,7 +11,7 @@ import (
 // TestChangeRepoToolRegistered (slice 4): the change_repo tool is exposed to the brain with a
 // valid schema declaring the verify-command oracle (incl. curate_golangci) and marked Destructive.
 func TestChangeRepoToolRegistered(t *testing.T) {
-	r := specTools(orchestrator.NewWithStore(openStore(t)), nil, &changeSession{})
+	r := specTools(orchestrator.NewWithStore(openStore(t)), nil, &changeSession{}, nil)
 	tool, ok := r.Get("change_repo")
 	if !ok {
 		t.Fatal("change_repo tool is not registered")

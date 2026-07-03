@@ -86,9 +86,10 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 	convo = append(convo, llm.TextMessage(llm.RoleUser, text))
 
 	prov := a.currentProvider() // may have been swapped by a /model control op
+	emit := func(u acp.Update) { stream(u) }
 	loop := harness.Loop{
 		Provider:   prov,
-		Tools:      specTools(a.conductor, prov, a.changeSessionFor(sessionID)),
+		Tools:      specTools(a.conductor, prov, a.changeSessionFor(sessionID), emit),
 		System:     a.systemPrompt(),
 		Supervisor: harness.Supervisor{MaxIterations: 16, Budget: a.conductor.Budget()},
 		Approve:    a.approver(sessionID, ask), // per-tool approval prompt for mutating tools
@@ -103,7 +104,9 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 			}
 		case harness.EventToolCall:
 			stream(acp.Update{Kind: "tool_call", Text: "· " + e.Tool})
+			emit(acp.Activity("Orion", e.Tool, 0, "running"))
 		case harness.EventToolResult:
+			emit(acp.Activity("Orion", e.Tool, 0, "done"))
 			// The build/change pipeline's phase report renders as a distinct card.
 			if (e.Tool == "build_service" || e.Tool == "change_repo" || e.Tool == "build_change") && !e.Error {
 				stream(acp.Update{Kind: "build_report", Text: e.Text})
