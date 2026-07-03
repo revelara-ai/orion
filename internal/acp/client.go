@@ -29,12 +29,17 @@ type PromptResult struct {
 type PermissionRequest struct {
 	SessionID string `json:"sessionId"`
 	Title     string `json:"title"`
-	Kind      string `json:"kind"` // spec_ratify | destructive | hitl …
+	Kind      string `json:"kind"` // spec_ratify | tool | hitl …
+	// Tool fields (Kind == "tool"): the pending mutating tool and a preview to render in
+	// the approval card (a bash command, or a file path + unified-diff/content preview).
+	Tool    string `json:"tool,omitempty"`
+	Preview string `json:"preview,omitempty"`
 }
 
-// PermissionResult is the gate's decision.
+// PermissionResult is the gate's decision. For a spec ratify: "granted" | "denied". For a
+// tool approval: "allow_once" | "allow_always" | "deny".
 type PermissionResult struct {
-	Outcome string `json:"outcome"` // "granted" | "denied"
+	Outcome string `json:"outcome"`
 }
 
 // PermissionGate is Orion's approval/escalation gate (SPEC §3): a human (or

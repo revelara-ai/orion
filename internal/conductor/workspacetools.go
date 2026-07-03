@@ -26,7 +26,7 @@ func registerWorkspaceTools(r *tools.Registry, c *orchestrator.Conductor) {
 		Name:        "bash",
 		Description: "Run a shell command in the developer's working directory and return its combined output + exit code. Use for build/test/inspection/scaffolding tasks (make, go test, ls, curl, …). Runs as the developer; secret-shaped env vars (API keys, tokens, passwords) are scrubbed from the environment. Mutating — halted while the red button is engaged.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"the shell command to run"}},"required":["command"]}`),
-		Safety:      tools.Safety{Destructive: true},
+		Safety:      tools.Safety{Destructive: true, RequiresApproval: true},
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
 			var p struct {
 				Command string `json:"command"`
@@ -80,7 +80,7 @@ func registerWorkspaceTools(r *tools.Registry, c *orchestrator.Conductor) {
 		Name:        "write_file",
 		Description: "Write (create or overwrite) a file in the developer's working directory. Mutating — halted while the red button is engaged.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}`),
-		Safety:      tools.Safety{Destructive: true},
+		Safety:      tools.Safety{Destructive: true, RequiresApproval: true},
 		Run: func(_ context.Context, in json.RawMessage) (string, error) {
 			var p struct {
 				Path    string `json:"path"`
@@ -108,7 +108,7 @@ func registerWorkspaceTools(r *tools.Registry, c *orchestrator.Conductor) {
 		Name:        "edit_file",
 		Description: "Replace an exact, UNIQUE substring in a file in the developer's working directory (old_string must appear exactly once). Mutating — halted while the red button is engaged.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["path","old_string","new_string"]}`),
-		Safety:      tools.Safety{Destructive: true},
+		Safety:      tools.Safety{Destructive: true, RequiresApproval: true},
 		Run: func(_ context.Context, in json.RawMessage) (string, error) {
 			var p struct {
 				Path string `json:"path"`

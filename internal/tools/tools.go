@@ -22,6 +22,11 @@ type Safety struct {
 	ReadOnly     bool
 	Destructive  bool
 	ParallelSafe bool
+	// RequiresApproval marks a tool that acts in the developer's ENVIRONMENT and should
+	// be approved per-call by the human (bash, write_file, edit_file). It is distinct
+	// from Destructive: the spec/change-pipeline tools are Destructive (they mutate
+	// Orion's own state) but internal, and must NOT trigger a per-call user prompt.
+	RequiresApproval bool
 }
 
 // Tool is an executable capability exposed to a model.
