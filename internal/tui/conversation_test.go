@@ -42,6 +42,17 @@ func TestConversationEmptyState(t *testing.T) {
 	}
 }
 
+// TestIdleHintAdvertisesCopyAffordance: because the program grabs the mouse for
+// wheel-scroll (WithMouseCellMotion), native drag-select is suppressed. The idle
+// hint must tell the user how to still select for copy/paste (hold Shift, or ⌥ on
+// macOS) — otherwise the terminal appears to have "lost" copy/paste.
+func TestIdleHintAdvertisesCopyAffordance(t *testing.T) {
+	view := strings.ToLower(newTestConvo(t).View())
+	if !strings.Contains(view, "shift") || !strings.Contains(view, "copy") {
+		t.Fatalf("idle hint must advertise shift-drag to copy; got:\n%s", newTestConvo(t).View())
+	}
+}
+
 // TestConversationStreamsUpdates: a streamed session/update is appended to the
 // transcript as it arrives (incremental streaming).
 func TestConversationStreamsUpdates(t *testing.T) {
