@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/contextstore"
@@ -12,6 +13,63 @@ import (
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 )
+
+// recordShadowPlan runs the injected semantic ModuleProposer in SHADOW and
+// persists how its plan compares to the oracle decomposer's (or-809). Entirely
+// best-effort: it never returns an error and never mutates the live plan — the
+// oracle epic drives the build. The measured window over these records is the
+// eventual cutover criterion (coverage superset AND cluster-count non-regression).
+func (c *Conductor) recordShadowPlan(ctx context.Context, projectID string, es spec.ExecutableSpec, oracle decomposer.Epic) {
+	// I2: the shadow path must NEVER fail the plan — a panic in the (adversarial,
+	// LLM-backed) proposer is contained here, not propagated.
+	defer func() {
+		if r := recover(); r != nil {
+			c.log.WarnContext(ctx, "module proposer shadow: recovered from panic", "panic", r)
+		}
+	}()
+	floor := decomposer.DefaultFloor()
+	pe, err := decomposer.Propose(ctx, es, c.gate.ProjectType(), floor, c.proposer)
+	if err != nil {
+		c.log.WarnContext(ctx, "module proposer shadow: propose failed", "err", err)
+		return
+	}
+	// Measure the coverage/floor metrics over the proposer's OWN modules — the
+	// synthesized acceptance bookend (a deterministic runtime backstop) covers
+	// every floor dim + case id, so measuring the bookended epic would launder any
+	// proposer into constant-true. The cutover quality signal must reflect the
+	// proposer's slicing, not Orion's backstop. Cluster counts use the FULL plan
+	// (that is what actually clusters/builds at cutover).
+	raw := decomposer.Epic{Title: pe.Title}
+	for _, t := range pe.Tasks {
+		if t.Key != "acceptance" {
+			raw.Tasks = append(raw.Tasks, t)
+		}
+	}
+	superset, missing := decomposer.CoverageDiff(raw, oracle)
+	pc, pcErr := decomposer.Cluster(pe.Tasks)
+	oc, ocErr := decomposer.Cluster(oracle.Tasks)
+	pcn, ocn := -1, -1 // -1 = uncomputable (never reads as a spurious non-regression)
+	if pcErr == nil {
+		pcn = len(pc)
+	}
+	if ocErr == nil {
+		ocn = len(oc)
+	}
+	rec := contextstore.ShadowRecord{
+		SpecHash:         es.Hash,
+		ProposerModules:  len(raw.Tasks),
+		OracleModules:    len(oracle.Tasks),
+		ProposerClusters: pcn,
+		OracleClusters:   ocn,
+		SupersetOK:       superset,
+		FloorOK:          decomposer.ReconcileFloor(floor, raw) == nil,
+		CoverageGateOK:   decomposer.CoverageGate(es, raw) == nil,
+		Missing:          missing,
+	}
+	if err := c.store.RecordShadowPlan(ctx, projectID, rec); err != nil {
+		c.log.WarnContext(ctx, "module proposer shadow: record failed", "err", err)
+	}
+}
 
 // SpecView is the Spec-review pane / `orion spec show` projection.
 type SpecView struct {
@@ -455,6 +513,16 @@ func (c *Conductor) ensurePlan(ctx context.Context, proj contextstore.Project, s
 	epic := decomposer.Decompose(es, c.gate.ProjectType())
 	if err := decomposer.CoverageGate(es, epic); err != nil {
 		return "", err
+	}
+
+	// or-809 SHADOW: when a proposer is injected and ORION_MODULE_PROPOSER=shadow,
+	// run the semantic proposer ALONGSIDE the oracle (which still drives the build
+	// below — byte-identical behavior) and record how its plan compares. Entirely
+	// best-effort: any proposer/gate/persist error is logged and never fails the
+	// plan (the deterministic oracle is the live plan). Cutover to driving the
+	// build off the proposer is a later slice gated on this measured window.
+	if c.proposer != nil && os.Getenv("ORION_MODULE_PROPOSER") == "shadow" {
+		c.recordShadowPlan(ctx, proj.ID, es, epic)
 	}
 
 	var epicID string

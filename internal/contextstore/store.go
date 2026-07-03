@@ -18,6 +18,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -255,6 +256,75 @@ func (s *Store) ProofCount(ctx context.Context, taskID string) (int, error) {
 		return e
 	})
 	return n, err
+}
+
+// ShadowRecord is one shadow-mode ModuleProposer comparison against the oracle
+// decomposer (or-809): how the proposer's plan compares to the template's. The
+// measured window over these rows drives the eventual cutover decision.
+type ShadowRecord struct {
+	SpecHash         string
+	ProposerModules  int
+	OracleModules    int
+	ProposerClusters int
+	OracleClusters   int
+	SupersetOK       bool
+	FloorOK          bool
+	CoverageGateOK   bool
+	Missing          []string
+}
+
+// RecordShadowPlan persists a shadow ModuleProposer comparison (or-809).
+// Best-effort by convention — callers ignore the error so a shadow write never
+// fails a build.
+func (s *Store) RecordShadowPlan(ctx context.Context, projectID string, r ShadowRecord) error {
+	missing, _ := json.Marshal(r.Missing)
+	return s.WithTx(ctx, func(tx *Tx) error {
+		_, e := tx.tx.ExecContext(ctx,
+			`INSERT INTO shadow_plans (id, project_id, spec_hash, proposer_modules, oracle_modules,
+			 proposer_clusters, oracle_clusters, superset_ok, floor_ok, coverage_gate_ok, missing, created_at)
+			 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+			newID(), projectID, r.SpecHash, r.ProposerModules, r.OracleModules,
+			r.ProposerClusters, r.OracleClusters, b2i(r.SupersetOK), b2i(r.FloorOK), b2i(r.CoverageGateOK),
+			string(missing), nowRFC3339())
+		return e
+	})
+}
+
+// ShadowPlans returns the recorded shadow comparisons for a project, newest
+// first — the measured window the cutover criterion reads (or-809).
+func (s *Store) ShadowPlans(ctx context.Context, projectID string) ([]ShadowRecord, error) {
+	var out []ShadowRecord
+	err := s.view(ctx, func(tx *Tx) error {
+		rows, e := tx.tx.QueryContext(ctx,
+			`SELECT spec_hash, proposer_modules, oracle_modules, proposer_clusters, oracle_clusters,
+			 superset_ok, floor_ok, coverage_gate_ok, missing FROM shadow_plans
+			 WHERE project_id=? ORDER BY created_at DESC, id DESC`, projectID)
+		if e != nil {
+			return e
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var r ShadowRecord
+			var sup, fl, cov int
+			var missing string
+			if e := rows.Scan(&r.SpecHash, &r.ProposerModules, &r.OracleModules, &r.ProposerClusters,
+				&r.OracleClusters, &sup, &fl, &cov, &missing); e != nil {
+				return e
+			}
+			r.SupersetOK, r.FloorOK, r.CoverageGateOK = sup != 0, fl != 0, cov != 0
+			_ = json.Unmarshal([]byte(missing), &r.Missing)
+			out = append(out, r)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // ProofMemoGet returns the persisted post-enforcement proof Report JSON for an

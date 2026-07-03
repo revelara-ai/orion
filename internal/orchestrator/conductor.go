@@ -20,6 +20,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/budget"
 	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/decomposer"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 	"github.com/revelara-ai/orion/internal/repo"
 )
@@ -54,10 +55,20 @@ type Conductor struct {
 	gate   *completeness.Analyzer
 	budget *budget.Accountant
 
+	// proposer is the injectable semantic ModuleProposer (or-809). nil = the
+	// deterministic template decomposer only (shadow/live disabled). Injected by
+	// the conductor tool wiring when an LLM provider is present, mirroring how the
+	// generator/aligner are injected into the build path.
+	proposer decomposer.ModuleProposer
+
 	mu        sync.RWMutex
 	intent    string
 	projectID string
 }
+
+// SetModuleProposer injects the semantic ModuleProposer (or-809). Safe to call
+// once at wiring time before a plan is built.
+func (c *Conductor) SetModuleProposer(mp decomposer.ModuleProposer) { c.proposer = mp }
 
 // New returns an in-memory Conductor ready to accept an intent. It
 // self-instruments via the default structured logger (3 a.m. test) and an

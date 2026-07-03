@@ -665,19 +665,62 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		}
 	}
 
-	// AlignmentGate (V3 Step 1, LOG-ONLY): an advisory audit of whether the built
-	// code serves the INTENT, not just the cases. It records + surfaces a concern but
-	// does NOT change the verdict or block delivery yet (proof.Accept stays the sole
-	// right-to-ship).
+	// AlignmentGate (or-809): whether the built code serves the INTENT, not just
+	// the cases. I3 — it can only ever REMOVE a green light: the aligner is CALLED
+	// ONLY when proof already Accepted (G1), so a Reject→Accept path is structurally
+	// unreachable. Default (ORION_ALIGN_GATE unset) is LOG-ONLY (V3 Step 1 behavior,
+	// byte-identical). With =block it is severity-tiered (V3 Step 3): a HIGH concern
+	// blocks ONLY when a second pass corroborates it (else downgraded to medium — a
+	// non-deterministic judge must not flaky-block, G5); a corroborated high
+	// downgrades the converged verdict to Inconclusive with an alignment dissent
+	// (removing the green light, never adding one) so the existing escalation path
+	// fires; medium (incl. downgraded high) files a surface-to-human align-review
+	// row but still ships (proof is the right-to-ship; never auto-fail an ambiguous
+	// under-specified spec).
 	var alignment AlignmentRecord
-	if aligner != nil {
+	blockGate := os.Getenv("ORION_ALIGN_GATE") == "block"
+	if aligner != nil && string(report.Outcome.Verdict) == "Accept" {
 		onPhase.emit("Align", PhaseRunning, "")
 		if v, aerr := aligner(ctx, es.Intent, buildDir, es.ResponseContract.Cases); aerr == nil {
-			alignment = AlignmentRecord{Ran: true, Aligned: v.Aligned, Severity: v.Severity, Concern: v.Concern}
-			if v.Aligned {
+			sev := normalizeSeverity(v.Severity) // tolerate LLM casing/whitespace variants
+			if blockGate && !v.Aligned && sev == "high" {
+				// G5 corroboration: a second pass must agree, else downgrade to medium
+				// (a non-deterministic judge must not flaky-block).
+				if v2, e2 := aligner(ctx, es.Intent, buildDir, es.ResponseContract.Cases); e2 != nil || v2.Aligned || normalizeSeverity(v2.Severity) != "high" {
+					sev = "medium"
+				}
+			}
+			// Record the EFFECTIVE severity (post-corroboration), not the raw draw.
+			alignment = AlignmentRecord{Ran: true, Aligned: v.Aligned, Severity: sev, Concern: v.Concern}
+			switch {
+			case blockGate && !v.Aligned && sev == "high":
+				// Remove the green light: Accept → Inconclusive with an alignment
+				// dissent. The done-gate then refuses to close and the !Accept
+				// escalation path below files the mid-run escalation.
+				report.Outcome.Verdict = truthalign.Inconclusive
+				report.Outcome.Dissenting = append(report.Outcome.Dissenting, "alignment:high:"+v.Concern)
+				failureAnalysis = "alignment(high): " + v.Concern
+				onPhase.emit("Align", PhaseWarn, "BLOCKED (high, corroborated): "+v.Concern)
+			case blockGate && !v.Aligned && sev == "medium":
+				// medium (incl. downgraded high): ship (proof is the right-to-ship),
+				// but surface to a human. low/none never auto-fails an under-specified
+				// spec — it falls through to the advisory default below.
+				withLock(stateMu, func() {
+					_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
+						proj, e := tx.Projects().Active(ctx)
+						if e != nil {
+							return e
+						}
+						_, e = tx.Escalations().CreateDetailed(ctx, proj.ID, taskID,
+							"alignment review (medium)", v.Concern)
+						return e
+					})
+				})
+				onPhase.emit("Align", PhaseWarn, "surfaced (medium): "+v.Concern)
+			case v.Aligned:
 				onPhase.emit("Align", PhaseDone, "serves the intent")
-			} else {
-				onPhase.emit("Align", PhaseWarn, v.Concern)
+			default:
+				onPhase.emit("Align", PhaseWarn, v.Concern) // advisory (log-only default; low/none)
 			}
 		} else {
 			onPhase.emit("Align", PhaseWarn, "skipped: "+aerr.Error())
