@@ -141,7 +141,7 @@ func TestShowCodeReportsLocationAndContent(t *testing.T) {
 	if _, err := BuildAndProve(ctx, oc.Store(), nil, nil, nil, root); err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	out, isErr := specTools(oc, nil, &changeSession{}).Dispatch(ctx, "show_code", json.RawMessage(`{}`))
+	out, isErr := specTools(oc, nil, &changeSession{}, nil).Dispatch(ctx, "show_code", json.RawMessage(`{}`))
 	if isErr {
 		t.Fatalf("show_code errored: %s", out)
 	}

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/harness"
 	"github.com/revelara-ai/orion/internal/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
@@ -55,7 +56,7 @@ func subagentDefaultTools(r *tools.Registry) []string {
 // worker (not grill) system prompt, and inherits the red-button gate on any mutating tool. It is
 // built on harness.Loop, NOT agentruntime — agentruntime is the walled, sandboxed GENERATION domain
 // (external vendor CLIs under bwrap); a Conductor subagent is trusted in-process orchestration.
-func registerSubagentTool(r *tools.Registry, c *orchestrator.Conductor, provider llm.Provider) {
+func registerSubagentTool(r *tools.Registry, c *orchestrator.Conductor, provider llm.Provider, emit func(acp.Update)) {
 	if provider == nil || c == nil {
 		return // no model or no conductor → no nested loop (the offline/deterministic conductor has none)
 	}
@@ -69,7 +70,7 @@ func registerSubagentTool(r *tools.Registry, c *orchestrator.Conductor, provider
 			"grep, glob, web_fetch, web_search, plus revelara.ai research). Grantable if requested: bash, write_file, " +
 			"edit_file (still halted by the red button). The subagent runs headless, returns its answer, and cannot " +
 			"spawn further subagents or touch the spec/build/git pipeline.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"task":{"type":"string","description":"the full, self-contained instruction for the subagent"},"tools":{"type":"array","items":{"type":"string"},"description":"optional subset of tool names to grant; omitted = read-only research default"}},"required":["task"]}`),
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"task":{"type":"string","description":"the full, self-contained instruction for the subagent"},"tools":{"type":"array","items":{"type":"string"},"description":"optional subset of tool names to grant; omitted = read-only research default"},"name":{"type":"string","description":"optional display label for this subagent in the activity panel; defaults to first 2 words of task"}},"required":["task"]}`),
 		// Meta-tool: not itself red-button gated (a read-only research subagent must run mid-halt,
 		// like any other read) — any mutating CHILD tool self-gates on the red button.
 		Safety: tools.Safety{},
@@ -77,6 +78,7 @@ func registerSubagentTool(r *tools.Registry, c *orchestrator.Conductor, provider
 			var p struct {
 				Task  string   `json:"task"`
 				Tools []string `json:"tools"`
+				Name  string   `json:"name"`
 			}
 			if err := json.Unmarshal(in, &p); err != nil {
 				return "", err
@@ -129,6 +131,11 @@ func registerSubagentTool(r *tools.Registry, c *orchestrator.Conductor, provider
 			// same ceiling), capped iterations, and a wall-clock timeout so a runaway subagent
 			// can't hang the turn. Depth-1 is structural: spawn_subagent is not delegatable, so it
 			// is never in `sub`.
+			label := strings.TrimSpace(p.Name)
+			if label == "" {
+				label = subagentLabel(p.Task)
+			}
+
 			cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 			defer cancel()
 			loop := harness.Loop{
@@ -140,10 +147,21 @@ func registerSubagentTool(r *tools.Registry, c *orchestrator.Conductor, provider
 			var trace []string
 			convo, resp, runErr := loop.Run(cctx, []llm.Message{llm.TextMessage(llm.RoleUser, p.Task)},
 				func(e harness.Event) {
-					if e.Kind == harness.EventToolCall {
+					switch e.Kind {
+					case harness.EventToolCall:
 						trace = append(trace, e.Tool)
+						if emit != nil {
+							emit(acp.Activity(label, e.Tool, 1, "running"))
+						}
+					case harness.EventThought:
+						if emit != nil && strings.TrimSpace(e.Text) != "" {
+							emit(acp.Activity(label, "thinking", 1, "running"))
+						}
 					}
 				})
+			if emit != nil {
+				emit(acp.Activity(label, "", 1, "done"))
+			}
 
 			answer := ""
 			if resp != nil {
@@ -158,12 +176,12 @@ func registerSubagentTool(r *tools.Registry, c *orchestrator.Conductor, provider
 			}
 
 			var b strings.Builder
-			label := "subagent"
+			resultLabel := "subagent"
 			if runErr != nil {
 				// Unmistakable in the first token: the answer below is partial, not a clean result.
-				label = "subagent INCOMPLETE"
+				resultLabel = "subagent INCOMPLETE"
 			}
-			fmt.Fprintf(&b, "%s [%s]", label, strings.Join(granted, ", "))
+			fmt.Fprintf(&b, "%s [%s]", resultLabel, strings.Join(granted, ", "))
 			if len(refused) > 0 {
 				fmt.Fprintf(&b, " (refused: %s)", strings.Join(refused, ", "))
 			}
@@ -182,6 +200,18 @@ func registerSubagentTool(r *tools.Registry, c *orchestrator.Conductor, provider
 			return boundOutput(b.String()), nil
 		},
 	})
+}
+
+// subagentLabel derives a short display label from a task when no name is given.
+func subagentLabel(task string) string {
+	fields := strings.Fields(task)
+	if len(fields) > 2 {
+		fields = fields[:2]
+	}
+	if len(fields) == 0 {
+		return "subagent"
+	}
+	return strings.ToLower(strings.Join(fields, " "))
 }
 
 // subagentSystemPrompt primes a spawned worker: focused, headless, and explicitly walled off from
