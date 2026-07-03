@@ -84,9 +84,9 @@ func TestCommandPalette(t *testing.T) {
 		t.Errorf("/d should match only doctor, got %+v", got)
 	}
 	m.input.SetValue("/") // bare slash → injected commands + built-in intrinsics
-	// status/doctor/mcp (injected) + help/clear/context/exit (built-in intrinsic) = 7
-	if got := m.paletteMatches(); len(got) != 7 {
-		t.Errorf("/ should list the 3 injected + 4 intrinsic commands, got %d", len(got))
+	// status/doctor/mcp (injected) + help/clear/compact/context/model/exit (intrinsic) = 9
+	if got := m.paletteMatches(); len(got) != 9 {
+		t.Errorf("/ should list the 3 injected + 6 intrinsic commands, got %d", len(got))
 	}
 
 	m.paletteIdx = 99

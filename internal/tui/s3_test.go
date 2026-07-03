@@ -101,6 +101,24 @@ func TestAtCompletionsOnlyOnAtToken(t *testing.T) {
 	}
 }
 
+// /compact and /model appear in help + palette, and dispatch gracefully with no client.
+func TestCompactAndModelCommands(t *testing.T) {
+	m := newTestConvo(t)
+	help := m.commandHelp()
+	for _, name := range []string{"compact", "model"} {
+		if !strings.Contains(help, "/"+name) {
+			t.Errorf("/help missing /%s:\n%s", name, help)
+		}
+	}
+	// controlCmd with no live client resolves to a graceful message, never a panic.
+	if msg := m.controlCmd("compact", "")(); func() bool {
+		cr, ok := msg.(CommandResultMsg)
+		return !ok || !strings.Contains(cr.Text, "not connected")
+	}() {
+		t.Errorf("controlCmd with no client should report gracefully, got %v", msg)
+	}
+}
+
 // The status chrome shows the working directory and a context/usage indicator.
 func TestStatusChromeShowsCwdAndContext(t *testing.T) {
 	m := newTestConvo(t)

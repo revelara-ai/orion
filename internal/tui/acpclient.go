@@ -135,3 +135,8 @@ func (a *ACPClient) PromptWithUpdates(ctx context.Context, sessionID, text strin
 func (a *ACPClient) Cancel(ctx context.Context, sessionID string) error {
 	return a.client.Cancel(ctx, sessionID)
 }
+
+// Control runs an out-of-turn session control op (compact / model).
+func (a *ACPClient) Control(ctx context.Context, sessionID, op, arg string) (string, error) {
+	return a.client.Control(ctx, sessionID, op, arg)
+}

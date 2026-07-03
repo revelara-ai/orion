@@ -27,13 +27,30 @@ type OrionAgent struct {
 
 	mu       sync.Mutex
 	sessions map[string][]llm.Message
-	changes  map[string]*changeSession  // brownfield change-flow state, per session
-	allowed  map[string]map[string]bool // session → tool names the developer allow-always'd
+	changes  map[string]*changeSession       // brownfield change-flow state, per session
+	allowed  map[string]map[string]bool      // session → tool names the developer allow-always'd
+	model    string                          // current model id (for /model)
+	rebuild  func(model string) llm.Provider // rebuilds the provider for a new model (nil = no switch)
 }
 
 // NewOrionAgent builds the native agent over the given model provider.
 func NewOrionAgent(p llm.Provider, c *orchestrator.Conductor, role RoleTemplate) *OrionAgent {
 	return &OrionAgent{provider: p, conductor: c, role: role, sessions: map[string][]llm.Message{}, changes: map[string]*changeSession{}, allowed: map[string]map[string]bool{}}
+}
+
+// SetModel records the current model id and a factory that rebuilds the provider for a
+// new model, enabling the /model control op. Without it /model is show-only.
+func (a *OrionAgent) SetModel(model string, rebuild func(model string) llm.Provider) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.model, a.rebuild = model, rebuild
+}
+
+// currentProvider returns the active provider under lock (it can be swapped by /model).
+func (a *OrionAgent) currentProvider() llm.Provider {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.provider
 }
 
 // changeSessionFor returns the (persistent, cross-turn) brownfield change state for a session,
@@ -53,7 +70,7 @@ func (a *OrionAgent) changeSessionFor(sessionID string) *changeSession {
 // Serve runs Orion as an ACP agent over the transport (same shape as the
 // deterministic ConductorAgent.Serve, so it's a drop-in backend).
 func (a *OrionAgent) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
-	return acp.NewAgent(r, w, a.Prompt).Run(ctx)
+	return acp.NewAgent(r, w, a.Prompt).SetControl(a.Control).Run(ctx)
 }
 
 // Prompt runs one developer turn through the harness loop: the model reasons,
@@ -68,9 +85,10 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 	a.mu.Unlock()
 	convo = append(convo, llm.TextMessage(llm.RoleUser, text))
 
+	prov := a.currentProvider() // may have been swapped by a /model control op
 	loop := harness.Loop{
-		Provider:   a.provider,
-		Tools:      specTools(a.conductor, a.provider, a.changeSessionFor(sessionID)),
+		Provider:   prov,
+		Tools:      specTools(a.conductor, prov, a.changeSessionFor(sessionID)),
 		System:     a.systemPrompt(),
 		Supervisor: harness.Supervisor{MaxIterations: 16, Budget: a.conductor.Budget()},
 		Approve:    a.approver(sessionID, ask), // per-tool approval prompt for mutating tools

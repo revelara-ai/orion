@@ -31,7 +31,9 @@ func builtinCommands() []Command {
 	return []Command{
 		{Name: "help", Help: "show this list"},
 		{Name: "clear", Help: "clear the conversation + reset context"},
+		{Name: "compact", Help: "summarize history to reduce context"},
 		{Name: "context", Help: "show token usage this session"},
+		{Name: "model", Help: "show or switch the model (/model <id>)"},
 		{Name: "exit", Help: "quit Orion"},
 	}
 }
@@ -57,6 +59,18 @@ func (m *Conversation) handleCommand(text string) tea.Cmd {
 		m.msgs = append(m.msgs, msg{role: "orion", kind: "command", text: m.contextReport()})
 		m.render()
 		return nil
+	case "compact":
+		m.input.Reset()
+		m.msgs = append(m.msgs, msg{role: "you", text: text})
+		m.msgs = append(m.msgs, msg{role: "orion", kind: "command", text: "compacting the conversation…"})
+		m.render()
+		return m.controlCmd("compact", "")
+	case "model":
+		_, arg, _ := strings.Cut(strings.TrimPrefix(text, "/"), " ")
+		m.input.Reset()
+		m.msgs = append(m.msgs, msg{role: "you", text: text})
+		m.render()
+		return m.controlCmd("model", strings.TrimSpace(arg))
 	}
 	m.input.Reset()
 	m.msgs = append(m.msgs, msg{role: "you", text: text})

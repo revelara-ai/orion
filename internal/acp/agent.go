@@ -22,12 +22,17 @@ type PromptFunc func(ctx context.Context, sessionID, text string, stream func(Up
 // AskFunc requests a client-side permission decision mid-turn.
 type AskFunc func(req PermissionRequest) (PermissionResult, error)
 
+// ControlFunc handles an out-of-turn session control op (compact | model | …) and
+// returns a human-readable result. Optional: a nil control returns "unsupported".
+type ControlFunc func(ctx context.Context, sessionID, op, arg string) (string, error)
+
 // Agent is the ACP agent (server) side: the counterpart to Client. It answers
 // initialize / session/new / session/prompt and streams session/update during a
 // turn, and honors session/cancel.
 type Agent struct {
-	conn   *Conn
-	prompt PromptFunc
+	conn    *Conn
+	prompt  PromptFunc
+	control ControlFunc
 
 	mu       sync.Mutex
 	sessions int
@@ -40,6 +45,10 @@ func NewAgent(r io.Reader, w io.Writer, prompt PromptFunc) *Agent {
 	a.conn = NewConn(r, w, a.handle, a.onNotify)
 	return a
 }
+
+// SetControl registers the handler for session/control ops (compact / model). Returns
+// the agent for chaining. Nil control makes those ops report "unsupported".
+func (a *Agent) SetControl(fn ControlFunc) *Agent { a.control = fn; return a }
 
 // Run drives the agent's read loop; call in a goroutine.
 func (a *Agent) Run(ctx context.Context) error { return a.conn.Run(ctx) }
@@ -84,6 +93,21 @@ func (a *Agent) handle(ctx context.Context, method string, params json.RawMessag
 			return res, err
 		}
 		return a.prompt(turnCtx, p.SessionID, p.Text, stream, ask)
+	case "session/control":
+		var p struct {
+			SessionID string `json:"sessionId"`
+			Op        string `json:"op"`
+			Arg       string `json:"arg"`
+		}
+		_ = json.Unmarshal(params, &p)
+		if a.control == nil {
+			return map[string]string{"result": "that control is not supported by this brain."}, nil
+		}
+		res, err := a.control(ctx, p.SessionID, p.Op, p.Arg)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"result": res}, nil
 	}
 	return nil, fmt.Errorf("acp agent: method not found: %s", method)
 }

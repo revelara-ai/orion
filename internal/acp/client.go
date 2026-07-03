@@ -188,6 +188,16 @@ func (c *Client) Cancel(ctx context.Context, sessionID string) error {
 	return c.conn.Notify("session/cancel", map[string]any{"sessionId": sessionID})
 }
 
+// Control runs an out-of-turn session control op (compact | model) and returns the
+// agent's human-readable result.
+func (c *Client) Control(ctx context.Context, sessionID, op, arg string) (string, error) {
+	var res struct {
+		Result string `json:"result"`
+	}
+	err := c.conn.Call(ctx, "session/control", map[string]any{"sessionId": sessionID, "op": op, "arg": arg}, &res)
+	return res.Result, err
+}
+
 // ScopedFS is a SandboxFS rooted at a single directory (the task worktree). Any
 // path that resolves outside Root — including the held-out proof corpus — is
 // rejected: ACP file/terminal access is not a sandbox bypass (SPEC §3).
