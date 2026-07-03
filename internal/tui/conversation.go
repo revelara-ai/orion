@@ -858,7 +858,11 @@ func (m Conversation) View() string {
 	}
 	bottom := inputPane.Width(paneW).Render(status + "\n" + m.input.View())
 
-	hint := dimStyle.Render("  enter send · alt+enter newline · ↑/↓ history · pgup/pgdn scroll · tab complete · esc/ctrl+c cancel · ctrl+d quit")
+	// The program grabs the mouse (WithMouseCellMotion) for wheel-scroll, which puts
+	// the terminal in mouse-reporting mode and suppresses native drag-select. Surface
+	// the escape hatch — hold Shift (Option/⌥ on macOS) to select for copy/paste —
+	// in place of the esc/ctrl+c-cancel and ctrl+d-quit hints, which are intuitive.
+	hint := dimStyle.Render("  enter send · alt+enter newline · ↑/↓ history · pgup/pgdn scroll · tab complete · shift/⌥-drag to select·copy")
 	if m.quitArmed {
 		hint = warnGlyph.Render("  press ctrl+c again to exit") + dimStyle.Render(" · or any key to keep going")
 	} else if m.inFlight {
