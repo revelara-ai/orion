@@ -17,7 +17,19 @@ type Update struct {
 	SessionID string          `json:"sessionId"`
 	Kind      string          `json:"kind"`
 	Text      string          `json:"text,omitempty"`
+	Actor     string          `json:"actor,omitempty"`  // who is acting (activity kind): "Orion" or a subagent label
+	Depth     int             `json:"depth,omitempty"`  // 0 = conductor, 1 = subagent (call-stack nesting)
+	Status    string          `json:"status,omitempty"` // activity kind: "running" | "done" | "fail"
 	Raw       json.RawMessage `json:"-"`
+}
+
+// ActivityKind marks a live "who is doing what" signal — rendered in the activity
+// panel, never as a transcript bubble.
+const ActivityKind = "activity"
+
+// Activity builds an activity update. depth 0 = the conductor, 1 = a subagent.
+func Activity(actor, activity string, depth int, status string) Update {
+	return Update{Kind: ActivityKind, Actor: actor, Text: activity, Depth: depth, Status: status}
 }
 
 // PromptResult is the terminal result of a prompt turn.
