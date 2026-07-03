@@ -502,7 +502,11 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 		Description: "Report WHERE the proven code for the current spec lives in the developer's working repo and return its contents. Use this whenever the developer asks where the code is, to see it, or to answer questions about what was produced. Read-only.",
 		Safety:      tools.Safety{ReadOnly: true},
 		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
-			es, err := c.RecallSpec(ctx)
+			// Resolve active-or-last-delivered: after Accept the project leaves the
+			// active slot (or-v9f.1), so a plain RecallSpec would wrongly report "no
+			// proven spec" for the code we just wrote. RecallLastProvenSpec falls back
+			// to the delivered spec so this answer stays truthful post-delivery.
+			es, err := c.RecallLastProvenSpec(ctx)
 			if err != nil {
 				return "There is no accepted, proven spec yet — ratify a spec and build it (build_service); on Accept the code is written into your working repo.", nil
 			}

@@ -377,6 +377,51 @@ func (s *Store) CurrentProjectSpec(ctx context.Context) (Project, Spec, error) {
 	return p, sp, err
 }
 
+// LastDeliveredProjectSpec resolves the most recently DELIVERED project and its
+// latest spec. A delivered project has left the active slot (or-v9f.1) so
+// CurrentProjectSpec no longer sees it, but its proven code is still on disk —
+// this lets read/report paths (e.g. `show_code`) answer "where is the code" after
+// delivery. Returns ErrNotFound when nothing has been delivered.
+func (s *Store) LastDeliveredProjectSpec(ctx context.Context) (Project, Spec, error) {
+	var p Project
+	var sp Spec
+	err := s.view(ctx, func(tx *Tx) error {
+		var e error
+		p, e = tx.Projects().LatestByStatus(ctx, "delivered")
+		if e != nil {
+			return e
+		}
+		sp, e = tx.Specs().LatestForProject(ctx, p.ID)
+		return e
+	})
+	return p, sp, err
+}
+
+// CurrentOrLastDeliveredProjectSpec resolves the project the developer is currently
+// looking at for READ/REPORT paths: the active project+spec if one is in flight,
+// otherwise the most recently delivered one. After Accept, delivery moves a project
+// out of the active slot (or-v9f.1), so a strict CurrentProjectSpec would report "no
+// current project" for the very code just built. Mutation/lifecycle paths keep using
+// CurrentProjectSpec (strict active) — only read paths (plan show, deliver show,
+// show_code) fall back here. Returns ErrNotFound when nothing is active or delivered.
+func (s *Store) CurrentOrLastDeliveredProjectSpec(ctx context.Context) (Project, Spec, error) {
+	var p Project
+	var sp Spec
+	err := s.view(ctx, func(tx *Tx) error {
+		p2, e := tx.Projects().Active(ctx)
+		if errors.Is(e, ErrNotFound) {
+			p2, e = tx.Projects().LatestByStatus(ctx, "delivered")
+		}
+		if e != nil {
+			return e
+		}
+		p = p2
+		sp, e = tx.Specs().LatestForProject(ctx, p.ID)
+		return e
+	})
+	return p, sp, err
+}
+
 // QueuedProjects returns the intent queue in FIFO order.
 func (s *Store) QueuedProjects(ctx context.Context) ([]Project, error) {
 	var out []Project

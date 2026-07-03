@@ -112,10 +112,10 @@ func cmdAnswer(args []string) int {
 	})
 }
 
-// cmdSpec implements `orion spec <approve|show>`.
+// cmdSpec implements `orion spec <approve|approve-assumptions|show>`.
 func cmdSpec(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "orion spec: expected 'approve' or 'show'")
+		fmt.Fprintln(os.Stderr, "orion spec: expected 'approve', 'approve-assumptions', or 'show'")
 		return 2
 	}
 	sub, rest := args[0], args[1:]
@@ -128,6 +128,24 @@ func cmdSpec(args []string) int {
 				return 1
 			}
 			fmt.Printf("spec accepted (hash %s)\n", es.Hash)
+			return 0
+		})
+	case "approve-assumptions":
+		// Records the developer's explicit confirmation of the open fallback
+		// assumptions (or-v9f.19) — the audit record ratification requires. This is
+		// the CLI form of the ACP approve_assumptions tool; `orion spec approve` fails
+		// until these are approved.
+		return withStore(func(ctx context.Context, c *orchestrator.Conductor) int {
+			approved, err := c.ApproveAssumptions(ctx)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "orion spec approve-assumptions:", err)
+				return 1
+			}
+			if len(approved) == 0 {
+				fmt.Println("no open assumptions to approve")
+				return 0
+			}
+			fmt.Printf("approved %d assumption(s): %s\n", len(approved), strings.Join(approved, ", "))
 			return 0
 		})
 	case "show":
