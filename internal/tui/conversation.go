@@ -107,8 +107,9 @@ type permMsg struct {                 // the agent requested a permission
 // msg is one rendered turn in the conversation.
 type msg struct {
 	role string // "you" | "orion"
-	kind string // "" | agent_thought | agent_message | spec | plan | permission
+	kind string // "" | agent_thought | agent_message | spec | plan | permission | tool_permission
 	text string
+	tool string // for tool_permission: the mutating tool name (bash / write_file / edit_file)
 }
 
 // Conversation is the default pane: an async chat client over the Conductor agent.
@@ -127,6 +128,8 @@ type Conversation struct {
 	ready         bool
 	inFlight      bool
 	pendingPerm   chan acp.PermissionResult
+	permKind      string // the pending permission's kind ("" | spec_ratify | tool)
+	permExpanded  bool   // a tool-permission card's diff preview is expanded
 	quitting      bool
 	quitArmed     bool   // a Ctrl+C at an idle empty prompt arms quit; a second one exits
 	brain         string // active brain label (native · model / offline …)
@@ -220,12 +223,20 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	case permMsg:
 		m.pendingPerm = t.reply
-		m.msgs = append(m.msgs, msg{role: "orion", kind: "permission", text: t.req.Title})
-		m.input.Placeholder = "y to ratify · e to edit"
+		m.permKind = t.req.Kind
+		m.permExpanded = false
+		if t.req.Kind == "tool" {
+			// A mutating-tool approval: single-key y/a/n card with a diff/command preview.
+			m.msgs = append(m.msgs, msg{role: "orion", kind: "tool_permission", tool: t.req.Tool, text: t.req.Preview})
+			m.input.Placeholder = "y allow · a always · n deny"
+		} else {
+			m.msgs = append(m.msgs, msg{role: "orion", kind: "permission", text: t.req.Title})
+			m.input.Placeholder = "y to ratify · e to edit"
+		}
 		m.render()
-		// A permission request BLOCKS the conversation and asks the developer to act
-		// (press y/e). Force the card into view even if they had scrolled up to read
-		// history — otherwise they're prompted to respond with no visible prompt.
+		// A permission request BLOCKS the conversation and asks the developer to act.
+		// Force the card into view even if they had scrolled up to read history —
+		// otherwise they're prompted to respond with no visible prompt.
 		if m.ready {
 			m.vp.GotoBottom()
 		}
@@ -269,6 +280,23 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.input.InsertString("\n")
 			m.relayout()
 			return m, nil
+		}
+		// A pending TOOL-permission card is answered by single keys (y/a/n/e), never by
+		// typing into the input or recalling history.
+		if m.pendingPerm != nil && m.permKind == "tool" {
+			switch {
+			case t.Type == tea.KeyEnter, isRuneKey(t, 'y'):
+				return m, m.answerToolPerm("allow_once")
+			case isRuneKey(t, 'a'):
+				return m, m.answerToolPerm("allow_always")
+			case t.Type == tea.KeyEsc, isRuneKey(t, 'n'):
+				return m, m.answerToolPerm("deny")
+			case isRuneKey(t, 'e'):
+				m.permExpanded = !m.permExpanded
+				m.render()
+				return m, nil
+			}
+			return m, nil // ignore other keys while the card is up
 		}
 		switch t.Type {
 		case tea.KeyUp:
@@ -396,6 +424,34 @@ func (m *Conversation) handleEnter() tea.Cmd {
 	return tea.Batch(m.promptCmd(text), m.sp.Tick)
 }
 
+// isRuneKey reports whether a key message is a single bare rune r (a tool-permission
+// shortcut like y/a/n/e).
+func isRuneKey(t tea.KeyMsg, r rune) bool {
+	return t.Type == tea.KeyRunes && len(t.Runes) == 1 && t.Runes[0] == r && !t.Alt
+}
+
+// answerToolPerm resolves a pending tool-permission card with the given outcome
+// (allow_once | allow_always | deny), unblocks the waiting approver, and records the
+// decision in the transcript. The turn then continues (the tool runs, or is skipped).
+func (m *Conversation) answerToolPerm(outcome string) tea.Cmd {
+	if m.pendingPerm == nil {
+		return nil
+	}
+	m.pendingPerm <- acp.PermissionResult{Outcome: outcome}
+	m.pendingPerm = nil
+	m.permKind = ""
+	m.permExpanded = false
+	m.input.Placeholder = ""
+	decision := map[string]string{
+		"allow_once":   "✓ allowed once",
+		"allow_always": "✓ allowed — always this session",
+		"deny":         "⨯ denied",
+	}[outcome]
+	m.msgs = append(m.msgs, msg{role: "orion", text: decision})
+	m.render()
+	return nil // the in-flight turn continues; updates arrive via Program.Send
+}
+
 // cancelInFlight interrupts a running turn (or a pending permission) WITHOUT exiting the
 // app. Returns whether anything was actually cancelled. The pipe Cancel runs OFF the
 // event loop so a stalled write can never freeze the UI.
@@ -404,6 +460,8 @@ func (m *Conversation) cancelInFlight() bool {
 	if m.pendingPerm != nil { // unblock the waiting gate goroutine
 		m.pendingPerm <- acp.PermissionResult{Outcome: "denied"}
 		m.pendingPerm = nil
+		m.permKind = ""
+		m.permExpanded = false
 		cancelled = true
 	}
 	if m.inFlight {
@@ -618,6 +676,8 @@ func (m Conversation) renderMsg(mm msg, w int, active bool) string {
 	case "permission":
 		card := cardTitle.Render("ratify") + "\n" + mm.text + "\n[y] ratify   [e] edit a field"
 		return label + permCard.Width(cw-4).MarginLeft(2).Render(card)
+	case "tool_permission":
+		return label + permCard.Width(cw-4).MarginLeft(2).Render(m.toolPermCard(mm))
 	case "plan":
 		return label + planStyle.Width(cw).MarginLeft(2).Render(mm.text)
 	case "build_report":
@@ -636,6 +696,54 @@ func (m Conversation) renderMsg(mm msg, w int, active bool) string {
 		}
 		return label + indentLines(renderProse(mm.text, cw), "  ")
 	}
+}
+
+// permPreviewLines caps the tool-permission diff/command preview before it truncates
+// with an expand affordance.
+const permPreviewLines = 12
+
+// toolPermCard renders the pending mutating-tool approval: an amber title, a colorized
+// (truncated) command/diff preview, and the single-key choices.
+func (m Conversation) toolPermCard(mm msg) string {
+	title := warnGlyph.Render("⚠ permission") + dimStyle.Render(" · ") + orionLabel.Render(mm.tool)
+	maxW := m.vp.Width - 10
+	if maxW < 12 {
+		maxW = 12
+	}
+	all := strings.Split(mm.text, "\n")
+	shown := all
+	truncated := false
+	if !m.permExpanded && len(all) > permPreviewLines {
+		shown = all[:permPreviewLines]
+		truncated = true
+	}
+	// Clip long lines (plain runes, before colorizing) so the card never overflows and
+	// no ANSI run gets re-wrapped.
+	clipped := make([]string, len(shown))
+	for i, l := range shown {
+		clipped[i] = truncRunes(l, maxW)
+	}
+	body := colorizeDiff(strings.Join(clipped, "\n"))
+	choices := okGlyph.Render("y") + dimStyle.Render(" allow once   ") +
+		starStyle.Render("a") + dimStyle.Render(" allow always   ") +
+		failGlyph.Render("n") + dimStyle.Render(" deny")
+	foot := choices
+	if truncated {
+		foot = dimStyle.Render(fmt.Sprintf("… +%d more · e expand", len(all)-len(shown))) + "\n" + choices
+	}
+	return title + "\n" + body + "\n\n" + foot
+}
+
+// truncRunes clips s to at most max display runes, marking the cut with an ellipsis.
+func truncRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	if max < 1 {
+		return ""
+	}
+	return string(r[:max-1]) + "…"
 }
 
 // colorizeReport tints the status glyph at the start of each phase line (✓ green,

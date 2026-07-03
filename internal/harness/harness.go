@@ -10,12 +10,21 @@ package harness
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/revelara-ai/orion/internal/budget"
 	"github.com/revelara-ai/orion/internal/llm"
 	"github.com/revelara-ai/orion/internal/tools"
+)
+
+// Decision is the outcome of an Approve hook for a destructive tool.
+type Decision int
+
+const (
+	DecisionAllow Decision = iota // run the tool
+	DecisionDeny                  // do not run it; tell the model
 )
 
 // EventKind classifies a streamed loop event (rendered by the TUI).
@@ -65,6 +74,12 @@ type Loop struct {
 	Supervisor Supervisor
 	// CostPerToken optionally prices tokens for the budget (dollars). 0 = tokens only.
 	CostPerToken float64
+	// Approve (may be nil) is consulted before dispatching a tool whose Safety
+	// RequiresApproval (acts in the developer's environment). On DecisionDeny the tool is
+	// NOT run and a denial message is fed back to the model so it adapts. Other tools —
+	// including internal Destructive spec/change tools — never consult it. Subagents
+	// leave it nil (headless).
+	Approve func(ctx context.Context, name string, input json.RawMessage, safety tools.Safety) Decision
 }
 
 // Run advances the conversation by one developer turn: it sends the conversation
@@ -138,6 +153,17 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 func (l *Loop) dispatch(ctx context.Context, tu llm.ToolUse) (string, bool) {
 	if l.Tools == nil {
 		return fmt.Sprintf("no tools registered (requested %q)", tu.Name), true
+	}
+	// Gate a tool that acts in the developer's environment on the approval hook (when
+	// set). A denial short-circuits dispatch and tells the model — it never crashes, it
+	// adapts. Internal state-mutating tools (Destructive but not RequiresApproval) are
+	// NOT gated.
+	if l.Approve != nil {
+		if t, ok := l.Tools.Get(tu.Name); ok && t.Safety.RequiresApproval {
+			if l.Approve(ctx, tu.Name, tu.Input, t.Safety) == DecisionDeny {
+				return "The user denied permission to run " + tu.Name + "; do not retry it — adapt or ask them what to do instead.", true
+			}
+		}
 	}
 	return l.Tools.Dispatch(ctx, tu.Name, tu.Input)
 }

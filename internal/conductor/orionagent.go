@@ -27,12 +27,13 @@ type OrionAgent struct {
 
 	mu       sync.Mutex
 	sessions map[string][]llm.Message
-	changes  map[string]*changeSession // brownfield change-flow state, per session
+	changes  map[string]*changeSession  // brownfield change-flow state, per session
+	allowed  map[string]map[string]bool // session → tool names the developer allow-always'd
 }
 
 // NewOrionAgent builds the native agent over the given model provider.
 func NewOrionAgent(p llm.Provider, c *orchestrator.Conductor, role RoleTemplate) *OrionAgent {
-	return &OrionAgent{provider: p, conductor: c, role: role, sessions: map[string][]llm.Message{}, changes: map[string]*changeSession{}}
+	return &OrionAgent{provider: p, conductor: c, role: role, sessions: map[string][]llm.Message{}, changes: map[string]*changeSession{}, allowed: map[string]map[string]bool{}}
 }
 
 // changeSessionFor returns the (persistent, cross-turn) brownfield change state for a session,
@@ -72,6 +73,7 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 		Tools:      specTools(a.conductor, a.provider, a.changeSessionFor(sessionID)),
 		System:     a.systemPrompt(),
 		Supervisor: harness.Supervisor{MaxIterations: 16, Budget: a.conductor.Budget()},
+		Approve:    a.approver(sessionID, ask), // per-tool approval prompt for mutating tools
 	}
 	convo, _, err := loop.Run(ctx, convo, func(e harness.Event) {
 		switch e.Kind {
