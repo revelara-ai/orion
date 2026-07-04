@@ -37,13 +37,22 @@ func TestSubagentSurfacesInnerActivity(t *testing.T) {
 	if _, err := tool.Run(ctx, json.RawMessage(`{"task":"grep for X","tools":["grep"]}`)); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	var sawDepth1 bool
-	for _, u := range got {
-		if u.Kind == acp.ActivityKind && u.Depth == 1 {
-			sawDepth1 = true
+	var running *acp.Update
+	for i := range got {
+		if got[i].Kind == acp.ActivityKind && got[i].Depth == 1 && got[i].Status == "running" {
+			running = &got[i]
+			break
 		}
 	}
-	if !sawDepth1 {
-		t.Fatalf("no Depth:1 subagent activity surfaced; got %d updates: %+v", len(got), got)
+	if running == nil {
+		t.Fatalf("no Depth:1 running subagent activity surfaced; got %d updates: %+v", len(got), got)
+	}
+	// The update must carry the inner tool name and a non-empty subagent label —
+	// a structurally-correct-but-content-wrong emit would otherwise pass.
+	if running.Text != "grep" {
+		t.Fatalf("Depth:1 activity should name the inner tool 'grep', got %q", running.Text)
+	}
+	if running.Actor == "" {
+		t.Fatalf("Depth:1 activity must carry a subagent label (Actor), got empty")
 	}
 }
