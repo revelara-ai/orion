@@ -854,7 +854,11 @@ func (m Conversation) View() string {
 
 	// Activity pane: rendered once here so its height can be subtracted from the
 	// transcript viewport before we call m.vp.View() (the layout is height-exact).
-	act := m.activity.render(paneW, m.inFlight)
+	// A pending permission BLOCKS the turn on the human — nothing is "working" — so
+	// the live pane is suppressed rather than wedged between the approval card and the
+	// y/a/n prompt (the collision). inFlight stays true across the gate, so the pane
+	// returns as soon as the developer answers.
+	act := m.activity.render(paneW, m.inFlight && m.pendingPerm == nil)
 
 	// Shrink the viewport height for any chrome inserted between the transcript
 	// and the input (activity pane and/or palette). This must happen before
