@@ -51,6 +51,8 @@ func phaseGlyph(status string) string {
 		return "✓"
 	case "fail":
 		return "✗"
+	case "warn":
+		return "⚠"
 	default:
 		return "⠋"
 	}
@@ -87,10 +89,16 @@ func (a *activityModel) apply(u acp.Update) {
 		return
 	}
 	a.bus.EmitActivity(u.Actor, u.Text, u.Depth, u.Status)
+	if u.Text != "" {
+		a.pushLog(fmt.Sprintf("%s · %s", u.Actor, u.Text))
+	}
 
-	// Build phases (depth 0, a known phase name) drive the phase strip.
+	// Build phases (depth 0, a known phase name) drive ONLY the phase strip.
+	// They must NOT touch the actor-stack — the Depth:0 tool frame (e.g.
+	// "build_service") must remain pinned while its phases stream to the strip.
 	if u.Depth == 0 && isPhaseName(u.Text) {
 		a.setPhase(u.Text, u.Status)
+		return
 	}
 
 	switch u.Status {
@@ -98,9 +106,6 @@ func (a *activityModel) apply(u acp.Update) {
 		a.popTo(u.Depth) // resolve this frame and anything deeper
 	default: // running
 		a.pushOrReplace(actorFrame{actor: u.Actor, activity: u.Text, depth: u.Depth})
-	}
-	if u.Text != "" {
-		a.pushLog(fmt.Sprintf("%s · %s", u.Actor, u.Text))
 	}
 }
 
@@ -146,13 +151,14 @@ func (a *activityModel) pushLog(line string) {
 }
 
 // finish computes the one-line idle summary and clears the live stack.
+// Only status "fail" is a hard failure; "warn" is advisory and does NOT produce a ✗ summary.
 func (a *activityModel) finish() {
 	var failed, done []string
 	for _, p := range a.phases {
 		switch p.status {
 		case "fail":
 			failed = append(failed, p.name)
-		case "done":
+		case "done", "warn":
 			done = append(done, p.name)
 		}
 	}
@@ -173,7 +179,8 @@ func (a *activityModel) reset() {
 
 func isPhaseName(s string) bool {
 	switch strings.ToLower(s) {
-	case "decompose", "cluster", "reliabilitycontext", "generate", "align", "prove", "deliver", "queue":
+	case "decompose", "cluster", "reliabilitycontext", "generate", "align", "prove", "deliver", "queue",
+		"diagnose", "escalate", "integrate", "systemvalidate":
 		return true
 	}
 	return false
