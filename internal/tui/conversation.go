@@ -143,6 +143,9 @@ type Conversation struct {
 	bannerID     Identity
 	bannerSet    bool
 
+	// activity is the live per-turn actor stack, phase strip, and log ring (Task 5).
+	activity activityModel
+
 	// commands are the injected admin/management slash-commands (or-dz9).
 	commands []Command
 	// paletteIdx is the highlighted row in the command palette (shown while the input is a bare
@@ -185,7 +188,9 @@ func NewConversation(client *ACPClient, sid string, oc *orchestrator.Conductor, 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(cLavender) // the star-glow accent
-	return Conversation{client: client, sid: sid, oc: oc, gate: gate, input: ti, sp: sp}
+	conv := Conversation{client: client, sid: sid, oc: oc, gate: gate, input: ti, sp: sp}
+	conv.activity = newActivityModel()
+	return conv
 }
 
 // Init satisfies tea.Model.
@@ -206,6 +211,13 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case streamMsg:
+		// Activity updates fold into the activity model only — they NEVER become
+		// transcript bubbles. Return early before the agent_message accumulation.
+		if t.u.Kind == acp.ActivityKind {
+			m.activity.apply(t.u)
+			m.render()
+			return m, nil
+		}
 		// Streamed text deltas (agent_message) accumulate into the current Orion
 		// bubble so a turn renders as one growing message, not one bubble per token.
 		// Other kinds (tool_call, plan, spec, permission) are discrete bubbles, and
@@ -247,6 +259,7 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	case turnDoneMsg:
 		m.inFlight = false
+		m.activity.finish()
 		if t.err != nil {
 			m.msgs = append(m.msgs, msg{role: "orion", text: "error: " + t.err.Error()})
 		}
@@ -439,6 +452,7 @@ func (m *Conversation) handleEnter() tea.Cmd {
 	m.recordHistory(text)
 	m.msgs = append(m.msgs, msg{role: "you", text: text})
 	m.inFlight = true
+	m.activity.reset()
 	m.render()
 	return tea.Batch(m.promptCmd(text), m.sp.Tick)
 }
