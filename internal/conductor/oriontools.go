@@ -358,7 +358,12 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				// SHADOW behind ORION_MODULE_PROPOSER; the oracle still drives).
 				c.SetModuleProposer(NativeModuleProposer(provider))
 			}
-			res, err := BuildAndProve(ctx, st, gen, aligner, func(e PhaseEvent) { phases = append(phases, e) }, OutputRoot())
+			res, err := BuildAndProve(ctx, st, gen, aligner, func(e PhaseEvent) {
+				phases = append(phases, e)
+				if emit != nil {
+					emit(acp.Activity("Orion", e.Phase, 0, phaseStatusToActivity(e.Status)))
+				}
+			}, OutputRoot())
 			if err != nil {
 				return "", err
 			}
@@ -569,6 +574,19 @@ func storeRedButton(c *orchestrator.Conductor) actuation.RedButton {
 		return actuation.RedButton{}
 	}
 	return actuation.RedButton{Path: filepath.Join(c.Store().Dir(), "red_button")}
+}
+
+// phaseStatusToActivity maps a PhaseStatus to an activity status string for
+// streaming to the TUI activity panel.
+func phaseStatusToActivity(s PhaseStatus) string {
+	switch s {
+	case PhaseDone:
+		return "done"
+	case PhaseWarn:
+		return "fail"
+	default:
+		return "running"
+	}
 }
 
 // gitRun runs `git -C dir <args...>` and returns the combined output and exit code, WITHOUT
