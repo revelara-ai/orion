@@ -174,3 +174,55 @@ func TestActivityPaneShowsStackThenCollapses(t *testing.T) {
 		t.Fatalf("idle view must collapse the live pane:\n%s", m.View())
 	}
 }
+
+// TestIdleSummaryHeightExact: after a turn completes with at least one done phase, the
+// activity model produces a non-empty one-line idle summary. The layout must still fill
+// the terminal exactly (header + transcript + summary + input + hint == m.height rows).
+func TestIdleSummaryHeightExact(t *testing.T) {
+	m := newTestConvo(t)
+	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.inFlight = true
+	// Feed a depth-0 known phase name to "done" so finish() produces a summary line.
+	m = feed(m, streamMsg{u: acp.Activity("Orion", "Generate", 0, "done")})
+	// turnDoneMsg calls activity.finish(), sets inFlight=false, and populates a.summary.
+	m = feed(m, turnDoneMsg{})
+
+	v := m.View()
+	// Confirm the idle summary is present (proves the test actually exercises the summary path).
+	if !strings.Contains(v, "Generate") {
+		t.Fatalf("idle summary missing 'Generate' marker:\n%s", v)
+	}
+	// The layout must remain height-exact even with the one-line summary inserted.
+	if got := lipgloss.Height(v); got != 24 {
+		t.Fatalf("layout not height-exact with idle summary: %d, want 24\n%s", got, v)
+	}
+}
+
+// TestInFlightPlusPaletteHeightExact: the highest-risk compound state — an in-flight
+// activity pane AND the command palette both rendered simultaneously. The layout must
+// still fill the terminal exactly.
+func TestInFlightPlusPaletteHeightExact(t *testing.T) {
+	m := newTestConvo(t)
+	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.inFlight = true
+	// Build the activity stack so the in-flight pane renders.
+	m = feed(m, streamMsg{u: acp.Activity("Orion", "build_service", 0, "running")})
+
+	// Set the input to a bare "/" prefix — paletteMatches() matches all builtins
+	// (help, clear, compact, context, model, exit) without needing injected commands.
+	m.input.SetValue("/")
+
+	v := m.View()
+	// Confirm the activity pane is present.
+	if !strings.Contains(v, "build_service") {
+		t.Fatalf("in-flight activity pane missing 'build_service':\n%s", v)
+	}
+	// Confirm the command palette is present (at least one known builtin name visible).
+	if !strings.Contains(v, "help") {
+		t.Fatalf("command palette not rendered (expected 'help' entry):\n%s", v)
+	}
+	// Both panes must coexist without breaking height-exactness.
+	if got := lipgloss.Height(v); got != 24 {
+		t.Fatalf("layout not height-exact with in-flight pane + palette: %d, want 24\n%s", got, v)
+	}
+}
