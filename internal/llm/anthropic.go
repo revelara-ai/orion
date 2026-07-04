@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/revelara-ai/orion/internal/llmclient"
@@ -59,6 +60,60 @@ func NewAnthropic(apiKey, model string) *Anthropic {
 }
 
 func (a *Anthropic) Name() string { return "anthropic" }
+
+// ContextWindow reports the model's context window in tokens. Implements the
+// optional llm.ContextWindow capability so the context manager governs the
+// Anthropic brain precisely. It is PER-MODEL because /model can swap to a
+// smaller-window model at runtime — a blanket 1M would put the policy thresholds
+// above a 200K model's real ceiling and proactive clearing would never engage.
+func (a *Anthropic) ContextWindow() int { return anthropicContextWindow(a.model) }
+
+// anthropicContextWindow maps a model id to its context window in tokens via a
+// WHITELIST of the known 1M-context models, defaulting everything else to 200K.
+// The default direction is deliberate: legacy models (Opus 4.5/4.1/4.0, Sonnet
+// 4.5, older) and unrecognized ids are 200K, and under-reporting the window only
+// over-clears (safe) whereas over-reporting it would defeat proactive clearing
+// and brick the session — the exact failure a naive contains("opus") caused.
+// (Model→window facts per the claude-api reference; update when a new 1M model
+// ships. A live Models API lookup — max_input_tokens — is the follow-up.)
+// MaxOutputTokens reports the model's max OUTPUT cap (far below the context
+// window). Implements the optional llm.MaxOutputTokens capability so the harness
+// never requests more output than the model allows.
+func (a *Anthropic) MaxOutputTokens() int { return anthropicMaxOutput(a.model) }
+
+// anthropicMaxOutput maps a model id to its max output tokens, CONSERVATIVELY (it
+// only ever under-estimates, never over — over-estimating causes an unrecoverable
+// 400). The 1M-context tier supports 128K output (we request far less); the 4.x
+// mid line supports ≥32K; legacy/unknown default to the universal 4096 floor so an
+// unrecognized id is never bricked by an over-large max_tokens.
+func anthropicMaxOutput(model string) int {
+	m := strings.ToLower(model)
+	for _, big := range []string{"opus-4-6", "opus-4-7", "opus-4-8", "sonnet-4-6", "sonnet-5", "fable-5", "mythos-5", "mythos-preview"} {
+		if strings.Contains(m, big) {
+			return 64000
+		}
+	}
+	for _, mid := range []string{"opus-4-5", "opus-4-1", "opus-4-0", "sonnet-4-5", "haiku-4-5"} {
+		if strings.Contains(m, mid) {
+			return 16384
+		}
+	}
+	return 4096
+}
+
+func anthropicContextWindow(model string) int {
+	m := strings.ToLower(model)
+	for _, oneM := range []string{
+		"opus-4-6", "opus-4-7", "opus-4-8",
+		"sonnet-4-6", "sonnet-5",
+		"fable-5", "mythos-5", "mythos-preview",
+	} {
+		if strings.Contains(m, oneM) {
+			return 1_000_000
+		}
+	}
+	return 200_000
+}
 
 // Models returns the configured model as tool-capable (Opus/Sonnet 4.x).
 func (a *Anthropic) Models(context.Context) ([]ModelInfo, error) {
@@ -196,6 +251,11 @@ func (a *Anthropic) do(ctx context.Context, body []byte) (*ChatResponse, error) 
 		return nil, &llmclient.RetryAfter{After: parseRetryAfter(resp.Header), Err: fmt.Errorf("anthropic: status %d", resp.StatusCode)}
 	case resp.StatusCode >= 500:
 		return nil, &llmclient.Retryable{Err: fmt.Errorf("anthropic: status %d", resp.StatusCode)}
+	case resp.StatusCode == 400 && isContextOverflow(string(rb)):
+		// The prompt exceeded the context window. Surface it as the sentinel so the
+		// harness shrinks-and-retries instead of bricking the session. NOT retryable
+		// by llmclient — retrying the identical over-long body just fails again.
+		return nil, fmt.Errorf("anthropic: %w (status 400): %s", ErrContextOverflow, truncate(string(rb), 200))
 	case resp.StatusCode != 200:
 		return nil, fmt.Errorf("anthropic: status %d: %s", resp.StatusCode, truncate(string(rb), 300))
 	}

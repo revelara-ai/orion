@@ -107,6 +107,16 @@ func (a *Anthropic) doStream(ctx context.Context, body []byte, onText func(strin
 		return nil, &llmclient.RetryAfter{After: parseRetryAfter(resp.Header), Err: fmt.Errorf("anthropic: status %d", resp.StatusCode)}
 	case resp.StatusCode >= 500:
 		return nil, &llmclient.Retryable{Err: fmt.Errorf("anthropic: status %d", resp.StatusCode)}
+	case resp.StatusCode == 400:
+		// A too-long prompt arrives as an HTTP 400 BEFORE the stream. Map it to the
+		// sentinel — the harness drives ChatStream exclusively, so without this the
+		// reactive shrink-and-retry is dead code and the overflow still bricks the
+		// session. NOT retryable: re-sending the identical body just fails again.
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		if isContextOverflow(string(rb)) {
+			return nil, fmt.Errorf("anthropic: %w (status 400): %s", ErrContextOverflow, truncate(string(rb), 200))
+		}
+		return nil, fmt.Errorf("anthropic: status 400: %s", truncate(string(rb), 300))
 	case resp.StatusCode != 200:
 		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 		return nil, fmt.Errorf("anthropic: status %d: %s", resp.StatusCode, truncate(string(rb), 300))
@@ -190,6 +200,12 @@ func (a *Anthropic) doStream(ctx context.Context, body []byte, onText func(strin
 			if ev.Error != nil && ev.Error.Message != "" {
 				msg = ev.Error.Message
 			}
+			// An overflow reported in-stream (before any text) is recoverable: surface
+			// the sentinel so the harness shrinks and retries. Once text is emitted a
+			// retry would duplicate it, so only map when nothing has been shown yet.
+			if !emitted && isContextOverflow(msg) {
+				return nil, fmt.Errorf("anthropic: %w (stream error): %s", ErrContextOverflow, truncate(msg, 200))
+			}
 			return nil, terminal("anthropic: stream", fmt.Errorf("%s", msg))
 		}
 	}
@@ -218,8 +234,15 @@ func (a *Anthropic) doStream(ctx context.Context, body []byte, onText func(strin
 				input = "{}"
 			}
 			if !json.Valid([]byte(input)) {
-				// Truncated/garbled tool arguments — fail the turn rather than dispatch
-				// a tool with half-formed input.
+				// The response hit max_tokens mid tool-input — a DETERMINISTIC output-limit
+				// truncation (the file is too large for the cap), NOT a transient stream
+				// cut. Report it clearly and NON-retryably (retrying the identical request
+				// fails identically) so it isn't misread as provider infra.
+				if out.StopReason == StopMaxTokens {
+					return nil, fmt.Errorf("anthropic: tool_use input for %s was cut off by max_tokens — the output is too large for the token limit (raise the generation max_tokens or write a smaller change)", b.name)
+				}
+				// Otherwise: a genuinely truncated/garbled stream — fail the turn rather
+				// than dispatch a tool with half-formed input.
 				return nil, terminal("anthropic: incomplete tool_use input for "+b.name, errTruncatedStream)
 			}
 			out.Content = append(out.Content, ContentBlock{Type: BlockToolUse, ToolUse: &ToolUse{ID: b.id, Name: b.name, Input: json.RawMessage(input)}})

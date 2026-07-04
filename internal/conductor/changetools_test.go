@@ -219,3 +219,23 @@ func initVerdictRepo(t *testing.T) string {
 	git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "init")
 	return dir
 }
+
+// TestProposeCasesRefusesWhenAlreadyRatified: after the oracle is ratified,
+// re-drafting via propose_cases must be refused (never silently replace the
+// ratified cases) — the trust gate requires the oracle to predate the diff. This
+// guards against a post-compaction model re-proposing after losing that memory.
+func TestProposeCasesRefusesWhenAlreadyRatified(t *testing.T) {
+	cs := &changeSession{intent: "add Severity()", ratified: true}
+	r := specTools(orchestrator.NewWithStore(openStore(t)), nil, cs, nil)
+	pc, ok := r.Get("propose_cases")
+	if !ok {
+		t.Fatal("propose_cases not registered")
+	}
+	_, err := pc.Run(context.Background(), json.RawMessage(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "ratified") {
+		t.Fatalf("propose_cases must refuse to re-draft a ratified oracle, got err=%v", err)
+	}
+	if !cs.ratified {
+		t.Fatal("propose_cases must not clear the ratified flag when refusing")
+	}
+}

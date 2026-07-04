@@ -2,10 +2,13 @@ package conductor
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/harness"
@@ -29,13 +32,14 @@ type OrionAgent struct {
 	sessions map[string][]llm.Message
 	changes  map[string]*changeSession       // brownfield change-flow state, per session
 	allowed  map[string]map[string]bool      // session → tool names the developer allow-always'd
+	starts   map[string]time.Time            // session → first-seen time (names the on-disk transcript)
 	model    string                          // current model id (for /model)
 	rebuild  func(model string) llm.Provider // rebuilds the provider for a new model (nil = no switch)
 }
 
 // NewOrionAgent builds the native agent over the given model provider.
 func NewOrionAgent(p llm.Provider, c *orchestrator.Conductor, role RoleTemplate) *OrionAgent {
-	return &OrionAgent{provider: p, conductor: c, role: role, sessions: map[string][]llm.Message{}, changes: map[string]*changeSession{}, allowed: map[string]map[string]bool{}}
+	return &OrionAgent{provider: p, conductor: c, role: role, sessions: map[string][]llm.Message{}, changes: map[string]*changeSession{}, allowed: map[string]map[string]bool{}, starts: map[string]time.Time{}}
 }
 
 // SetModel records the current model id and a factory that rebuilds the provider for a
@@ -80,21 +84,41 @@ func (a *OrionAgent) Serve(ctx context.Context, r io.Reader, w io.Writer) error 
 func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream func(acp.Update), ask acp.AskFunc) (acp.PromptResult, error) {
 	end := acp.PromptResult{StopReason: "end_turn"}
 
-	a.mu.Lock()
-	convo := append([]llm.Message(nil), a.sessions[sessionID]...)
-	a.mu.Unlock()
-	convo = append(convo, llm.TextMessage(llm.RoleUser, text))
-
 	prov := a.currentProvider() // may have been swapped by a /model control op
 	emit := func(u acp.Update) { stream(u) }
+
+	a.mu.Lock()
+	history := append([]llm.Message(nil), a.sessions[sessionID]...)
+	a.mu.Unlock()
+	userMsg := llm.TextMessage(llm.RoleUser, text)
+
+	reg := specTools(a.conductor, prov, a.changeSessionFor(sessionID), emit)
+	toolSpecs := reg.Specs()
+
+	// PROACTIVE compaction: if the HISTORY's reducible dialogue already dominates the
+	// window, summarize BEFORE the turn so we don't burn an overflow round-trip.
+	// Gated on the history (not the current message) so a single huge paste doesn't
+	// trigger a pointless compaction of a small history.
+	compacted := false
+	if dialogueDominates(history, prov) {
+		stream(acp.Update{Kind: "agent_message", Text: "Compacting the conversation to stay within context…"})
+		if _, _, cerr := a.compactSession(ctx, sessionID); cerr == nil {
+			a.mu.Lock()
+			history = append([]llm.Message(nil), a.sessions[sessionID]...)
+			a.mu.Unlock()
+			compacted = true
+		}
+	}
+	convo := append(history, userMsg)
+
 	loop := harness.Loop{
 		Provider:   prov,
-		Tools:      specTools(a.conductor, prov, a.changeSessionFor(sessionID), emit),
+		Tools:      reg,
 		System:     a.systemPrompt(),
 		Supervisor: harness.Supervisor{MaxIterations: 16, Budget: a.conductor.Budget()},
 		Approve:    a.approver(sessionID, ask), // per-tool approval prompt for mutating tools
 	}
-	convo, _, err := loop.Run(ctx, convo, func(e harness.Event) {
+	onEvent := func(e harness.Event) {
 		switch e.Kind {
 		case harness.EventThought:
 			// Stream every non-empty delta verbatim — whitespace deltas (spaces,
@@ -112,11 +136,51 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 				stream(acp.Update{Kind: "build_report", Text: e.Text})
 			}
 		}
-	})
+	}
+	convo, _, err := loop.Run(ctx, convo, onEvent)
+
+	// REACTIVE compaction: mechanical clearing in the harness couldn't fit the turn
+	// (an irreducible text/dialogue floor). Summarize and retry the turn ONCE — this
+	// completes the unbrick for the case clearing can't help.
+	if errors.Is(err, llm.ErrContextOverflow) {
+		if compacted {
+			// Proactive compaction already ran this turn and the turn STILL overflowed —
+			// re-summarizing a fresh brief or re-sending the same compacted turn won't
+			// help. Keep the clean (already-compacted) session and surface it.
+			a.mu.Lock()
+			convo = append([]llm.Message(nil), a.sessions[sessionID]...)
+			a.mu.Unlock()
+			err = fmt.Errorf("this turn is too large to fit the model's context window, even after compacting the conversation")
+		} else {
+			stream(acp.Update{Kind: "agent_message", Text: "Context is full — compacting the conversation and retrying…"})
+			count, _, cerr := a.compactSession(ctx, sessionID)
+			a.mu.Lock()
+			base := append([]llm.Message(nil), a.sessions[sessionID]...)
+			a.mu.Unlock()
+			switch {
+			case cerr != nil || count == 0:
+				// Compaction failed or changed nothing — do NOT persist the over-window
+				// conversation (that would brick every future turn). Keep the clean base.
+				convo = base
+			default:
+				retry := append(base, userMsg)
+				if fitsWindow(a.systemPrompt(), retry, toolSpecs, prov) {
+					convo, _, err = loop.Run(ctx, retry, onEvent)
+				} else {
+					// Even the compacted turn is too large (e.g. a single huge pasted
+					// message): don't re-send an over-window prompt. Keep the compacted
+					// session and report.
+					convo = base
+					err = fmt.Errorf("this message is too large to fit the model's context window, even after compacting the conversation")
+				}
+			}
+		}
+	}
 
 	a.mu.Lock()
 	a.sessions[sessionID] = convo
 	a.mu.Unlock()
+	a.persistSession(sessionID, convo) // best-effort disk record so a failing session is recoverable
 
 	if err != nil {
 		stream(acp.Update{Kind: "agent_message", Text: "I hit a problem driving this turn: " + err.Error()})
