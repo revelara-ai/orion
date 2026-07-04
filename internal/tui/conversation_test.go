@@ -153,6 +153,33 @@ func TestSpendIsSurfacedLiveInTUI(t *testing.T) {
 	}
 }
 
+// TestActivityPaneSuppressedDuringPermission: a pending permission BLOCKS the turn
+// on the human — inFlight stays true, but nothing is "working". The live activity
+// pane must not render, or it wedges between the approval card and the y/a/n prompt
+// (the collision).
+func TestActivityPaneSuppressedDuringPermission(t *testing.T) {
+	m := newTestConvo(t)
+	m.inFlight = true
+	m = feed(m, streamMsg{u: acp.Activity("Orion", "build_service", 0, "running")})
+	if !strings.Contains(m.View(), "build_service") {
+		t.Fatalf("precondition: in-flight activity pane should show the running activity:\n%s", m.View())
+	}
+
+	// A tool-permission request arrives mid-turn (the turn is now BLOCKED on the human).
+	reply := make(chan acp.PermissionResult, 1)
+	m = feed(m, permMsg{req: acp.PermissionRequest{Kind: "tool", Tool: "edit_file", Preview: "--- a\n+++ b"}, reply: reply})
+
+	if strings.Contains(m.View(), "build_service") {
+		t.Fatalf("activity pane must be suppressed while a permission is pending (it collides with the approval card):\n%s", m.View())
+	}
+	if !strings.Contains(m.View(), "edit_file") {
+		t.Fatalf("permission card must still render:\n%s", m.View())
+	}
+	if got := lipgloss.Height(m.View()); got != 24 {
+		t.Fatalf("layout not height-exact during permission: %d, want 24", got)
+	}
+}
+
 // TestActivityPaneShowsStackThenCollapses: in-flight activity pane surfaces the
 // subagent actor and stays height-exact; collapsing to idle removes the live pane.
 func TestActivityPaneShowsStackThenCollapses(t *testing.T) {
