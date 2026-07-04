@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/revelara-ai/orion/internal/acp"
 )
@@ -57,6 +58,17 @@ func TestActivityPhaseDedupAndFailSummary(t *testing.T) {
 	}
 	if strings.HasPrefix(a.summary, "✓") {
 		t.Fatalf("summary must not start with ✓ when a phase failed; got %q", a.summary)
+	}
+}
+
+func TestActivityHeartbeatNudgesWhenSilent(t *testing.T) {
+	a := newActivityModel()
+	a.apply(acp.Activity("Orion", "prove", 0, "running"))
+	before := len(a.bus.Events())
+	// Simulate a heartbeat tick after the interval by forcing the bus to tick.
+	a.bus.Tick(a.bus.nowForTest().Add(3 * time.Second)) // heartbeat due
+	if len(a.bus.Events()) <= before {
+		t.Fatalf("heartbeat did not append a liveness event")
 	}
 }
 

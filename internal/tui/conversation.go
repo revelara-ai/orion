@@ -100,6 +100,12 @@ var (
 
 // ── async message types ──────────────────────────────────────────────────────
 
+type activityTickMsg time.Time
+
+func activityTick() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return activityTickMsg(t) })
+}
+
 type streamMsg struct{ u acp.Update } // a streamed session/update
 type turnDoneMsg struct{ err error }  // a prompt turn completed
 type permMsg struct {                 // the agent requested a permission
@@ -288,6 +294,15 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.sp, cmd = m.sp.Update(t)
 		return m, cmd
 
+	case activityTickMsg:
+		if !m.inFlight {
+			return m, nil
+		}
+		if m.activity.bus.Tick(time.Time(t)) {
+			m.render() // a heartbeat was emitted → refresh the panel
+		}
+		return m, activityTick()
+
 	case tea.KeyMsg:
 		wasArmed := m.quitArmed
 		m.quitArmed = false // any keypress disarms the pending double-Ctrl+C quit
@@ -454,7 +469,7 @@ func (m *Conversation) handleEnter() tea.Cmd {
 	m.inFlight = true
 	m.activity.reset()
 	m.render()
-	return tea.Batch(m.promptCmd(text), m.sp.Tick)
+	return tea.Batch(m.promptCmd(text), m.sp.Tick, activityTick())
 }
 
 // isRuneKey reports whether a key message is a single bare rune r (a tool-permission
