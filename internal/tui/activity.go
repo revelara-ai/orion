@@ -82,7 +82,7 @@ func (a *activityModel) popTo(depth int) {
 
 func (a *activityModel) setPhase(name, status string) {
 	for i := range a.phases {
-		if a.phases[i].name == name {
+		if strings.EqualFold(a.phases[i].name, name) {
 			a.phases[i].status = status
 			return
 		}
@@ -99,11 +99,18 @@ func (a *activityModel) pushLog(line string) {
 
 // finish computes the one-line idle summary and clears the live stack.
 func (a *activityModel) finish() {
-	var done []string
+	var failed, done []string
 	for _, p := range a.phases {
-		done = append(done, p.name)
+		switch p.status {
+		case "fail":
+			failed = append(failed, p.name)
+		case "done":
+			done = append(done, p.name)
+		}
 	}
-	if len(done) > 0 {
+	if len(failed) > 0 {
+		a.summary = "✗ " + strings.Join(failed, "/")
+	} else if len(done) > 0 {
 		a.summary = "✓ " + strings.Join(done, "/")
 	} else {
 		a.summary = ""
