@@ -78,6 +78,9 @@ func (b *ProgressBus) Tick(now time.Time) bool {
 	return true
 }
 
+// nowForTest exposes the bus clock for unit tests that need to fabricate a future time.
+func (b *ProgressBus) nowForTest() time.Time { return b.now() }
+
 // Events returns a snapshot of all events.
 func (b *ProgressBus) Events() []ProgressEvent {
 	b.mu.Lock()
