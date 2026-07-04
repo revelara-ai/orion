@@ -578,11 +578,15 @@ func storeRedButton(c *orchestrator.Conductor) actuation.RedButton {
 
 // phaseStatusToActivity maps a PhaseStatus to an activity status string for
 // streaming to the TUI activity panel.
+// PhaseWarn maps to "warn" (advisory) — only PhaseFailed maps to "fail" (hard failure).
+// The real pass/fail verdict lives in the build_report card, not the phase strip.
 func phaseStatusToActivity(s PhaseStatus) string {
 	switch s {
 	case PhaseDone:
 		return "done"
 	case PhaseWarn:
+		return "warn"
+	case PhaseFailed:
 		return "fail"
 	default:
 		return "running"

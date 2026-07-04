@@ -72,6 +72,57 @@ func TestActivityHeartbeatNudgesWhenSilent(t *testing.T) {
 	}
 }
 
+// TestDiagnosePhaseDoesNotTouchStack verifies that a phase update (Depth:0,
+// known phase name) drives ONLY the phase strip and does not push/pop the
+// actor-stack. The "build_service" tool frame must remain pinned while phases
+// stream to the strip.
+func TestDiagnosePhaseDoesNotTouchStack(t *testing.T) {
+	a := newActivityModel()
+	// Push a Depth:0 tool frame — this is what the conductor emits when calling build_service.
+	a.apply(acp.Activity("Orion", "build_service", 0, "running"))
+	if len(a.stack) == 0 || a.stack[0].activity != "build_service" {
+		t.Fatalf("expected build_service frame on stack; stack=%+v", a.stack)
+	}
+
+	// Apply a Diagnose phase update (Depth:0, phase name).
+	a.apply(acp.Activity("Orion", "Diagnose", 0, "running"))
+
+	// Stack must still contain the build_service frame — phase must NOT pop it.
+	if len(a.stack) == 0 {
+		t.Fatalf("actor stack is empty after Diagnose phase; expected build_service frame to remain")
+	}
+	found := false
+	for _, f := range a.stack {
+		if f.activity == "build_service" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("build_service frame was removed from stack by phase update; stack=%+v", a.stack)
+	}
+
+	// Phase strip must record Diagnose.
+	if !hasPhase(a.phases, "Diagnose", "running") {
+		t.Fatalf("Diagnose phase not in strip; phases=%+v", a.phases)
+	}
+}
+
+// TestWarnPhaseFinishSummaryNotFailure verifies that a phase with status "warn"
+// does NOT produce a ✗ summary in finish(). Only status "fail" is a hard failure.
+func TestWarnPhaseFinishSummaryNotFailure(t *testing.T) {
+	a := newActivityModel()
+	a.apply(acp.Activity("Orion", "Generate", 0, "done"))
+	a.apply(acp.Activity("Orion", "Diagnose", 0, "warn"))
+	a.finish()
+
+	if strings.HasPrefix(a.summary, "✗") {
+		t.Fatalf("summary must not start with ✗ for a warn phase; got %q", a.summary)
+	}
+	if a.summary == "" {
+		t.Fatalf("summary should not be empty when there are done/warn phases; got %q", a.summary)
+	}
+}
+
 func hasPhase(phases []phaseMark, name, status string) bool {
 	for _, p := range phases {
 		if p.name == name && p.status == status {
