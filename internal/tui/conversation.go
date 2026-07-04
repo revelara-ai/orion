@@ -93,9 +93,10 @@ var (
 	warnGlyph   = lipgloss.NewStyle().Foreground(cWarning)
 	failGlyph   = lipgloss.NewStyle().Foreground(cDanger)
 
-	cBorder   = lipgloss.Color("#362D50")                                                                    // divider on the void
-	transPane = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cBorder)               // top: transcript
-	inputPane = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cIndigo).Padding(0, 1) // bottom: input + status
+	cBorder      = lipgloss.Color("#362D50")                                                                        // divider on the void
+	transPane    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cBorder)                   // top: transcript
+	inputPane    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cIndigo).Padding(0, 1)    // bottom: input + status
+	activityPane = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cFaint)                    // middle: live activity (dim border)
 )
 
 // ── async message types ──────────────────────────────────────────────────────
@@ -835,7 +836,8 @@ func colorizeReport(s string) string {
 	return b.String()
 }
 
-// View renders banner, scrollable transcript, input, budget, hint.
+// View renders banner, scrollable transcript, activity pane (when in-flight or
+// carrying an idle summary), input, budget, hint.
 func (m Conversation) View() string {
 	if m.quitting {
 		return "Goodbye.\n"
@@ -849,6 +851,26 @@ func (m Conversation) View() string {
 	if palette == "" {
 		palette = m.renderAtPalette() // @-file completion popup (mutually exclusive with /palette)
 	}
+
+	// Activity pane: rendered once here so its height can be subtracted from the
+	// transcript viewport before we call m.vp.View() (the layout is height-exact).
+	act := m.activity.render(paneW, m.inFlight)
+
+	// Shrink the viewport height for any chrome inserted between the transcript
+	// and the input (activity pane and/or palette). This must happen before
+	// m.vp.View() so the bordered transcript pane renders the right number of rows
+	// in ALL states (empty, active, in-flight) — the layout is always height-exact.
+	if act != "" || palette != "" {
+		vpH := m.vp.Height
+		if act != "" {
+			vpH -= lipgloss.Height(act)
+		}
+		if palette != "" {
+			vpH -= lipgloss.Height(palette)
+		}
+		m.vp.Height = max(3, vpH)
+	}
+
 	body := m.vp.View()
 	if !m.ready || len(m.msgs) == 0 {
 		if m.bannerSet {
@@ -861,13 +883,16 @@ func (m Conversation) View() string {
 				es = warnGlyph.Render("⚠ Offline mode (deterministic)") +
 					dimStyle.Render(" — records single values only; it cannot grill or capture conditional behavior.\n   Set ANTHROPIC_API_KEY and restart for the full conversational spec build.\n\n"+emptyState)
 			}
-			body = dimStyle.Render(es)
+			raw := dimStyle.Render(es)
+			// When ready, constrain the empty-state body to the viewport height so the
+			// transcript pane renders the correct number of rows in all states (including
+			// in-flight with an activity pane) and the layout stays height-exact.
+			if m.ready {
+				body = lipgloss.NewStyle().Height(m.vp.Height).Width(paneW).Render(raw)
+			} else {
+				body = raw
+			}
 		}
-	} else if palette != "" {
-		// Active transcript: shrink the viewport by the palette's height so the total layout stays
-		// within the terminal (the palette renders between the transcript and the input).
-		m.vp.Height = max(3, m.vp.Height-lipgloss.Height(palette))
-		body = m.vp.View()
 	}
 
 	// Header: the Polaris identity line + the active brain (amber when offline).
@@ -899,6 +924,9 @@ func (m Conversation) View() string {
 	}
 
 	parts := []string{header, top}
+	if act != "" {
+		parts = append(parts, act)
+	}
 	if palette != "" {
 		parts = append(parts, palette)
 	}

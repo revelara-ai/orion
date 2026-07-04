@@ -8,6 +8,54 @@ import (
 	"github.com/revelara-ai/orion/internal/acp"
 )
 
+// render returns the activity pane (in-flight) or the collapsed summary (idle).
+// It returns "" when idle with no summary, so the caller can skip inserting it.
+func (a activityModel) render(width int, inFlight bool) string {
+	if !inFlight {
+		if a.summary == "" {
+			return ""
+		}
+		return dimStyle.Render("  " + a.summary)
+	}
+	var b strings.Builder
+	// actor stack as a tree
+	for i, f := range a.stack {
+		prefix := "  "
+		if f.depth > 0 || i > 0 {
+			prefix = "  " + strings.Repeat("  ", f.depth) + "↳ "
+		}
+		fmt.Fprintf(&b, "%s%s · %s\n", prefix, f.actor, f.activity)
+	}
+	// phase strip
+	if len(a.phases) > 0 {
+		var parts []string
+		for _, p := range a.phases {
+			parts = append(parts, p.name+" "+phaseGlyph(p.status))
+		}
+		fmt.Fprintf(&b, "  %s\n", strings.Join(parts, "  "))
+	}
+	// recent log
+	for _, l := range a.log {
+		fmt.Fprintf(&b, "  · %s\n", l)
+	}
+	body := strings.TrimRight(b.String(), "\n")
+	if body == "" {
+		body = "  …"
+	}
+	return activityPane.Width(width).Render(body)
+}
+
+func phaseGlyph(status string) string {
+	switch status {
+	case "done":
+		return "✓"
+	case "fail":
+		return "✗"
+	default:
+		return "⠋"
+	}
+}
+
 type actorFrame struct {
 	actor    string
 	activity string

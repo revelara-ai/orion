@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/orchestrator"
@@ -149,5 +150,27 @@ func TestSpendIsSurfacedLiveInTUI(t *testing.T) {
 	m.oc.Budget().Record(1234, 0.56)
 	if v := m.View(); !strings.Contains(v, "1234 tok") || !strings.Contains(v, "$0.56") {
 		t.Fatalf("live spend not surfaced:\n%s", v)
+	}
+}
+
+// TestActivityPaneShowsStackThenCollapses: in-flight activity pane surfaces the
+// subagent actor and stays height-exact; collapsing to idle removes the live pane.
+func TestActivityPaneShowsStackThenCollapses(t *testing.T) {
+	m := newTestConvo(t)
+	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.inFlight = true
+	m = feed(m, streamMsg{u: acp.Activity("Orion", "build_service", 0, "running")})
+	m = feed(m, streamMsg{u: acp.Activity("research", "web_search", 1, "running")})
+
+	if !strings.Contains(m.View(), "research") {
+		t.Fatalf("in-flight activity pane should show the subagent actor:\n%s", m.View())
+	}
+	if got := lipgloss.Height(m.View()); got != 24 {
+		t.Fatalf("layout not height-exact with activity pane: %d, want 24", got)
+	}
+
+	m = feed(m, turnDoneMsg{})
+	if strings.Contains(m.View(), "web_search") {
+		t.Fatalf("idle view must collapse the live pane:\n%s", m.View())
 	}
 }
