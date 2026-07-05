@@ -439,6 +439,16 @@ func (c *Conductor) RecallSpec(ctx context.Context) (spec.ExecutableSpec, error)
 	if err != nil {
 		return spec.ExecutableSpec{}, err
 	}
+	return c.recallSpecFor(ctx, proj, sp)
+}
+
+// recallSpecFor re-derives and anchor-verifies the accepted spec for an already-
+// resolved (project, spec) pair: it checks the spec is accepted, recompiles from
+// the stored decisions, and verifies the hash matches the persisted one (Trust
+// invariant 7). Shared by RecallSpec (active slot) and RecallLastProvenSpec
+// (delivered fallback) so both apply identical status + anchor checks. The caller
+// is responsible for having resolved the completeness gate to the project's type.
+func (c *Conductor) recallSpecFor(ctx context.Context, proj contextstore.Project, sp contextstore.Spec) (spec.ExecutableSpec, error) {
 	if sp.Status != "accepted" {
 		return spec.ExecutableSpec{}, fmt.Errorf("spec is not accepted (status=%s)", sp.Status)
 	}
@@ -454,6 +464,36 @@ func (c *Conductor) RecallSpec(ctx context.Context) (spec.ExecutableSpec, error)
 		return spec.ExecutableSpec{}, fmt.Errorf("spec anchor mismatch: stored=%s recomputed=%s (tampered?)", sp.Hash, es.Hash)
 	}
 	return es, nil
+}
+
+// RecallLastProvenSpec resolves the spec whose proven code the developer means by
+// "show me the code": the active accepted spec if one is in flight, otherwise the
+// most recently DELIVERED project's spec. On Accept, delivery moves the project out
+// of the active slot (or-v9f.1), so RecallSpec (active-only) can no longer see it —
+// yet the just-proven code is exactly what the developer is asking to inspect. This
+// fallback keeps `show_code` truthful across the delivery boundary. When there is
+// genuinely nothing delivered, the original active-slot error is preserved so the
+// "no accepted, proven spec yet" message still surfaces.
+func (c *Conductor) RecallLastProvenSpec(ctx context.Context) (spec.ExecutableSpec, error) {
+	es, err := c.RecallSpec(ctx)
+	if err == nil {
+		return es, nil
+	}
+	if c.store == nil {
+		return spec.ExecutableSpec{}, err
+	}
+	proj, sp, derr := c.store.LastDeliveredProjectSpec(ctx)
+	if derr != nil {
+		return spec.ExecutableSpec{}, err // nothing delivered: keep the active-slot message
+	}
+	// Match the completeness gate to the delivered project's type so the recompiled
+	// anchor uses the same checklist it was originally compiled under.
+	if pt := proj.ProjectType; pt != "" && pt != c.gate.ProjectType() {
+		c.mu.Lock()
+		c.gate = completeness.NewAnalyzer(pt)
+		c.mu.Unlock()
+	}
+	return c.recallSpecFor(ctx, proj, sp)
 }
 
 // PlanTask is one task in the rendered plan.
@@ -478,7 +518,10 @@ func (c *Conductor) PlanView(ctx context.Context) (PlanView, error) {
 	if c.store == nil {
 		return PlanView{}, errNoStore
 	}
-	proj, sp, err := c.currentProjectSpec(ctx)
+	// Read path: resolve active-or-last-delivered so `orion plan show` still answers
+	// after Accept moves the project out of the active slot (or-v9f.1) — otherwise
+	// the plan for the code just built reads as "no current spec".
+	proj, sp, err := c.currentOrDeliveredProjectSpec(ctx)
 	if err != nil {
 		return PlanView{}, fmt.Errorf("no current spec: %w", err)
 	}

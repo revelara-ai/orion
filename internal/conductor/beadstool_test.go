@@ -40,7 +40,7 @@ func initBeadsRepo(t *testing.T) string {
 func TestBeadsToolRegisteredWhenWorkspacePresent(t *testing.T) {
 	repo := initBeadsRepo(t)
 	t.Chdir(repo)
-	r := specTools(orchestrator.NewWithStore(openStore(t)), nil, &changeSession{})
+	r := specTools(orchestrator.NewWithStore(openStore(t)), nil, &changeSession{}, nil)
 	tool, ok := r.Get("bd")
 	if !ok {
 		t.Fatal("bd tool is not registered in a beads workspace")
@@ -59,7 +59,7 @@ func TestBeadsToolRegisteredWhenWorkspacePresent(t *testing.T) {
 func TestBeadsToolAbsentWithoutBeadsWorkspace(t *testing.T) {
 	repo := initDogfoodRepo(t)
 	t.Chdir(repo)
-	r := specTools(orchestrator.NewWithStore(openStore(t)), nil, &changeSession{})
+	r := specTools(orchestrator.NewWithStore(openStore(t)), nil, &changeSession{}, nil)
 	if _, ok := r.Get("bd"); ok {
 		t.Fatal("bd tool must not be registered without a .beads/ workspace")
 	}
@@ -70,7 +70,7 @@ func TestBeadsToolRunsBd(t *testing.T) {
 	repo := initBeadsRepo(t)
 	t.Chdir(repo)
 	stubBd(t, `echo "ready: or-123 open"`)
-	tool, _ := specTools(orchestrator.NewWithStore(openStore(t)), nil, &changeSession{}).Get("bd")
+	tool, _ := specTools(orchestrator.NewWithStore(openStore(t)), nil, &changeSession{}, nil).Get("bd")
 	out, err := tool.Run(context.Background(), json.RawMessage(`{"args":["ready"]}`))
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +86,7 @@ func TestBeadsToolReportsFailureAsExitNotError(t *testing.T) {
 	repo := initBeadsRepo(t)
 	t.Chdir(repo)
 	stubBd(t, `echo "no such issue: or-nope"; exit 3`)
-	tool, _ := specTools(orchestrator.NewWithStore(openStore(t)), nil, &changeSession{}).Get("bd")
+	tool, _ := specTools(orchestrator.NewWithStore(openStore(t)), nil, &changeSession{}, nil).Get("bd")
 	out, err := tool.Run(context.Background(), json.RawMessage(`{"args":["show","or-nope"]}`))
 	if err != nil {
 		t.Fatalf("a failed bd op must be reported as output, not a Go error: %v", err)
@@ -123,7 +123,7 @@ echo "issue updated"`, counter))
 func TestBeadsToolRefusesInteractiveEdit(t *testing.T) {
 	repo := initBeadsRepo(t)
 	t.Chdir(repo)
-	tool, _ := specTools(orchestrator.NewWithStore(openStore(t)), nil, &changeSession{}).Get("bd")
+	tool, _ := specTools(orchestrator.NewWithStore(openStore(t)), nil, &changeSession{}, nil).Get("bd")
 	if _, err := tool.Run(context.Background(), json.RawMessage(`{"args":["edit","or-123"]}`)); err == nil {
 		t.Fatal("bd edit must be refused (interactive editor blocks the session)")
 	}

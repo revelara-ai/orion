@@ -68,7 +68,7 @@ func baselineSkip(ctx context.Context, repoDir string, skip []string) (TestResul
 	argv := withSkip(tc.TestCmd, skip)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = repoDir
-	cmd.Env = safeenv.Build() // untrusted repo code never sees host secrets
+	cmd.Env = regressionTestEnv() // untrusted repo code never sees host secrets
 	out, err := cmd.CombinedOutput()
 	return TestResult{
 		Detected:  true,
@@ -77,6 +77,18 @@ func baselineSkip(ctx context.Context, repoDir string, skip []string) (TestResul
 		Passed:    err == nil,
 		Output:    clip(string(out), 8000),
 	}, nil
+}
+
+// regressionTestEnv is the environment for the gate's `go test` runs: the same
+// deny-by-default safeenv (untrusted repo code never sees host secrets) plus an
+// explicit ORION_RUN_ACCEPTANCE=false. An aspirational acceptance target that is
+// RED by design (it references packages not yet built — e.g. test/acceptance
+// TestV20Loop) must NOT be treated as a do-no-harm baseline; a red-by-design test
+// cannot detect a green→red regression, so gating on it only produces a permanent
+// false block. The test still RUNS by default everywhere else — the gate opts out
+// explicitly here, keeping the skip a visible exception rather than the default.
+func regressionTestEnv() []string {
+	return append(safeenv.Build(), "ORION_RUN_ACCEPTANCE=false")
 }
 
 // withSkip inserts `-skip <re>` right after the test subcommand (argv[1]) when skip is non-empty;

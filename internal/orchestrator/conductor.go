@@ -116,6 +116,25 @@ func (c *Conductor) currentProjectSpec(ctx context.Context) (contextstore.Projec
 	return proj, sp, err
 }
 
+// currentOrDeliveredProjectSpec is currentProjectSpec for READ/REPORT paths: it
+// resolves the active project, or falls back to the most recently delivered one
+// once delivery has moved the project out of the active slot (or-v9f.1). It
+// reconstructs the completeness gate from the resolved project's type exactly as
+// currentProjectSpec does, so a plan/spec recompiled off the delivered project uses
+// the right checklist. Mutation paths must NOT use this — they require strict active.
+func (c *Conductor) currentOrDeliveredProjectSpec(ctx context.Context) (contextstore.Project, contextstore.Spec, error) {
+	proj, sp, err := c.store.CurrentOrLastDeliveredProjectSpec(ctx)
+	if err != nil {
+		return proj, sp, err
+	}
+	if pt := proj.ProjectType; pt != "" && pt != c.gate.ProjectType() {
+		c.mu.Lock()
+		c.gate = completeness.NewAnalyzer(pt)
+		c.mu.Unlock()
+	}
+	return proj, sp, err
+}
+
 // Submit intakes a developer intent and returns a confirmation. It honors
 // context cancellation (every Conductor entry point is cancellable so a hung
 // run can be interrupted) and rejects an empty intent rather than silently

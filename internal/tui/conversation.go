@@ -93,12 +93,19 @@ var (
 	warnGlyph   = lipgloss.NewStyle().Foreground(cWarning)
 	failGlyph   = lipgloss.NewStyle().Foreground(cDanger)
 
-	cBorder   = lipgloss.Color("#362D50")                                                                    // divider on the void
-	transPane = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cBorder)               // top: transcript
-	inputPane = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cIndigo).Padding(0, 1) // bottom: input + status
+	cBorder      = lipgloss.Color("#362D50")                                                                        // divider on the void
+	transPane    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cBorder)                   // top: transcript
+	inputPane    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cIndigo).Padding(0, 1)    // bottom: input + status
+	activityPane = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cFaint)                    // middle: live activity (dim border)
 )
 
 // ── async message types ──────────────────────────────────────────────────────
+
+type activityTickMsg time.Time
+
+func activityTick() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return activityTickMsg(t) })
+}
 
 type streamMsg struct{ u acp.Update } // a streamed session/update
 type turnDoneMsg struct{ err error }  // a prompt turn completed
@@ -143,6 +150,9 @@ type Conversation struct {
 	bannerID     Identity
 	bannerSet    bool
 
+	// activity is the live per-turn actor stack, phase strip, and log ring (Task 5).
+	activity activityModel
+
 	// commands are the injected admin/management slash-commands (or-dz9).
 	commands []Command
 	// paletteIdx is the highlighted row in the command palette (shown while the input is a bare
@@ -185,7 +195,9 @@ func NewConversation(client *ACPClient, sid string, oc *orchestrator.Conductor, 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(cLavender) // the star-glow accent
-	return Conversation{client: client, sid: sid, oc: oc, gate: gate, input: ti, sp: sp}
+	conv := Conversation{client: client, sid: sid, oc: oc, gate: gate, input: ti, sp: sp}
+	conv.activity = newActivityModel()
+	return conv
 }
 
 // Init satisfies tea.Model.
@@ -206,6 +218,13 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case streamMsg:
+		// Activity updates fold into the activity model only — they NEVER become
+		// transcript bubbles. Return early before the agent_message accumulation.
+		if t.u.Kind == acp.ActivityKind {
+			m.activity.apply(t.u)
+			m.render()
+			return m, nil
+		}
 		// Streamed text deltas (agent_message) accumulate into the current Orion
 		// bubble so a turn renders as one growing message, not one bubble per token.
 		// Other kinds (tool_call, plan, spec, permission) are discrete bubbles, and
@@ -247,6 +266,7 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	case turnDoneMsg:
 		m.inFlight = false
+		m.activity.finish()
 		if t.err != nil {
 			m.msgs = append(m.msgs, msg{role: "orion", text: "error: " + t.err.Error()})
 		}
@@ -274,6 +294,15 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.sp, cmd = m.sp.Update(t)
 		return m, cmd
+
+	case activityTickMsg:
+		if !m.inFlight {
+			return m, nil
+		}
+		if m.activity.bus.Tick(time.Time(t)) {
+			m.render() // a heartbeat was emitted → refresh the panel
+		}
+		return m, activityTick()
 
 	case tea.KeyMsg:
 		wasArmed := m.quitArmed
@@ -439,8 +468,9 @@ func (m *Conversation) handleEnter() tea.Cmd {
 	m.recordHistory(text)
 	m.msgs = append(m.msgs, msg{role: "you", text: text})
 	m.inFlight = true
+	m.activity.reset()
 	m.render()
-	return tea.Batch(m.promptCmd(text), m.sp.Tick)
+	return tea.Batch(m.promptCmd(text), m.sp.Tick, activityTick())
 }
 
 // isRuneKey reports whether a key message is a single bare rune r (a tool-permission
@@ -806,7 +836,8 @@ func colorizeReport(s string) string {
 	return b.String()
 }
 
-// View renders banner, scrollable transcript, input, budget, hint.
+// View renders banner, scrollable transcript, activity pane (when in-flight or
+// carrying an idle summary), input, budget, hint.
 func (m Conversation) View() string {
 	if m.quitting {
 		return "Goodbye.\n"
@@ -820,6 +851,30 @@ func (m Conversation) View() string {
 	if palette == "" {
 		palette = m.renderAtPalette() // @-file completion popup (mutually exclusive with /palette)
 	}
+
+	// Activity pane: rendered once here so its height can be subtracted from the
+	// transcript viewport before we call m.vp.View() (the layout is height-exact).
+	// A pending permission BLOCKS the turn on the human — nothing is "working" — so
+	// the live pane is suppressed rather than wedged between the approval card and the
+	// y/a/n prompt (the collision). inFlight stays true across the gate, so the pane
+	// returns as soon as the developer answers.
+	act := m.activity.render(paneW, m.inFlight && m.pendingPerm == nil)
+
+	// Shrink the viewport height for any chrome inserted between the transcript
+	// and the input (activity pane and/or palette). This must happen before
+	// m.vp.View() so the bordered transcript pane renders the right number of rows
+	// in ALL states (empty, active, in-flight) — the layout is always height-exact.
+	if act != "" || palette != "" {
+		vpH := m.vp.Height
+		if act != "" {
+			vpH -= lipgloss.Height(act)
+		}
+		if palette != "" {
+			vpH -= lipgloss.Height(palette)
+		}
+		m.vp.Height = max(3, vpH)
+	}
+
 	body := m.vp.View()
 	if !m.ready || len(m.msgs) == 0 {
 		if m.bannerSet {
@@ -832,13 +887,16 @@ func (m Conversation) View() string {
 				es = warnGlyph.Render("⚠ Offline mode (deterministic)") +
 					dimStyle.Render(" — records single values only; it cannot grill or capture conditional behavior.\n   Set ANTHROPIC_API_KEY and restart for the full conversational spec build.\n\n"+emptyState)
 			}
-			body = dimStyle.Render(es)
+			raw := dimStyle.Render(es)
+			// When ready, constrain the empty-state body to the viewport height so the
+			// transcript pane renders the correct number of rows in all states (including
+			// in-flight with an activity pane) and the layout stays height-exact.
+			if m.ready {
+				body = lipgloss.NewStyle().Height(m.vp.Height).Width(paneW).Render(raw)
+			} else {
+				body = raw
+			}
 		}
-	} else if palette != "" {
-		// Active transcript: shrink the viewport by the palette's height so the total layout stays
-		// within the terminal (the palette renders between the transcript and the input).
-		m.vp.Height = max(3, m.vp.Height-lipgloss.Height(palette))
-		body = m.vp.View()
 	}
 
 	// Header: the Polaris identity line + the active brain (amber when offline).
@@ -858,7 +916,11 @@ func (m Conversation) View() string {
 	}
 	bottom := inputPane.Width(paneW).Render(status + "\n" + m.input.View())
 
-	hint := dimStyle.Render("  enter send · alt+enter newline · ↑/↓ history · pgup/pgdn scroll · tab complete · esc/ctrl+c cancel · ctrl+d quit")
+	// The program grabs the mouse (WithMouseCellMotion) for wheel-scroll, which puts
+	// the terminal in mouse-reporting mode and suppresses native drag-select. Surface
+	// the escape hatch — hold Shift (Option/⌥ on macOS) to select for copy/paste —
+	// in place of the esc/ctrl+c-cancel and ctrl+d-quit hints, which are intuitive.
+	hint := dimStyle.Render("  enter send · alt+enter newline · ↑/↓ history · pgup/pgdn scroll · tab complete · shift/⌥-drag to select·copy")
 	if m.quitArmed {
 		hint = warnGlyph.Render("  press ctrl+c again to exit") + dimStyle.Render(" · or any key to keep going")
 	} else if m.inFlight {
@@ -866,6 +928,9 @@ func (m Conversation) View() string {
 	}
 
 	parts := []string{header, top}
+	if act != "" {
+		parts = append(parts, act)
+	}
 	if palette != "" {
 		parts = append(parts, palette)
 	}

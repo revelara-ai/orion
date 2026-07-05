@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-
-	"github.com/revelara-ai/orion/internal/llm"
 )
 
 // Control handles an out-of-turn session control op from the TUI (/compact, /model). It
@@ -21,39 +19,32 @@ func (a *OrionAgent) Control(ctx context.Context, sessionID, op, arg string) (st
 	}
 }
 
-// compact replaces the session's conversation history with a single model-written summary
-// that preserves decisions/context — so the turn cost stops growing with the transcript.
+// compact replaces the session's conversation history with a self-safe,
+// model-written summary that preserves decisions/context — so the turn cost stops
+// growing with the transcript. The heavy lifting (chunked/folded summarization
+// that never itself exceeds the window, plus the transcript-to-disk record) lives
+// in compactSession; this wrapper just formats the developer-facing result.
 func (a *OrionAgent) compact(ctx context.Context, sessionID string) (string, error) {
 	a.mu.Lock()
-	msgs := append([]llm.Message(nil), a.sessions[sessionID]...)
+	n := len(a.sessions[sessionID])
 	prov := a.provider
 	a.mu.Unlock()
 
-	if len(msgs) == 0 {
+	if n == 0 {
 		return "Nothing to compact — the conversation is already empty.", nil
 	}
 	if prov == nil {
 		return "Compaction needs a model provider (offline mode has none).", nil
 	}
 
-	convo := append(msgs, llm.TextMessage(llm.RoleUser,
-		"Summarize our conversation so far into a concise brief that preserves EVERY decision, code fact, file path, ratified spec detail, and open question — so we can continue with far less context. Output only the summary."))
-	resp, err := prov.Chat(ctx, llm.ChatRequest{
-		System:   "You compress a long conversation into a faithful brief without losing decisions, code facts, or open threads.",
-		Messages: convo,
-	})
+	count, _, err := a.compactSession(ctx, sessionID)
 	if err != nil {
 		return "", fmt.Errorf("compact: %w", err)
 	}
-	summary := strings.TrimSpace(resp.Text())
-	if summary == "" {
+	if count == 0 {
 		return "Compaction produced no summary; leaving history unchanged.", nil
 	}
-
-	a.mu.Lock()
-	a.sessions[sessionID] = []llm.Message{llm.TextMessage(llm.RoleUser, "[Summary of the earlier conversation]\n"+summary)}
-	a.mu.Unlock()
-	return fmt.Sprintf("Compacted %d messages into a summary — context reset to the essentials.", len(msgs)), nil
+	return fmt.Sprintf("Compacted %d messages into a summary — context reset to the essentials.", count), nil
 }
 
 // switchModel shows the current model (empty arg) or rebuilds the provider for a new one.

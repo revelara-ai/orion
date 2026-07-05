@@ -1,3 +1,0 @@
--- Down for 001_init: leave pgcrypto installed (other tenants on the
--- same Postgres might depend on it). Down migrations are tracked but
--- not executed in v1; this file documents the intent.

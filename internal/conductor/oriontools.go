@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/brownfield"
 	"github.com/revelara-ai/orion/internal/llm"
@@ -25,14 +26,14 @@ import (
 // tools are the only way it touches the store, and the completeness/compile/
 // accept gates stay the deterministic truth source — the agent proposes, the
 // gates verify (no agent grades its own homework).
-func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSession) *tools.Registry {
+func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSession, emit func(acp.Update)) *tools.Registry {
 	r := tools.NewRegistry()
 	registerChangeTools(r, cs, c, provider)
 	registerBeadsTool(r, c)
 	registerMCPTools(r, c.Store())  // revelara.ai MCP tools, when authenticated (or-xe7.10)
 	registerWorkspaceTools(r, c)      // bash + file I/O + search — general workspace agency (or-5j1)
 	registerWebTools(r)               // web_fetch + keyless web_search — web reach (or-5j1 slice 2)
-	registerSubagentTool(r, c, provider) // spawn_subagent — bounded nested delegation (or-5j1 slice 3)
+	registerSubagentTool(r, c, provider, emit) // spawn_subagent — bounded nested delegation (or-5j1 slice 3)
 
 	r.Register(tools.Tool{
 		Name:        "submit_intent",
@@ -357,7 +358,12 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				// SHADOW behind ORION_MODULE_PROPOSER; the oracle still drives).
 				c.SetModuleProposer(NativeModuleProposer(provider))
 			}
-			res, err := BuildAndProve(ctx, st, gen, aligner, func(e PhaseEvent) { phases = append(phases, e) }, OutputRoot())
+			res, err := BuildAndProve(ctx, st, gen, aligner, func(e PhaseEvent) {
+				phases = append(phases, e)
+				if emit != nil {
+					emit(acp.Activity("Orion", e.Phase, 0, phaseStatusToActivity(e.Status)))
+				}
+			}, OutputRoot())
 			if err != nil {
 				return "", err
 			}
@@ -502,7 +508,11 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 		Description: "Report WHERE the proven code for the current spec lives in the developer's working repo and return its contents. Use this whenever the developer asks where the code is, to see it, or to answer questions about what was produced. Read-only.",
 		Safety:      tools.Safety{ReadOnly: true},
 		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
-			es, err := c.RecallSpec(ctx)
+			// Resolve active-or-last-delivered: after Accept the project leaves the
+			// active slot (or-v9f.1), so a plain RecallSpec would wrongly report "no
+			// proven spec" for the code we just wrote. RecallLastProvenSpec falls back
+			// to the delivered spec so this answer stays truthful post-delivery.
+			es, err := c.RecallLastProvenSpec(ctx)
 			if err != nil {
 				return "There is no accepted, proven spec yet — ratify a spec and build it (build_service); on Accept the code is written into your working repo.", nil
 			}
@@ -564,6 +574,23 @@ func storeRedButton(c *orchestrator.Conductor) actuation.RedButton {
 		return actuation.RedButton{}
 	}
 	return actuation.RedButton{Path: filepath.Join(c.Store().Dir(), "red_button")}
+}
+
+// phaseStatusToActivity maps a PhaseStatus to an activity status string for
+// streaming to the TUI activity panel.
+// PhaseWarn maps to "warn" (advisory) — only PhaseFailed maps to "fail" (hard failure).
+// The real pass/fail verdict lives in the build_report card, not the phase strip.
+func phaseStatusToActivity(s PhaseStatus) string {
+	switch s {
+	case PhaseDone:
+		return "done"
+	case PhaseWarn:
+		return "warn"
+	case PhaseFailed:
+		return "fail"
+	default:
+		return "running"
+	}
 }
 
 // gitRun runs `git -C dir <args...>` and returns the combined output and exit code, WITHOUT

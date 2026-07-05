@@ -72,7 +72,7 @@ func TestGitToolGuardedByRedButton(t *testing.T) {
 	if err := rb.Engage(); err != nil {
 		t.Fatal(err)
 	}
-	tool, _ := specTools(oc, nil, &changeSession{}).Get("git")
+	tool, _ := specTools(oc, nil, &changeSession{}, nil).Get("git")
 
 	if out, err := tool.Run(context.Background(), json.RawMessage(`{"args":["status"]}`)); err != nil {
 		t.Fatalf("read-only git op must pass under the red button: %v (%s)", err, out)
@@ -99,7 +99,7 @@ func TestBeadsToolGuardedByRedButton(t *testing.T) {
 	if err := rb.Engage(); err != nil {
 		t.Fatal(err)
 	}
-	tool, _ := specTools(oc, nil, &changeSession{}).Get("bd")
+	tool, _ := specTools(oc, nil, &changeSession{}, nil).Get("bd")
 
 	if out, err := tool.Run(context.Background(), json.RawMessage(`{"args":["ready"]}`)); err != nil {
 		t.Fatalf("read-only bd op must pass under the red button: %v (%s)", err, out)

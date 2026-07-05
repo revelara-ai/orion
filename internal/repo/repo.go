@@ -31,12 +31,16 @@ type Repo struct {
 	Base string // integration base branch: "main" (greenfield) | default branch (brownfield)
 }
 
-// gitID is the Orion commit identity, so a fresh/unconfigured managed repo can
-// commit without relying on the host git config.
-var gitID = []string{
-	"-c", "user.name=Orion",
-	"-c", "user.email=orion@revelara.ai",
-	"-c", "commit.gpgsign=false",
+// gitID returns the Orion commit identity, so a fresh/unconfigured managed repo
+// can commit without relying on the host git config. It returns a FRESH slice on
+// every call so a caller appending to (or mutating) the result can never corrupt
+// the shared identity args.
+func gitID() []string {
+	return []string{
+		"-c", "user.name=Orion",
+		"-c", "user.email=orion@revelara.ai",
+		"-c", "commit.gpgsign=false",
+	}
 }
 
 // git runs `git -C dir args...` (LFS smudge skipped), returning combined output.
@@ -50,10 +54,48 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 	return string(out), nil
 }
 
+// repoState classifies the git status of a candidate managed-repo path, so the
+// absent-vs-corrupt distinction is not swallowed: a genuinely-absent path is
+// init/clone-able, but a present-but-corrupt repo must be surfaced, never
+// init-ed over.
+type repoState int
+
+const (
+	stateAbsent        repoState = iota // no repo present — safe to init/clone
+	stateValidWorkTree                  // a healthy git work tree — reuse it
+	stateCorrupt                        // a .git is present but git can't read it — surface, don't overwrite
+)
+
+// String renders the classification (also the value the proof oracle asserts on).
+func (s repoState) String() string {
+	switch s {
+	case stateValidWorkTree:
+		return "valid-work-tree"
+	case stateCorrupt:
+		return "corrupt"
+	default:
+		return "absent"
+	}
+}
+
+// classify determines whether dir is a valid work tree, genuinely absent, or a
+// present-but-corrupt repo. git treats an empty/partial .git the same as absent
+// ("not a git repository"), so we disambiguate: if rev-parse fails but a .git
+// entry exists at the path, the repo is corrupt rather than absent.
+func classify(ctx context.Context, dir string) repoState {
+	out, err := git(ctx, dir, "rev-parse", "--is-inside-work-tree")
+	if err == nil && strings.TrimSpace(out) == "true" {
+		return stateValidWorkTree
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".git")); statErr == nil {
+		return stateCorrupt
+	}
+	return stateAbsent
+}
+
 // isRepo reports whether dir is the working tree of a git repo.
 func isRepo(ctx context.Context, dir string) bool {
-	out, err := git(ctx, dir, "rev-parse", "--is-inside-work-tree")
-	return err == nil && strings.TrimSpace(out) == "true"
+	return classify(ctx, dir) == stateValidWorkTree
 }
 
 // currentBranch returns the checked-out branch name (the integration base).
@@ -69,13 +111,19 @@ func currentBranch(ctx context.Context, dir string) (string, error) {
 // an existing valid repo at the path is reused unchanged.
 func Resolve(ctx context.Context, store *contextstore.Store, intake Intake) (Repo, error) {
 	path := filepath.Join(store.Dir(), "repo")
-	if isRepo(ctx, path) {
+	switch classify(ctx, path) {
+	case stateValidWorkTree:
 		base, err := currentBranch(ctx, path)
 		if err != nil {
 			return Repo{}, err
 		}
 		return Repo{Path: path, Base: base}, nil
+	case stateCorrupt:
+		// A .git is present but git can't read it — a partial/corrupt repo. Surface
+		// it clearly instead of git-init-ing over the corruption with an opaque error.
+		return Repo{}, fmt.Errorf("managed repo at %s is a corrupt/invalid git repository; remove or repair it before retrying", path)
 	}
+	// stateAbsent — safe to seed.
 	if intake.Brownfield {
 		return cloneBrownfield(ctx, path, intake.Source)
 	}
@@ -91,7 +139,7 @@ func initGreenfield(ctx context.Context, path string) (Repo, error) {
 	if _, err := git(ctx, path, "init", "-b", "main"); err != nil {
 		return Repo{}, err
 	}
-	if _, err := git(ctx, path, append(append([]string{}, gitID...), "commit", "--allow-empty", "-m", "orion: managed repo init")...); err != nil {
+	if _, err := git(ctx, path, append(append([]string{}), "commit", "--allow-empty", "-m", "orion: managed repo init")...); err != nil {
 		return Repo{}, err
 	}
 	return Repo{Path: path, Base: "main"}, nil
