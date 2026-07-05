@@ -27,7 +27,9 @@ import (
 func NativeGenerator(provider llm.Provider, acct *budget.Accountant) Generator {
 	return func(ctx context.Context, gs sandbox.GenSpec, buildDir, feedback string) (sandbox.GeneratedArtifact, error) {
 		reg := tools.NewRegistry()
-		reg.Register(writeFileTool(buildDir))
+		reg.Register(writeFileTool(buildDir)) // create files (greenfield main.go/go.mod)
+		reg.Register(editFileTool(buildDir))  // surgical str_replace for refinement fixes (existing files)
+		reg.Register(readFileTool(buildDir))  // read exact current bytes before an edit_file
 		loop := harness.Loop{
 			Provider:   provider,
 			Tools:      reg,
@@ -43,7 +45,7 @@ func NativeGenerator(provider llm.Provider, acct *budget.Accountant) Generator {
 			userMsg = "Your previous attempt FAILED the independent proof. Here is its causal analysis:\n\n" +
 				feedback +
 				"\n\nHere is the code you previously wrote:\n\n" + readBuildSource(buildDir) +
-				"\n\nFix the failing behavior and rewrite the affected files with write_file (overwrite main.go, and go.mod if needed), then end your turn. " +
+				"\n\nFix the failing behavior with surgical edits: use edit_file to replace the specific old_string with new_string in the affected files (read_file first if you need the exact current bytes); use write_file only to create a new file. Then end your turn. " +
 				"Address EVERY failing/unexecuted case above, and do not regress the cases that already passed. Write real logic — the proof probes the live service and runs mutation testing."
 		}
 		start := []llm.Message{llm.TextMessage(llm.RoleUser, userMsg)}
@@ -122,6 +124,62 @@ func writeFileTool(buildDir string) tools.Tool {
 				return "", err
 			}
 			return "wrote " + p.Path + fmt.Sprintf(" (%d bytes)", len(p.Content)), nil
+		},
+	}
+}
+
+// editFileTool lets the generator make a SURGICAL edit to an existing file inside the
+// sandbox: replace a unique old_string with new_string, emitting only the changed span
+// (O(change), not O(file)) — so editing a large file cannot truncate the way a full-file
+// write_file can, and the model can't silently mangle unrelated regions. Path-guarded to
+// root exactly like writeFileTool (the model's output is untrusted). old_string must match
+// EXACTLY ONCE: zero or multiple matches are rejected with a clear error so every edit is
+// unambiguous. write_file remains for CREATING new files (edit_file requires the file to
+// exist). (or-5sj)
+func editFileTool(root string) tools.Tool {
+	clean := filepath.Clean(root)
+	return tools.Tool{
+		Name:        "edit_file",
+		Description: "Make a surgical edit to an EXISTING file: replace old_string with new_string. path is relative to the module root. old_string must appear EXACTLY ONCE — include enough surrounding context to be unique (a zero or multiple match is rejected). Only the changed span is emitted, so this works on files of any size; use write_file only to CREATE a new file.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["path","old_string","new_string"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(_ context.Context, in json.RawMessage) (string, error) {
+			var p struct {
+				Path string `json:"path"`
+				Old  string `json:"old_string"`
+				New  string `json:"new_string"`
+			}
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			if strings.TrimSpace(p.Path) == "" {
+				return "", fmt.Errorf("path is required")
+			}
+			if p.Old == "" {
+				return "", fmt.Errorf("edit_file: old_string is required (empty matches everywhere) — use write_file to create a new file")
+			}
+			full := filepath.Join(clean, filepath.Clean("/"+p.Path))
+			if full != clean && !strings.HasPrefix(full, clean+string(os.PathSeparator)) {
+				return "", fmt.Errorf("path %q escapes the build directory", p.Path)
+			}
+			data, err := os.ReadFile(full) // #nosec G304 -- full is path-guarded to the sandbox root (escape rejected above); the generator only edits files inside its own build dir
+			if err != nil {
+				return "", err
+			}
+			s := string(data)
+			switch strings.Count(s, p.Old) {
+			case 0:
+				return "", fmt.Errorf("edit_file: old_string not found in %s — read_file the file and copy the exact text (including whitespace) to replace", p.Path)
+			case 1:
+				updated := strings.Replace(s, p.Old, p.New, 1)
+				// #nosec G306 G703 -- 0644 matches writeFileTool: these are generated source files (go.mod/*.go), and full is path-guarded to the sandbox root (escape rejected above)
+				if err := os.WriteFile(full, []byte(updated), 0o644); err != nil {
+					return "", err
+				}
+				return fmt.Sprintf("edited %s (%d→%d bytes)", p.Path, len(s), len(updated)), nil
+			default:
+				return "", fmt.Errorf("edit_file: old_string is not unique in %s (%d matches) — add surrounding context to identify a single occurrence", p.Path, strings.Count(s, p.Old))
+			}
 		},
 	}
 }
