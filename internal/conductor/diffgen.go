@@ -52,7 +52,8 @@ func readFileTool(root string) tools.Tool {
 // regression gate then proves the change preserved existing behavior.
 func DiffGenerator(ctx context.Context, provider llm.Provider, repoDir, intent, repoContext string, supersedes []string) error {
 	reg := tools.NewRegistry()
-	reg.Register(writeFileTool(repoDir)) // reuse the path-guarded greenfield writer
+	reg.Register(editFileTool(repoDir))  // surgical str_replace — the primary editor for existing files
+	reg.Register(writeFileTool(repoDir)) // reuse the path-guarded greenfield writer (new files only)
 	reg.Register(readFileTool(repoDir))
 	loop := harness.Loop{
 		Provider:   provider,
@@ -61,7 +62,7 @@ func DiffGenerator(ctx context.Context, provider llm.Provider, repoDir, intent, 
 		Supervisor: harness.Supervisor{MaxIterations: 40},
 	}
 	start := []llm.Message{llm.TextMessage(llm.RoleUser,
-		"Make the change now. Read the files you need with read_file, then apply surgical edits with write_file (write the FULL updated file). Touch as few files as possible. End your turn when the change is complete.")}
+		"Make the change now. Read the files you need with read_file, then apply surgical edits with edit_file (replace a unique old_string with new_string). Use write_file only to CREATE a new file. Touch as few files as possible. End your turn when the change is complete.")}
 	if _, _, err := loop.Run(ctx, start, nil); err != nil {
 		return fmt.Errorf("diff generation: %w", err)
 	}
@@ -75,7 +76,7 @@ func diffGenRole(intent, repoContext string, supersedes []string) string {
 	b.WriteString("- Read existing files before editing them; match their style and conventions.\n")
 	b.WriteString("- Keep the change minimal — touch as few files as possible; do NOT rewrite unrelated code.\n")
 	b.WriteString("- PRESERVE existing behavior: do not break what works. An independent regression check will run the existing tests against your change.\n")
-	b.WriteString("- write_file writes the FULL updated file contents (not a patch); include the whole file.\n")
+	b.WriteString("- Edit existing files with edit_file: replace a UNIQUE old_string with new_string (include enough surrounding context that it matches exactly once). It emits only the changed span, so a large file never truncates the edit and unrelated code is never disturbed. Use write_file ONLY to create a brand-new file.\n")
 	if len(supersedes) > 0 {
 		b.WriteString("- EXCEPTION — intentional behavior change: the change below DELIBERATELY changes behavior asserted by these existing tests: " + strings.Join(supersedes, ", ") + ". UPDATE those tests to assert the NEW behavior (do NOT preserve their old assertions). The regression check skips them; every OTHER test must still pass.\n")
 	}
