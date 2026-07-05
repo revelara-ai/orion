@@ -139,7 +139,7 @@ func initGreenfield(ctx context.Context, path string) (Repo, error) {
 	if _, err := git(ctx, path, "init", "-b", "main"); err != nil {
 		return Repo{}, err
 	}
-	if _, err := git(ctx, path, append(append([]string{}), "commit", "--allow-empty", "-m", "orion: managed repo init")...); err != nil {
+	if _, err := git(ctx, path, append(gitID(), "commit", "--allow-empty", "-m", "orion: managed repo init")...); err != nil {
 		return Repo{}, err
 	}
 	return Repo{Path: path, Base: "main"}, nil
