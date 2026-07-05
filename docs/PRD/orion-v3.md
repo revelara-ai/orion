@@ -77,6 +77,13 @@ INTENT IN
   → [GRILL]            relentless listening (grill-me + grill-with-docs → write-a-prd
                        form) → a PRD-grade spec, hash-anchored. The anchor is the
                        contract; everything downstream re-grounds to it.
+  → [DESIGN PROOF]     tier-gated formal model-check of the ratified spec + STPA control
+                       structure (FizzBee, TLA+/Apalache escape hatch) — safety + liveness
+                       on the DESIGN, before any module exists. Fires on concurrency /
+                       ordering / shared-state / protocol shape or critical tier; skips a
+                       stateless CRUD slice. Verified invariants compile into behavioral
+                       obligations the per-module PROVE step then enforces. ← the SECOND new
+                       gate. See docs/PRD/orion-formal-verification.md.
   → [DECOMPOSE]        semantic vertical-slice ISSUES (prd-to-issues tracer-bullet:
                        never a horizontal layer), each carrying its subset of
                        BehavioralCases + Done-When + DAG edges + bookend acceptance/
@@ -123,6 +130,21 @@ intent violation) → block/escalate. Medium (ambiguity / a judgment call about 
 under-specified spec, like the zone-drift case) → surface for a human, do not
 auto-fail. This is the Manifesto's "escalate rather than compound," and it keeps the
 judge from tyrannizing on genuinely-ambiguous specs.
+
+**Companion design-time gate (the other new mode).** The AlignmentGate is one of *two*
+new proof modes V3 introduces. The other is the **design-proof / formal-methods gate**
+(`docs/PRD/orion-formal-verification.md`). They are complementary, not redundant, and sit
+at opposite ends of the loop:
+
+| | AlignmentGate | Design-proof gate |
+|---|---|---|
+| Asks | *post*-proof: "did the built module serve what was MEANT?" | *pre*-generation: "is the design itself race-/deadlock-free?" |
+| Catches | semantic drift the behavioral cases under-specified | systemic design races no per-module product proof can see |
+| Placement | end of the per-module loop (align stage) | after GRILL+STPA, before DECOMPOSE |
+| Verifier | adversarial LLM judge (non-deterministic, advisory) | deterministic model checker (over a human-ratified model) |
+
+Both are tier-gated, both roll out advisory→blocking, and **both can only ever *remove* a
+green light, never add one** — `proof.Accept` remains the sole right-to-ship.
 
 ## 5. Reuse vs replace (honest)
 
@@ -172,7 +194,14 @@ replacements have shipped a real epic each. The V2 monolith stays runnable as th
    modules *compose* to the intent — weight lands on grill quality + the bookend
    acceptance test.
 4. **Cross-module assembly is genuinely new** (V2's `FileScope` integration is a stub)
-   — its own epic.
+   — its own epic. Worse than a stub: the integration-time file-scope leases
+   (`internal/integration.AcquireLease` / `ReleaseLease`) are **dead code** — never called
+   in production. Invariant **S1** (no two overlapping-scope tasks integrate concurrently)
+   holds only *incidentally*, because `integrateEpic` loops sequentially; the moment someone
+   parallelizes it, overlapping merges can race with only after-the-fact git conflict
+   detection as a backstop. Tracked as **`or-1lz`** (P1); its formal model is the worked
+   example for the design-proof gate in
+   `docs/research/2026-07-02-provably-correct-agentic-sdlc.md §5.5`.
 5. **Cost/latency:** fresh-agent-per-module is far more spend than the monolith — needs
    a "small spec → single module" fast path (the budget accountant bounds it).
 6. **The orchestrator must stay non-agentic** — its bugs are systemic; never make it
