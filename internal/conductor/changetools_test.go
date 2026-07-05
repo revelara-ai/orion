@@ -16,7 +16,7 @@ import (
 
 // TestChangeFlowToolsRegistered: the change-spec flow is exposed to the brain, build_change Destructive.
 func TestChangeFlowToolsRegistered(t *testing.T) {
-	r := specTools(orchestrator.NewWithStore(openStore(t)), nil, &changeSession{})
+	r := specTools(orchestrator.NewWithStore(openStore(t)), nil, &changeSession{}, nil)
 	for _, n := range []string{"submit_change_intent", "propose_cases", "add_case", "edit_case", "ratify_cases", "build_change"} {
 		if _, ok := r.Get(n); !ok {
 			t.Errorf("change-flow tool %q not registered", n)
@@ -106,7 +106,7 @@ func TestProposeCasesGroundsAndDrops(t *testing.T) {
 		{Modality: "synth_test", Pkg: "internal/nope", Call: "X()", Want: "1"}, // ungrounded → dropped
 	}}
 	cs := &changeSession{}
-	r := specTools(orchestrator.NewWithStore(openStore(t)), stub, cs)
+	r := specTools(orchestrator.NewWithStore(openStore(t)), stub, cs, nil)
 	mustDispatch(t, r, "submit_change_intent", `{"intent":"add Severity()"}`)
 	out := mustDispatch(t, r, "propose_cases", `{}`)
 	if !strings.Contains(out, "proposed 1 case") || !strings.Contains(out, "dropped (ungrounded)") {
@@ -120,7 +120,7 @@ func TestProposeCasesGroundsAndDrops(t *testing.T) {
 // TestBuildChangeRequiresRatify: build_change refuses before ratify_cases (the oracle gate).
 func TestBuildChangeRequiresRatify(t *testing.T) {
 	cs := &changeSession{intent: "x", cases: nil}
-	r := specTools(orchestrator.NewWithStore(openStore(t)), &changeStub{}, cs)
+	r := specTools(orchestrator.NewWithStore(openStore(t)), &changeStub{}, cs, nil)
 	bc, _ := r.Get("build_change")
 	if _, err := bc.Run(context.Background(), json.RawMessage(`{}`)); err == nil {
 		t.Fatal("build_change must refuse when cases are not ratified")
@@ -142,7 +142,7 @@ func TestChangeFlowDogfoodSeverity(t *testing.T) {
 		genFiles: map[string]string{"verdict.go": verdictWithSeverity},
 	}
 	cs := &changeSession{}
-	r := specTools(orchestrator.NewWithStore(openStore(t)), stub, cs)
+	r := specTools(orchestrator.NewWithStore(openStore(t)), stub, cs, nil)
 	mustDispatch(t, r, "submit_change_intent", `{"intent":"add a Severity() method to Verdict returning critical|warn|ok"}`)
 	mustDispatch(t, r, "propose_cases", `{}`)
 	if _, cases, _, _ := cs.snapshot(); len(cases) != 3 {
@@ -218,4 +218,24 @@ func initVerdictRepo(t *testing.T) string {
 	git("add", "-A")
 	git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "init")
 	return dir
+}
+
+// TestProposeCasesRefusesWhenAlreadyRatified: after the oracle is ratified,
+// re-drafting via propose_cases must be refused (never silently replace the
+// ratified cases) — the trust gate requires the oracle to predate the diff. This
+// guards against a post-compaction model re-proposing after losing that memory.
+func TestProposeCasesRefusesWhenAlreadyRatified(t *testing.T) {
+	cs := &changeSession{intent: "add Severity()", ratified: true}
+	r := specTools(orchestrator.NewWithStore(openStore(t)), nil, cs, nil)
+	pc, ok := r.Get("propose_cases")
+	if !ok {
+		t.Fatal("propose_cases not registered")
+	}
+	_, err := pc.Run(context.Background(), json.RawMessage(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "ratified") {
+		t.Fatalf("propose_cases must refuse to re-draft a ratified oracle, got err=%v", err)
+	}
+	if !cs.ratified {
+		t.Fatal("propose_cases must not clear the ratified flag when refusing")
+	}
 }

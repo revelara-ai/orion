@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/revelara-ai/orion/internal/proof/safeenv"
 )
 
 // BaselineScoped runs the Go toolchain's tests restricted to the given package patterns
@@ -30,7 +28,7 @@ func baselineScopedSkip(ctx context.Context, repoDir string, patterns, skip []st
 	argv := withSkip(append([]string{tc.TestCmd[0], "test"}, patterns...), skip)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) // argv[0] == "go"
 	cmd.Dir = repoDir
-	cmd.Env = safeenv.Build() // untrusted repo code never sees host secrets
+	cmd.Env = regressionTestEnv() // untrusted repo code never sees host secrets; skips red-by-design acceptance targets
 	out, err := cmd.CombinedOutput()
 	return TestResult{
 		Detected:  true,

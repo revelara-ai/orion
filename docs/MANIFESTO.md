@@ -47,6 +47,9 @@ Tool calls that write to databases, send API requests, or modify object storage 
 **8. Memory can be poisoned.**
 Injected instructions can persist across sessions, propagating intent corruption autonomously and surviving restarts.
 
+**9. The harness itself degrades under its own dependency.**
+An agentic loop is a resilience wrapper around a stochastic, rate-limited, frequently-degraded remote dependency: the model API. Its reliability is dominated not by the model's answers but by how the loop behaves when the model misbehaves. Naive retry logic is the classic trap — a change that makes an exhaustion error look retriable, retried at every layer of the stack, turns one failed request into dozens and overwhelms the provider (or the harness itself). Provider-wide degradations are routine, not rare, and a harness sits directly on the API with no bulkhead. These are control-*systems* failures — retry feedback, missing concurrency limits, overload propagation — not "the model was wrong."
+
 ---
 
 ### The Code Fails
@@ -92,6 +95,8 @@ AI-generated systems carry zero institutional knowledge capture. When an inciden
 These failure modes share a single structure. They all arise because the development loop optimizes for a **local signal** — a passing test, a green CI, an agent's own confidence — while the **true goal** drifts, decays, or goes unmeasured. The signal and the intent decouple. The verifier gets gamed by the loop, and the artifact is code that passes the verifier while being wrong.
 
 And there is a recursive trap that any honest orchestrator must confront: **an orchestrator of subagents is itself an agentic workflow, and it inherits every failure mode above.** The agents building the scaffold will game the scaffold. An orchestrator that trusts its own subagents' green checkmarks has merely rebuilt "the green build is lying to you" one level higher. Orion's design begins from the assumption that it must defend against its own components.
+
+Making the orchestrator the *one non-agentic component* — deterministic, holding no verdict authority its subagents can bend — removes the *gaming* risk. It does not remove the *correctness* risk. A deterministic state machine can still harbor a systemic defect — a wrong transition, a lease race, a queue deadlock — that no proof of the finished *product* can see, because each product was proven correct in isolation. So the orchestrator must not merely be *asserted* trustworthy; its own control-plane invariants must be *proven*, with the same class of tool Orion uses to prove everything else. The prover is itself proven.
 
 The cost of all of this is not paid at write time. It is paid at comprehension time — and the comprehension bill comes due during an incident. Every failure mode above is some version of *the system now runs faster than anyone understands it.*
 
@@ -142,11 +147,15 @@ The test suite is an adversarial surface. Agents optimize for it. Orion's valida
 **2. Orion assumes its own agents will game the verifier.**
 This is not a warning about future risk. It is current, documented behavior. The adversarial assumption is structural, not optional — Orion is designed to remain correct *despite* the agents inside it.
 
-**3. Correctness must be proven, and proof is multi-modal.**
+**3. Correctness must be proven, and proof is multi-modal — and multi-phase.**
 No single signal is trusted. Correctness is established only when independent lines of evidence converge: behavioral verification (tests that assert intended behavior, scored by their ability to catch faults), empirical verification (direct observation of the running system — does the port open, the file exist, the hash match, the request actually succeed), and hazard verification (the unsafe control actions have been identified and shown to be controlled). Convergence is the proof; any single green light is not.
+
+Proof is also two-phased. The triad above proves the *product* — that the code does what the design meant. It cannot prove the *design itself* is coherent: that it has no race, no deadlock, no reachable unsafe state under concurrency, ordering, and failure. That is a separate question with a separate tool — a model checker — and it is cheapest to answer *before* any code is generated. The complete claim is two proofs, not one: the design is proven sound, then the product is proven to implement it.
 
 **4. Intent must be complete before code is written.**
 Natural-language specifications are lossy, and the loss accrues across every step of the loop. Ambiguity resolved up front costs a conversation; ambiguity discovered downstream costs a rebuild — or an incident. Orion makes intent concrete and contractual before execution begins.
+
+Completeness and soundness are different properties, and the loop owes both. Completeness is the absence of *ambiguity* — every decision the spec left open has been made. Soundness is the absence of a *reachable unsafe state* — no ordering, race, or failure interleaving the design permits violates a safety or liveness invariant. Elicitation delivers the first. Where the design's shape warrants it — concurrency, ordering, shared state, a protocol — design-time formal verification delivers the second, before a line is written.
 
 **5. Understanding is a first-class output.**
 Code that works but cannot be operated is incomplete. The real cost of agentic development is comprehension at 3 a.m. Orion produces the telemetry, the runbooks, and the executable intent that make a system understandable to someone who did not build it.
@@ -188,6 +197,9 @@ Completion requires the convergence of independent evidence, none of which the g
 - **Hazard** — STPA-derived analysis of the unsafe control actions a change could enable, with proof that each is controlled; CAST applied to any failure observed in the loop.
 A change is "done" only when all three converge. *(Counters: subtle correctness failures, "works on localhost," the lying green build.)*
 
+**Design-time formal verification.**
+Before code exists, where a change involves concurrency, ordering, shared state, or a protocol, Orion synthesizes a formal model of *that design*: an LLM drafts it, the human ratifies it (as with the hazard model), and a deterministic model checker exercises it for safety and liveness. The verified invariants compile into behavioral proof obligations, so the artifact-time triad then confirms the code implements the verified design. It is calibrated to the project's reliability tier — a stateless CRUD endpoint skips it; a concurrent state machine does not — and Orion points the same gate at its own orchestrator (the integration queue, path leases, done-gate transitions), so the one non-agentic component is *proven* correct rather than asserted to be. *(Counters: design races, deadlock, reachable unsafe states — systemic bugs no test of the finished product can see.)*
+
 **Built-in reliability primitives.**
 A component is not complete until it carries what operations needs: structured logs, trace-context propagation, metrics, stated scaling and concurrency assumptions, and a runbook. Orion validates these as artifacts. The DevOps/SRE lens is applied to every change, not reserved for "reliability work." *(Counters: uninstrumented code, unstated scaling assumptions, the 3 a.m. ownership gap.)*
 
@@ -205,6 +217,9 @@ Orion maintains a persistent decision log and periodically re-evaluates active w
 
 **Per-step confidence and circuit breaker.**
 Each step produces a calibrated confidence signal. When confidence degrades or error rate climbs, Orion escalates to a human rather than compounding the error. The circuit breaker is a core component, not an override. *(Counters: multiplicative error compounding, automation bias.)*
+
+**Harness runtime resilience.**
+Orion is itself a resilience wrapper around a stochastic, rate-limited, frequently-degraded dependency — the generation model's API — and its own reliability is dominated by how its loop behaves when that dependency misbehaves. Orion holds one retry budget across the *whole* call stack (never multiplicative), a concurrency cap that also governs its own background and speculative traffic, a fallback ladder across models on exhaustion, a loop-level circuit breaker that trips after N bad turns rather than only at the HTTP client, and checkpoint/resume across a provider outage so an incident mid-task does not discard the work. *(Counters: retry amplification, self-inflicted overload, hard-fail on a degraded provider, lost work.)*
 
 **The deployment bar and earned autonomy.**
 Orion's completion criterion is the deployment bar: every automated workflow step passes and every independent functional validation passes. When the bar is met at the project's reliability tier, Orion delivers — autonomously where the tier permits. When the bar cannot be met, Orion falls back to a proven, human-mergeable change and routes the open decision to a human. Orion's role is to *hold the bar high*, not to lower it for speed. *(Counters: review collapse, batch-size inflation, false assurance.)*

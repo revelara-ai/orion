@@ -34,7 +34,7 @@ func TestSpawnSubagentRunsNestedLoop(t *testing.T) {
 		tuResp("1", "read_file", `{"path":"`+fp+`"}`),
 		endTurn("The file says the answer is 42."),
 	}}
-	registerSubagentTool(r, c, prov)
+	registerSubagentTool(r, c, prov, nil)
 
 	st, ok := r.Get("spawn_subagent")
 	if !ok {
@@ -64,7 +64,7 @@ func TestSpawnSubagentFailsClosedOnForbiddenTools(t *testing.T) {
 	r := tools.NewRegistry()
 	registerWorkspaceTools(r, c)
 	prov := &fakeLLM{resp: []*llm.ChatResponse{endTurn("unused")}}
-	registerSubagentTool(r, c, prov)
+	registerSubagentTool(r, c, prov, nil)
 
 	st, _ := r.Get("spawn_subagent")
 	if _, err := st.Run(ctx, json.RawMessage(`{"task":"escalate","tools":["git","spawn_subagent","ratify_spec"]}`)); err == nil {
@@ -84,7 +84,7 @@ func TestSpawnSubagentDefaultsReadOnlyAndRefusesForbidden(t *testing.T) {
 	registerWorkspaceTools(r, c)
 	registerWebTools(r)
 	prov := &fakeLLM{resp: []*llm.ChatResponse{endTurn("done — nothing to do")}}
-	registerSubagentTool(r, c, prov)
+	registerSubagentTool(r, c, prov, nil)
 	st, _ := r.Get("spawn_subagent")
 
 	out, err := st.Run(ctx, json.RawMessage(`{"task":"just answer"}`))
@@ -119,7 +119,7 @@ func TestSpawnSubagentDefaultsReadOnlyAndRefusesForbidden(t *testing.T) {
 func TestSpawnSubagentAbsentWithoutProvider(t *testing.T) {
 	c := orchestrator.NewWithStore(openStore(t))
 	r := tools.NewRegistry()
-	registerSubagentTool(r, c, nil)
+	registerSubagentTool(r, c, nil, nil)
 	if _, ok := r.Get("spawn_subagent"); ok {
 		t.Error("no provider → spawn_subagent must not be registered")
 	}
@@ -137,7 +137,7 @@ func TestSpawnSubagentPrefixToolMustBeReadOnly(t *testing.T) {
 	r.Register(tools.Tool{Name: "revelara_search_ok", Safety: tools.Safety{ReadOnly: true}, Run: noop})
 	r.Register(tools.Tool{Name: "revelara_mutate_evil", Safety: tools.Safety{Destructive: true}, Run: noop})
 	prov := &fakeLLM{resp: []*llm.ChatResponse{endTurn("ok")}}
-	registerSubagentTool(r, c, prov)
+	registerSubagentTool(r, c, prov, nil)
 
 	st, _ := r.Get("spawn_subagent")
 	out, err := st.Run(ctx, json.RawMessage(`{"task":"x","tools":["revelara_search_ok","revelara_mutate_evil"]}`))
@@ -174,7 +174,7 @@ func TestSpawnSubagentMarksIncompleteOnEarlyStop(t *testing.T) {
 		{Type: llm.BlockToolUse, ToolUse: &llm.ToolUse{ID: "1", Name: "read_file", Input: json.RawMessage(`{"path":"` + fp + `"}`)}},
 	}}
 	prov := &fakeLLM{resp: []*llm.ChatResponse{partial}}
-	registerSubagentTool(r, c, prov)
+	registerSubagentTool(r, c, prov, nil)
 
 	st, _ := r.Get("spawn_subagent")
 	out, err := st.Run(ctx, json.RawMessage(`{"task":"loop forever","tools":["read_file"]}`))

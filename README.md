@@ -41,6 +41,10 @@ The developer converses with a single orchestrator — the **Conductor** — thr
 
 Early, greenfield. **V2.0** is in active development — a Go-greenfield tracer bullet (*idea → proven, runnable, operable service*). Work is tracked in [beads](https://github.com/steveyegge/beads) under the **Orion V2** epic, sliced into proof-gated tasks. Polyglot (TS/Python), brownfield intake, earned autonomy, and self-evolution are phased for V2.1–V2.3.
 
+## Prerequisites
+
+- **git >= 2.28.** Orion's managed-repo foundation (`internal/repo`) initializes repositories with `git init -b main` (the `-b`/`--initial-branch` flag) and relies on the clone default-branch behavior — both introduced in git 2.28. Older git versions will fail to create or sync managed repositories.
+
 ## Stack
 
 Go · [cobra](https://github.com/spf13/cobra) (CLI) + [bubbletea](https://github.com/charmbracelet/bubbletea) (TUI) · SQLite (Context Store) + sqlite-vec (memory) · gVisor-sandboxed agents · MCP tools + A2A between agents. Local-first; the one cloud dependency is the **Polaris** reliability platform (controls, knowledge, risk register, STPA primitives).

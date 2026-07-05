@@ -37,7 +37,10 @@ func cmdDeliver(args []string) int {
 	defer store.Close()
 	ctx := context.Background()
 
-	proj, _, err := store.CurrentProjectSpec(ctx)
+	// A delivery record only exists once the project is delivered — by which point it
+	// has left the active slot (or-v9f.1). Resolve active-or-last-delivered so `orion
+	// deliver show` reports on the project that actually has a delivery.
+	proj, _, err := store.CurrentOrLastDeliveredProjectSpec(ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion deliver show: no current project")
 		return 1

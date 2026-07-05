@@ -164,6 +164,14 @@ func (r *ProjectRepo) OldestQueued(ctx context.Context) (Project, error) {
 	return r.one(ctx, `SELECT id, name, intent, project_type, status, created_at, updated_at FROM projects WHERE status='queued' ORDER BY created_at ASC, id ASC LIMIT 1`)
 }
 
+// LatestByStatus returns the most recently created project in the given status
+// (newest first), or ErrNotFound when none exists. Used to resolve the last
+// DELIVERED project — whose proven code is on disk but which has left the active
+// slot (or-v9f.1) — for read/report paths like `show_code`.
+func (r *ProjectRepo) LatestByStatus(ctx context.Context, status string) (Project, error) {
+	return r.one(ctx, `SELECT id, name, intent, project_type, status, created_at, updated_at FROM projects WHERE status=? ORDER BY created_at DESC, id DESC LIMIT 1`, status)
+}
+
 // ListByStatus returns projects with the given status, oldest first (queue order).
 func (r *ProjectRepo) ListByStatus(ctx context.Context, status string) ([]Project, error) {
 	rows, err := r.tx.QueryContext(ctx,

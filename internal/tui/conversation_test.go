@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/orchestrator"
@@ -39,6 +40,17 @@ func TestConversationEmptyState(t *testing.T) {
 	m := newTestConvo(t)
 	if !strings.Contains(m.View(), emptyState) {
 		t.Fatalf("empty-state prompt missing:\n%s", m.View())
+	}
+}
+
+// TestIdleHintAdvertisesCopyAffordance: because the program grabs the mouse for
+// wheel-scroll (WithMouseCellMotion), native drag-select is suppressed. The idle
+// hint must tell the user how to still select for copy/paste (hold Shift, or ⌥ on
+// macOS) — otherwise the terminal appears to have "lost" copy/paste.
+func TestIdleHintAdvertisesCopyAffordance(t *testing.T) {
+	view := strings.ToLower(newTestConvo(t).View())
+	if !strings.Contains(view, "shift") || !strings.Contains(view, "copy") {
+		t.Fatalf("idle hint must advertise shift-drag to copy; got:\n%s", newTestConvo(t).View())
 	}
 }
 
@@ -138,5 +150,106 @@ func TestSpendIsSurfacedLiveInTUI(t *testing.T) {
 	m.oc.Budget().Record(1234, 0.56)
 	if v := m.View(); !strings.Contains(v, "1234 tok") || !strings.Contains(v, "$0.56") {
 		t.Fatalf("live spend not surfaced:\n%s", v)
+	}
+}
+
+// TestActivityPaneSuppressedDuringPermission: a pending permission BLOCKS the turn
+// on the human — inFlight stays true, but nothing is "working". The live activity
+// pane must not render, or it wedges between the approval card and the y/a/n prompt
+// (the collision).
+func TestActivityPaneSuppressedDuringPermission(t *testing.T) {
+	m := newTestConvo(t)
+	m.inFlight = true
+	m = feed(m, streamMsg{u: acp.Activity("Orion", "build_service", 0, "running")})
+	if !strings.Contains(m.View(), "build_service") {
+		t.Fatalf("precondition: in-flight activity pane should show the running activity:\n%s", m.View())
+	}
+
+	// A tool-permission request arrives mid-turn (the turn is now BLOCKED on the human).
+	reply := make(chan acp.PermissionResult, 1)
+	m = feed(m, permMsg{req: acp.PermissionRequest{Kind: "tool", Tool: "edit_file", Preview: "--- a\n+++ b"}, reply: reply})
+
+	if strings.Contains(m.View(), "build_service") {
+		t.Fatalf("activity pane must be suppressed while a permission is pending (it collides with the approval card):\n%s", m.View())
+	}
+	if !strings.Contains(m.View(), "edit_file") {
+		t.Fatalf("permission card must still render:\n%s", m.View())
+	}
+	if got := lipgloss.Height(m.View()); got != 24 {
+		t.Fatalf("layout not height-exact during permission: %d, want 24", got)
+	}
+}
+
+// TestActivityPaneShowsStackThenCollapses: in-flight activity pane surfaces the
+// subagent actor and stays height-exact; collapsing to idle removes the live pane.
+func TestActivityPaneShowsStackThenCollapses(t *testing.T) {
+	m := newTestConvo(t)
+	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.inFlight = true
+	m = feed(m, streamMsg{u: acp.Activity("Orion", "build_service", 0, "running")})
+	m = feed(m, streamMsg{u: acp.Activity("research", "web_search", 1, "running")})
+
+	if !strings.Contains(m.View(), "research") {
+		t.Fatalf("in-flight activity pane should show the subagent actor:\n%s", m.View())
+	}
+	if got := lipgloss.Height(m.View()); got != 24 {
+		t.Fatalf("layout not height-exact with activity pane: %d, want 24", got)
+	}
+
+	m = feed(m, turnDoneMsg{})
+	if strings.Contains(m.View(), "web_search") {
+		t.Fatalf("idle view must collapse the live pane:\n%s", m.View())
+	}
+}
+
+// TestIdleSummaryHeightExact: after a turn completes with at least one done phase, the
+// activity model produces a non-empty one-line idle summary. The layout must still fill
+// the terminal exactly (header + transcript + summary + input + hint == m.height rows).
+func TestIdleSummaryHeightExact(t *testing.T) {
+	m := newTestConvo(t)
+	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.inFlight = true
+	// Feed a depth-0 known phase name to "done" so finish() produces a summary line.
+	m = feed(m, streamMsg{u: acp.Activity("Orion", "Generate", 0, "done")})
+	// turnDoneMsg calls activity.finish(), sets inFlight=false, and populates a.summary.
+	m = feed(m, turnDoneMsg{})
+
+	v := m.View()
+	// Confirm the idle summary is present (proves the test actually exercises the summary path).
+	if !strings.Contains(v, "Generate") {
+		t.Fatalf("idle summary missing 'Generate' marker:\n%s", v)
+	}
+	// The layout must remain height-exact even with the one-line summary inserted.
+	if got := lipgloss.Height(v); got != 24 {
+		t.Fatalf("layout not height-exact with idle summary: %d, want 24\n%s", got, v)
+	}
+}
+
+// TestInFlightPlusPaletteHeightExact: the highest-risk compound state — an in-flight
+// activity pane AND the command palette both rendered simultaneously. The layout must
+// still fill the terminal exactly.
+func TestInFlightPlusPaletteHeightExact(t *testing.T) {
+	m := newTestConvo(t)
+	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.inFlight = true
+	// Build the activity stack so the in-flight pane renders.
+	m = feed(m, streamMsg{u: acp.Activity("Orion", "build_service", 0, "running")})
+
+	// Set the input to a bare "/" prefix — paletteMatches() matches all builtins
+	// (help, clear, compact, context, model, exit) without needing injected commands.
+	m.input.SetValue("/")
+
+	v := m.View()
+	// Confirm the activity pane is present.
+	if !strings.Contains(v, "build_service") {
+		t.Fatalf("in-flight activity pane missing 'build_service':\n%s", v)
+	}
+	// Confirm the command palette is present (at least one known builtin name visible).
+	if !strings.Contains(v, "help") {
+		t.Fatalf("command palette not rendered (expected 'help' entry):\n%s", v)
+	}
+	// Both panes must coexist without breaking height-exactness.
+	if got := lipgloss.Height(v); got != 24 {
+		t.Fatalf("layout not height-exact with in-flight pane + palette: %d, want 24\n%s", got, v)
 	}
 }

@@ -71,7 +71,7 @@ func TestChangeFlowDogfoodBehaviorChange(t *testing.T) {
 		genFiles: map[string]string{"verdict.go": verdictWithBlocker},
 	}
 	cs := &changeSession{}
-	r := specTools(orchestrator.NewWithStore(openStore(t)), stub, cs)
+	r := specTools(orchestrator.NewWithStore(openStore(t)), stub, cs, nil)
 	mustDispatch(t, r, "submit_change_intent", `{"intent":"Severity() should classify failures as blocker, not critical"}`)
 	mustDispatch(t, r, "propose_cases", `{}`)
 	mustDispatch(t, r, "supersede_test", `{"test":"TestSeverityCritical"}`)
@@ -101,7 +101,7 @@ func TestChangeFlowBlocksUndeclaredBehaviorChange(t *testing.T) {
 		genFiles: map[string]string{"verdict.go": verdictWithBlocker},
 	}
 	cs := &changeSession{}
-	r := specTools(orchestrator.NewWithStore(openStore(t)), stub, cs)
+	r := specTools(orchestrator.NewWithStore(openStore(t)), stub, cs, nil)
 	mustDispatch(t, r, "submit_change_intent", `{"intent":"Severity() returns blocker for failures"}`)
 	mustDispatch(t, r, "propose_cases", `{}`)
 	// no supersede_test → the change is undeclared

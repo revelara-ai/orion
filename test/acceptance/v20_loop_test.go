@@ -119,11 +119,15 @@ func runScript(script, dir string, env []string) (exitCode int, output string) {
 // non-interactive CLI contract the loop must satisfy.
 func driveLoop(t *testing.T, dir string, env []string) {
 	t.Helper()
-	// Initialize the data dir/store. The stateful CLI predicates are
-	// self-contained (each drives its own submit→answer→approve→run flow) so they
-	// are independent of execution order and of each other's "current project".
-	if code, out := runScript("orion init", dir, env); code != 0 {
-		t.Logf("driveLoop init failed (expected while RED): exit %d\n%s", code, strings.TrimSpace(out))
+	// Drive the canonical V2.0 flow ONCE against the shared data dir so the read-only
+	// predicates (plan/proof/deliver show) assert against a real delivered, proven
+	// project — instead of each rebuilding it, which would blow the go-test timeout
+	// (one build here vs one-per-predicate). The write predicates (those that `orion
+	// submit`) run in their own isolated data dirs. Best-effort: a failure here
+	// surfaces as RED in the read predicates below, which are graded independently.
+	script := driveToApprove + `orion run >/dev/null` // full canonical flow through `orion run`
+	if code, out := runScript(script, dir, env); code != 0 {
+		t.Logf("driveLoop canonical flow failed (RED surface): exit %d\n%s", code, strings.TrimSpace(firstLines(out, 12)))
 	}
 }
 
@@ -133,6 +137,15 @@ func driveLoop(t *testing.T, dir string, env []string) {
 func TestV20Loop(t *testing.T) {
 	if testing.Short() {
 		t.Skip("full CLI acceptance loop (builds orion + runs generate→prove per predicate); run without -short")
+	}
+	// This is the aspirational V2.0 acceptance target: it is RED by design until the
+	// whole loop is built (it references packages not yet created). It RUNS by default
+	// so it is never silently forgotten — but a caller that must not treat a
+	// red-by-design target as a do-no-harm baseline (the regression gate) opts out
+	// explicitly with ORION_RUN_ACCEPTANCE=false. The exception is visible; the
+	// default stays "run".
+	if os.Getenv("ORION_RUN_ACCEPTANCE") == "false" {
+		t.Skip("ORION_RUN_ACCEPTANCE=false: skipping the red-by-design V2.0 acceptance target (set by the regression gate)")
 	}
 	if len(predicates) == 0 {
 		t.Fatal("no acceptance predicates encoded")
@@ -176,7 +189,16 @@ func TestV20Loop(t *testing.T) {
 			if p.Kind == kindGoTest {
 				execScript = strings.ReplaceAll(execScript, "go test ", "go test -v ")
 			}
-			code, out := runScript(execScript, root, env)
+			// Write predicates (those that `orion submit`) run in their OWN fresh
+			// ORION_DATA_DIR so they are order-independent: a shared store makes
+			// successive submits queue behind each other, landing a predicate's
+			// answers/approve on a prior predicate's project. Read-only predicates use
+			// the shared dir, asserting against the canonical project driveLoop built.
+			predEnv := env
+			if p.Kind == kindCLI && strings.Contains(p.Script, "orion submit") {
+				predEnv = scriptEnv(t.TempDir(), binDir)
+			}
+			code, out := runScript(execScript, root, predEnv)
 			passed := code == 0
 			// A CLI predicate must not read as a pass when the subcommand is
 			// unimplemented. `orion` prints a recognizable marker and exits non-zero

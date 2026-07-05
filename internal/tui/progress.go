@@ -13,6 +13,9 @@ import (
 type ProgressEvent struct {
 	Phase     string
 	Detail    string
+	Actor     string
+	Depth     int
+	Status    string
 	Heartbeat bool
 	At        time.Time
 }
@@ -43,6 +46,18 @@ func (b *ProgressBus) Emit(phase, detail string) {
 	b.last = t
 }
 
+// EmitActivity records a who-is-doing-what event (actor + activity + call-stack
+// depth + status). Resets the heartbeat window like Emit.
+func (b *ProgressBus) EmitActivity(actor, activity string, depth int, status string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	t := b.now()
+	b.events = append(b.events, ProgressEvent{
+		Phase: activity, Detail: activity, Actor: actor, Depth: depth, Status: status, At: t,
+	})
+	b.last = t
+}
+
 // HeartbeatDue reports whether the heartbeat window has elapsed without an event.
 func (b *ProgressBus) HeartbeatDue(now time.Time) bool {
 	b.mu.Lock()
@@ -62,6 +77,9 @@ func (b *ProgressBus) Tick(now time.Time) bool {
 	b.last = now
 	return true
 }
+
+// nowForTest exposes the bus clock for unit tests that need to fabricate a future time.
+func (b *ProgressBus) nowForTest() time.Time { return b.now() }
 
 // Events returns a snapshot of all events.
 func (b *ProgressBus) Events() []ProgressEvent {

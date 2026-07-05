@@ -40,36 +40,36 @@ type predicate struct {
 // predicates is the full V2.0 target: the core block plus the Round-2 additions.
 // Every entry must exit 0 for the V2.0 loop to be PROVEN. The `-run` names are
 // the contract the implementation tasks must satisfy exactly.
-// driveAndRun is the canonical V2.0 flow up to (and including) `orion run`,
-// reused by self-contained stateful predicates so they don't depend on a shared
-// "current project".
-const driveAndRun = `echo "Build an HTTP service that returns the current time." | orion submit --non-interactive >/dev/null && ` +
+// driveToApprove is the canonical V2.0 flow up to (and including) spec ratification
+// — submit → answer the functional decisions → approve the fallback assumptions →
+// approve the spec. It stops BEFORE `orion run`, so predicates that only need an
+// accepted spec (e.g. plan show) stay fast. Ratification requires the explicit
+// assumption-approval step (or-v9f.19); `orion spec approve` fails without it.
+const driveToApprove = `echo "Build an HTTP service that returns the current time." | orion submit --non-interactive >/dev/null && ` +
 	`orion answer --key response_format --value json >/dev/null && ` +
 	`orion answer --key timezone --value UTC >/dev/null && ` +
 	`orion answer --key port --value 8080 >/dev/null && ` +
 	`orion answer --key route --value /time >/dev/null && ` +
-	`orion spec approve >/dev/null && orion run >/dev/null && `
+	`orion spec approve-assumptions >/dev/null && orion spec approve >/dev/null && `
 
 var predicates = []predicate{
 	// ── Intent completeness gate (no silent guessing) ────────────────────────
 	{"intent-gate", "open_decisions surfaced", kindCLI,
-		`echo "Build an HTTP service that returns the current time." | orion submit --non-interactive | jq -e '.open_decisions|map(.key)|contains(["response_format","timezone","port","route"])'`},
+		// 'timezone' was intentionally dropped from the http-service checklist (or-83e:
+		// codegen defaults UTC; a zone is a behavioral requirement to state, not a
+		// required decision), so the surfaced functional decisions are format/port/route.
+		`echo "Build an HTTP service that returns the current time." | orion submit --non-interactive | jq -e '.open_decisions|map(.key)|contains(["response_format","port","route"])'`},
 	{"intent-gate", "spec accepted with zero open decisions", kindCLI,
 		// "(after answering)" per the PRD: drive the canonical flow, then assert the
 		// spec is accepted with no open decisions. Self-contained so the predicate is
 		// independent of execution order.
-		`echo "Build an HTTP service that returns the current time." | orion submit --non-interactive >/dev/null && ` +
-			`orion answer --key response_format --value json >/dev/null && ` +
-			`orion answer --key timezone --value UTC >/dev/null && ` +
-			`orion answer --key port --value 8080 >/dev/null && ` +
-			`orion answer --key route --value /time >/dev/null && ` +
-			`orion spec approve >/dev/null && ` +
-			`orion spec show --json | jq -e '.status=="accepted" and (.open_decisions|length==0)'`},
+		driveToApprove + `orion spec show --json | jq -e '.status=="accepted" and (.open_decisions|length==0)'`},
 
 	// ── Decomposition + coverage ─────────────────────────────────────────────
 	{"decomposition", "plan has tasks, all with proof obligations", kindCLI,
-		// NOTE: the PRD wrote `.tasks|length>0 and (...)`, which jq parses as
-		// `.tasks | (... .tasks[] ...)` — the second clause then indexes the array
+		// Reads the shared canonical project's decomposed plan (established by
+		// driveLoop). NOTE: the PRD wrote `.tasks|length>0 and (...)`, which jq parses
+		// as `.tasks | (... .tasks[] ...)` — the second clause then indexes the array
 		// and errors. Parenthesized so each clause is evaluated against the root.
 		`orion plan show --json | jq -e '(.tasks|length>0) and ([.tasks[]|select(.proof_obligation==null)]|length==0)'`},
 	{"decomposition", "every spec requirement has a proof obligation", kindGoTest,
@@ -93,20 +93,23 @@ var predicates = []predicate{
 		// exercised empirical rejection).
 		`go test ./internal/conductor/... -run TestProveAndCloseReportRejectsFailingProbe`},
 	{"proof-converge", "empirical: port open and contract satisfied", kindCLI,
-		// Self-contained: drive the full loop (submit→answer→approve→run) then read
-		// the empirical proof for the lead task. Independent of execution order.
-		driveAndRun + `TASK=$(orion plan show --json | jq -r '.tasks[0].id') && ` +
+		// Reads the empirical proof for the shared canonical project's lead task
+		// (established by driveLoop). Order-independent (read-only).
+		`TASK=$(orion plan show --json | jq -r '.tasks[0].id') && ` +
 			`orion proof show --task "$TASK" --mode empirical --json | jq -e '.port_open and .response_contract_satisfied'`},
 	{"proof-converge", "hazard: UCAs considered, none uncontrolled", kindCLI,
-		driveAndRun + `TASK=$(orion plan show --json | jq -r '.tasks[0].id') && ` +
+		`TASK=$(orion plan show --json | jq -r '.tasks[0].id') && ` +
 			`orion proof show --task "$TASK" --mode hazard --json | jq -e '(.ucas_considered|length>0) and (.uncontrolled_ucas|length==0)'`},
 	{"proof-converge", "hazard: every control action has a test", kindCLI,
-		driveAndRun + `TASK=$(orion plan show --json | jq -r '.tasks[0].id') && ` +
+		`TASK=$(orion plan show --json | jq -r '.tasks[0].id') && ` +
 			`orion proof show --task "$TASK" --mode hazard --json | jq -e '(.control_actions|length>0) and ([.control_actions[]|select(.test==null)]|length==0)'`},
 	{"proof-converge", "control-loop feedback validated", kindGoTest,
 		`go test ./internal/proof/hazard/... -run TestControlLoopFeedbackValidated`},
 
 	// ── Operability (3 a.m. test) ────────────────────────────────────────────
+	// Read the shared canonical project's delivery record (established by driveLoop's
+	// `orion run`). deliver show resolves the last-delivered project once it has left
+	// the active slot; a delivery record only exists post-delivery.
 	{"operability", "runbook sections present", kindCLI,
 		`orion deliver show --runbook --json | jq -e '.sections|keys|contains(["incident_response","escalation_path","known_failure_modes","operational_commands"])'`},
 	{"operability", "operating envelope present", kindCLI,

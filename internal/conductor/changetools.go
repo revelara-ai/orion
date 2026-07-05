@@ -135,9 +135,16 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 		Description: "Propose behavioral proof cases for the change (the ORACLE the proof checks): from the intent + codebase map, draft synth_test cases (assert a Go call's result: pkg+call+want) and/or command cases (run argv, assert exit+stdout). Each is GROUNDED against real packages; ungrounded proposals are dropped and surfaced. Review with the developer, refine via add_case/edit_case, then ratify_cases. Call after submit_change_intent.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
 		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
-			intent, _, _, _ := cs.snapshot()
+			intent, _, _, ratified := cs.snapshot()
 			if strings.TrimSpace(intent) == "" {
 				return "", fmt.Errorf("propose_cases: call submit_change_intent first")
+			}
+			// Never re-draft (and silently discard) a ratified oracle — the trust gate
+			// requires the oracle to predate the diff. After compaction the model may
+			// have lost the in-context memory that cases were ratified; refuse and point
+			// it to the intentional modify paths, which re-open ratification deliberately.
+			if ratified {
+				return "", fmt.Errorf("propose_cases: the behavioral oracle is already ratified — re-drafting would discard it. Use add_case/edit_case to revise (this re-opens ratification), or build_change to proceed with the ratified oracle")
 			}
 			if provider == nil {
 				return "", fmt.Errorf("propose_cases needs a model provider")
