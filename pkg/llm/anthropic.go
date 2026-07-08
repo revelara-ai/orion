@@ -61,6 +61,15 @@ func NewAnthropic(apiKey, model string) *Anthropic {
 
 func (a *Anthropic) Name() string { return "anthropic" }
 
+// WithBaseURL overrides the API endpoint (config base_url — proxies, gateways).
+// Empty means keep the default. Returns a for chaining.
+func (a *Anthropic) WithBaseURL(u string) *Anthropic {
+	if u != "" {
+		a.baseURL = strings.TrimRight(u, "/")
+	}
+	return a
+}
+
 // ContextWindow reports the model's context window in tokens. Implements the
 // optional llm.ContextWindow capability so the context manager governs the
 // Anthropic brain precisely. It is PER-MODEL because /model can swap to a
