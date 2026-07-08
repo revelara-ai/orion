@@ -94,6 +94,7 @@ func isContextOverflow(body string) bool {
 		"context length",
 		"maximum context",
 		"too many tokens",
+		"exceeds the maximum number of tokens",
 	} {
 		if strings.Contains(b, marker) {
 			return true
