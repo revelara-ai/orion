@@ -347,13 +347,3 @@ func (o *OpenAI) Ping(ctx context.Context) error {
 	_, err := o.Models(ctx)
 	return err
 }
-
-// ChatStream is implemented in openai_stream.go (Task 3); until then, degrade
-// to non-streaming Chat and emit the text once.
-func (o *OpenAI) ChatStream(ctx context.Context, req ChatRequest, onText func(string)) (*ChatResponse, error) {
-	resp, err := o.Chat(ctx, req)
-	if err == nil && onText != nil {
-		onText(resp.Text())
-	}
-	return resp, err
-}
