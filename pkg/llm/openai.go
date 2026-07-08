@@ -299,36 +299,44 @@ func (o *OpenAI) post(ctx context.Context, path string, body []byte) ([]byte, er
 
 // Models lists the endpoint's models. Tools is deliberately false: an OpenAI
 // listing can't attest tool support — llm.Probe is the authority for gating.
+// Wrapped in llmclient.Do like every provider HTTP request.
 func (o *OpenAI) Models(ctx context.Context) ([]ModelInfo, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, o.cfg.BaseURL+"/models", nil)
-	if err != nil {
-		return nil, err
-	}
-	if o.cfg.APIKey != "" {
-		httpReq.Header.Set("authorization", "Bearer "+o.cfg.APIKey)
-	}
-	resp, err := o.http.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("%s: cannot reach %s — is it running?: %w", o.cfg.Name, o.cfg.BaseURL, err)
-	}
-	defer resp.Body.Close()
-	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("%s: status %d: %s", o.cfg.Name, resp.StatusCode, truncate(string(rb), 300))
-	}
-	var wr struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rb, &wr); err != nil {
-		return nil, fmt.Errorf("%s: decode models: %w", o.cfg.Name, err)
-	}
-	out := make([]ModelInfo, 0, len(wr.Data))
-	for _, m := range wr.Data {
-		out = append(out, ModelInfo{ID: m.ID})
-	}
-	return out, nil
+	return llmclient.Do(ctx, o.rc, func(ctx context.Context) ([]ModelInfo, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, o.cfg.BaseURL+"/models", nil)
+		if err != nil {
+			return nil, err
+		}
+		if o.cfg.APIKey != "" {
+			httpReq.Header.Set("authorization", "Bearer "+o.cfg.APIKey)
+		}
+		resp, err := o.http.Do(httpReq)
+		if err != nil {
+			return nil, &llmclient.Retryable{Err: fmt.Errorf("%s: cannot reach %s — is it running?: %w", o.cfg.Name, o.cfg.BaseURL, err)}
+		}
+		defer resp.Body.Close()
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		switch {
+		case resp.StatusCode == 429:
+			return nil, &llmclient.RetryAfter{After: parseRetryAfter(resp.Header), Err: fmt.Errorf("%s: status 429", o.cfg.Name)}
+		case resp.StatusCode >= 500:
+			return nil, &llmclient.Retryable{Err: fmt.Errorf("%s: status %d", o.cfg.Name, resp.StatusCode)}
+		case resp.StatusCode != 200:
+			return nil, fmt.Errorf("%s: status %d: %s", o.cfg.Name, resp.StatusCode, truncate(string(rb), 300))
+		}
+		var wr struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(rb, &wr); err != nil {
+			return nil, fmt.Errorf("%s: decode models: %w", o.cfg.Name, err)
+		}
+		out := make([]ModelInfo, 0, len(wr.Data))
+		for _, m := range wr.Data {
+			out = append(out, ModelInfo{ID: m.ID})
+		}
+		return out, nil
+	})
 }
 
 // Ping verifies the endpoint is reachable (GET /models) — for a local server
