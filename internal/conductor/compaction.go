@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/revelara-ai/orion/internal/contextwindow"
-	"github.com/revelara-ai/orion/internal/llm"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // Compaction is the chat-level context lever (distinct from the harness's

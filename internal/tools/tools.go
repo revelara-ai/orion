@@ -13,7 +13,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/revelara-ai/orion/internal/llm"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // Safety classifies a tool so the harness/gates can decide how to dispatch it

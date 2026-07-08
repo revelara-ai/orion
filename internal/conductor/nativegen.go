@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/harness"
-	"github.com/revelara-ai/orion/internal/llm"
+	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/internal/sandbox"
 	"github.com/revelara-ai/orion/internal/tools"

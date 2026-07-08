@@ -11,7 +11,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/revelara-ai/orion/internal/health"
-	"github.com/revelara-ai/orion/internal/llm"
+	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/polaris"
 	"github.com/revelara-ai/orion/internal/tui"
 )

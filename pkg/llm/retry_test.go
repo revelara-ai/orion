@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/revelara-ai/orion/internal/llmclient"
+	"github.com/revelara-ai/orion/pkg/llmclient"
 )
 
 const okBody = `{"model":"m","stop_reason":"end_turn","content":[{"type":"text","text":"ok"}],"usage":{}}`

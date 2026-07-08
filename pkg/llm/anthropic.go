@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/revelara-ai/orion/internal/llmclient"
+	"github.com/revelara-ai/orion/pkg/llmclient"
 )
 
 // DefaultAnthropicModel is the default model id (overridable at setup).

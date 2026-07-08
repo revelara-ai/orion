@@ -13,7 +13,7 @@ import (
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/brownfield"
-	"github.com/revelara-ai/orion/internal/llm"
+	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 	"github.com/revelara-ai/orion/internal/proof/newbehavior"
