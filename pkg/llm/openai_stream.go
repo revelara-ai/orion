@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -80,15 +82,7 @@ func (o *OpenAI) doStream(ctx context.Context, body []byte, onText func(string))
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		// Reuse the non-streaming status mapping by reading the (JSON) error body.
-		rb := make([]byte, 0, 4096)
-		buf := bufio.NewReader(resp.Body)
-		for {
-			b, err := buf.ReadByte()
-			if err != nil || len(rb) >= 4096 {
-				break
-			}
-			rb = append(rb, b)
-		}
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		switch {
 		case resp.StatusCode == 429:
 			return nil, &llmclient.RetryAfter{After: parseRetryAfter(resp.Header), Err: fmt.Errorf("%s: status 429", o.cfg.Name)}
@@ -110,8 +104,19 @@ func (o *OpenAI) doStream(ctx context.Context, body []byte, onText func(string))
 		emitted  bool // once true, a failure is terminal (never retry into duplicate output)
 		complete bool
 	)
+	// Once text is on screen, a retry would duplicate it. After emit, return
+	// errors with %v (not %w) so the chain doesn't match context.DeadlineExceeded /
+	// *Retryable — i.e. terminal, never retried. Mirrors anthropic_stream.go's terminal().
+	terminal := func(format string, err error) error {
+		wrapped := fmt.Errorf("%s: %v", format, err) // %v severs the chain (no DeadlineExceeded match)
+		if emitted {
+			return wrapped // already showed output → non-retryable, never duplicate
+		}
+		return &llmclient.Retryable{Err: wrapped}
+	}
+
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8<<20)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10<<20) // a single SSE data line can be large
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if !strings.HasPrefix(line, "data:") {
@@ -165,16 +170,14 @@ func (o *OpenAI) doStream(ctx context.Context, body []byte, onText func(string))
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		if emitted {
-			return nil, fmt.Errorf("%s: stream failed mid-output: %w", o.cfg.Name, err)
+		if errors.Is(err, bufio.ErrTooLong) {
+			// Retrying re-streams the same oversized line — terminal, never retry.
+			return nil, fmt.Errorf("%s: stream line exceeds buffer: %v", o.cfg.Name, err)
 		}
-		return nil, &llmclient.Retryable{Err: fmt.Errorf("%s: stream read: %w", o.cfg.Name, err)}
+		return nil, terminal(o.cfg.Name+": stream read", err)
 	}
 	if !complete {
-		if emitted {
-			return nil, fmt.Errorf("%s: %w", o.cfg.Name, errTruncatedStream)
-		}
-		return nil, &llmclient.Retryable{Err: fmt.Errorf("%s: %w", o.cfg.Name, errTruncatedStream)}
+		return nil, terminal(o.cfg.Name+": stream", errTruncatedStream)
 	}
 
 	out := &ChatResponse{Model: modelID, StopReason: oaStop(finish, len(calls) > 0), Usage: usage}
