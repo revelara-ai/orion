@@ -33,8 +33,8 @@ import (
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/conductor"
 	"github.com/revelara-ai/orion/internal/health"
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // acpServer is the Conductor brain the TUI drives over ACP (native or fallback).
@@ -93,10 +93,10 @@ var (
 	warnGlyph   = lipgloss.NewStyle().Foreground(cWarning)
 	failGlyph   = lipgloss.NewStyle().Foreground(cDanger)
 
-	cBorder      = lipgloss.Color("#362D50")                                                                        // divider on the void
-	transPane    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cBorder)                   // top: transcript
-	inputPane    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cIndigo).Padding(0, 1)    // bottom: input + status
-	activityPane = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cFaint)                    // middle: live activity (dim border)
+	cBorder      = lipgloss.Color("#362D50")                                                                    // divider on the void
+	transPane    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cBorder)               // top: transcript
+	inputPane    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cIndigo).Padding(0, 1) // bottom: input + status
+	activityPane = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cFaint)                // middle: live activity (dim border)
 )
 
 // ── async message types ──────────────────────────────────────────────────────

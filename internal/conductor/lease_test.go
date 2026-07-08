@@ -97,8 +97,8 @@ func TestScopesOverlapMatrix(t *testing.T) {
 		{"internal/server/", "internal/obs/", false},
 		{"go.mod,cmd/", "cmd/api/", true}, // comma lists expand
 		{"docs/", "internal/", false},
-		{"", "docs/", true},  // undeclared = whole tree
-		{"docs/", "", true},  // symmetric
+		{"", "docs/", true}, // undeclared = whole tree
+		{"docs/", "", true}, // symmetric
 	}
 	for _, tc := range cases {
 		if got := scopesOverlap(leaseSet(tc.a), leaseSet(tc.b)); got != tc.want {

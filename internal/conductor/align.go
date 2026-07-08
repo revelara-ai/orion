@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // AlignVerdict is the AlignAgent's advisory judgment of whether a built module

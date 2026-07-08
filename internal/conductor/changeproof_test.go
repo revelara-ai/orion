@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/proof/newbehavior"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // gitInitGreenRepo makes a temp git repo (branch main) with a GREEN Go module committed,

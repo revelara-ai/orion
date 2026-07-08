@@ -67,10 +67,10 @@ func (r Report) Summary() (ok, warn, fail int) {
 
 // Options injects the externals so probes stay testable + side-effect-scoped.
 type Options struct {
-	DataDir  string                          // the resolved data dir (may be "" / missing)
-	LookPath func(string) (string, error)    // PATH lookup (defaults to exec.LookPath)
-	AgentEnv string                          // $ORION_AGENT
-	Polaris  func() Check                    // optional: caller-provided polaris probe (cached or live)
+	DataDir  string                       // the resolved data dir (may be "" / missing)
+	LookPath func(string) (string, error) // PATH lookup (defaults to exec.LookPath)
+	AgentEnv string                       // $ORION_AGENT
+	Polaris  func() Check                 // optional: caller-provided polaris probe (cached or live)
 }
 
 // Probe runs every readiness probe and returns the grouped Report. Read-only (it does not

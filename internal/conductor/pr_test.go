@@ -30,9 +30,9 @@ func TestPRBodyCapturesProvenance(t *testing.T) {
 
 	for _, want := range []string{
 		"Build an HTTP service that returns the current time", // intent
-		"abc123de",   // spec anchor (short hash)
-		"/time",      // route
-		"Accept",     // verdict
+		"abc123de",    // spec anchor (short hash)
+		"/time",       // route
+		"Accept",      // verdict
 		"drift check", // the SystemValidate line
 		"coverage 2/2",
 		"wireup clean",

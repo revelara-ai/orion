@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/tools"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // A destructive tool denied by the Approve hook is NOT dispatched, and a denial message

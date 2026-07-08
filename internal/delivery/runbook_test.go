@@ -6,9 +6,9 @@ import (
 
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
+	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 	"github.com/revelara-ai/orion/internal/reliabilitytier"
-	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
 )
 
 // TestRunbookCompleteness: the generated runbook carries every required section,

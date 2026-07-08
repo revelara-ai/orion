@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/harness"
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/tools"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // readFileTool lets the diff generator read existing files (path-guarded to root) so it

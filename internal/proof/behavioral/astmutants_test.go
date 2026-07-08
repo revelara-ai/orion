@@ -76,9 +76,9 @@ func TestASTMutantsRespectCap(t *testing.T) {
 // never a silent pass (or-v9f.11); the threshold is the caller's (tier) bar.
 func TestMutationGateMatrix(t *testing.T) {
 	cases := []struct {
-		name             string
-		killed, total    int
-		threshold        float64
+		name              string
+		killed, total     int
+		threshold         float64
 		wantPass, wantInc bool
 	}{
 		{"zero mutants is inconclusive", 0, 0, 0.6, false, true},

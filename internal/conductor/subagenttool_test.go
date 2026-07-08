@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/tools"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // TestSpawnSubagentRunsNestedLoop (or-5j1 slice 3): spawn_subagent runs a bounded nested harness

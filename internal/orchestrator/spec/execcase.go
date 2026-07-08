@@ -58,11 +58,11 @@ type StepExpect struct {
 type StreamKind string
 
 const (
-	StreamExact       StreamKind = "exact"
-	StreamContains    StreamKind = "contains"
-	StreamRegex       StreamKind = "regex"
-	StreamEmpty       StreamKind = "empty"
-	StreamRFC3339UTC  StreamKind = "rfc3339_utc"
+	StreamExact      StreamKind = "exact"
+	StreamContains   StreamKind = "contains"
+	StreamRegex      StreamKind = "regex"
+	StreamEmpty      StreamKind = "empty"
+	StreamRFC3339UTC StreamKind = "rfc3339_utc"
 )
 
 var knownStreamKinds = map[StreamKind]bool{

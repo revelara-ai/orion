@@ -13,12 +13,12 @@ import (
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/brownfield"
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
-	"github.com/revelara-ai/orion/internal/proof/newbehavior"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
+	"github.com/revelara-ai/orion/internal/proof/newbehavior"
 	"github.com/revelara-ai/orion/internal/tools"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // specTools exposes the deterministic spec pipeline as TOOLS the native Orion
@@ -30,9 +30,9 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	r := tools.NewRegistry()
 	registerChangeTools(r, cs, c, provider)
 	registerBeadsTool(r, c)
-	registerMCPTools(r, c.Store())  // revelara.ai MCP tools, when authenticated (or-xe7.10)
-	registerWorkspaceTools(r, c)      // bash + file I/O + search — general workspace agency (or-5j1)
-	registerWebTools(r)               // web_fetch + keyless web_search — web reach (or-5j1 slice 2)
+	registerMCPTools(r, c.Store())             // revelara.ai MCP tools, when authenticated (or-xe7.10)
+	registerWorkspaceTools(r, c)               // bash + file I/O + search — general workspace agency (or-5j1)
+	registerWebTools(r)                        // web_fetch + keyless web_search — web reach (or-5j1 slice 2)
 	registerSubagentTool(r, c, provider, emit) // spawn_subagent — bounded nested delegation (or-5j1 slice 3)
 
 	r.Register(tools.Tool{
@@ -400,7 +400,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	})
 
 	r.Register(tools.Tool{
-		Name: "change_repo",
+		Name:        "change_repo",
 		Description: "Make a brownfield change to the EXISTING repo and PROVE it: generate the edit in a worktree off HEAD, prove it PRESERVES existing behavior (regression gate green-before→green-after), prove the asked-for change via ratified verification commands, and commit on a review branch only if both hold. Use for changes to an existing codebase — INCLUDING tooling/config changes that ship no service (e.g. add .golangci.yml + Makefile lint/vet targets). Not for greenfield (use build_service). The verify commands ARE the proof for a tooling change — author them yourself; the harness runs and judges them (you never grade your own work). Do NOT invent HTTP/service cases for a tooling change.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"intent":{"type":"string","description":"the developer's change intent"},` +
@@ -462,7 +462,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	})
 
 	r.Register(tools.Tool{
-		Name: "git",
+		Name:        "git",
 		Description: "Run a git operation in the developer's repo and return its output + exit code (status, diff, log, show, branch, checkout, merge, commit, add, stash, rev-parse, …). Use it to show the developer a diff, or to LAND a PROVEN change_repo branch into the base branch once they approve. Landing rule (keeps a landed change exactly what was proven): on the base branch run merge --ff-only <change-branch>; if that is NOT a fast-forward (the base moved since the change was proven), do NOT hand-merge or force — the proof is stale, so re-run change_repo off current HEAD to re-prove, then land. Operates on the LOCAL repo; `push` reaches a shared remote, so only push when the developer explicitly asks for it.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"args":{"type":"array","items":{"type":"string"},"description":"git arguments after 'git', e.g. [\"merge\",\"--ff-only\",\"orion-change-...\"] or [\"diff\",\"main..orion-change-...\"]"}},"required":["args"]}`),
 		Safety:      tools.Safety{Destructive: true},

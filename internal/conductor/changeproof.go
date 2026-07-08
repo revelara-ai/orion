@@ -11,7 +11,6 @@ import (
 	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/brownfield"
 	"github.com/revelara-ai/orion/internal/contextstore"
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/notify"
 	"github.com/revelara-ai/orion/internal/proof"
 	"github.com/revelara-ai/orion/internal/proof/newbehavior"
@@ -19,6 +18,7 @@ import (
 	"github.com/revelara-ai/orion/internal/reliabilityscan"
 	"github.com/revelara-ai/orion/internal/reliabilitytier"
 	"github.com/revelara-ai/orion/internal/worktree"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // ChangeResult is the outcome of a brownfield change-proof.
@@ -29,7 +29,7 @@ type ChangeResult struct {
 	FilesChanged []string
 	NewBehavior  *truthalign.ModeResult // nil when no ratified cases were supplied
 	Committed    bool
-	Reason       string // why not committed, if applicable
+	Reason       string   // why not committed, if applicable
 	Tier         string   // reliability tier classified from the change worktree (or-v9f.15)
 	Delivery     string   // "deliver" | "escalate" — the same decision semantic as the greenfield bar
 	PR           PRResult // PR-ready handoff over the review branch on deliver (or-v9f.15)

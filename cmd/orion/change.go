@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/conductor"
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/proof/newbehavior"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // cmdChange runs the brownfield change-proof loop on the current repo: generate the

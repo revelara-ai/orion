@@ -12,7 +12,7 @@ import (
 // brain — just at different absolute token counts.
 func TestThresholdsScaleWithWindow(t *testing.T) {
 	for _, tc := range []struct {
-		window                       int
+		window                            int
 		wantClear, wantCompact, wantGuard int
 	}{
 		{1_000_000, 400_000, 700_000, 850_000},

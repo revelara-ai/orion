@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/brownfield"
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // HazardRef is a baseline hazard a change must preserve.

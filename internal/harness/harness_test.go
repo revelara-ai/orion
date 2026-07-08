@@ -10,8 +10,8 @@ import (
 
 	"github.com/revelara-ai/orion/internal/budget"
 	"github.com/revelara-ai/orion/internal/contextwindow"
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/tools"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // bigResultMsg is a user turn carrying one bulky tool_result body.

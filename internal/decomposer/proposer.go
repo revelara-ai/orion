@@ -18,7 +18,7 @@ type ProposedModule struct {
 	Title           string   `json:"title"`
 	ProofObligation string   `json:"proof_obligation"`
 	FileScope       string   `json:"file_scope"`
-	Covers          []string `json:"covers"`     // dimension keys AND behavioral case IDs this module owns
+	Covers          []string `json:"covers"` // dimension keys AND behavioral case IDs this module owns
 	DependsOn       []string `json:"depends_on"`
 }
 
