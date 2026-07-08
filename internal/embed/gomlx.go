@@ -10,11 +10,11 @@ import (
 	"github.com/gomlx/compute/dtypes"
 	"github.com/gomlx/compute/gobackend"
 	"github.com/gomlx/compute/shapes"
+	"github.com/gomlx/go-huggingface/tokenizers/api"
+	"github.com/gomlx/go-huggingface/tokenizers/hftokenizer"
 	"github.com/gomlx/gomlx/core/graph"
 	"github.com/gomlx/gomlx/core/tensors"
 	"github.com/gomlx/gomlx/ml/model"
-	"github.com/gomlx/go-huggingface/tokenizers/api"
-	"github.com/gomlx/go-huggingface/tokenizers/hftokenizer"
 	"github.com/gomlx/onnx-gomlx/onnx"
 	"github.com/gomlx/onnx-gomlx/onnx/parser"
 )

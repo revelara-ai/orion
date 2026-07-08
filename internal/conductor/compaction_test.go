@@ -12,8 +12,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/revelara-ai/orion/internal/acp"
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // TestDialogueDominatesGatesOnReducibleMessages: compaction only shrinks the
@@ -41,7 +41,7 @@ func TestDialogueDominatesGatesOnReducibleMessages(t *testing.T) {
 // must be lossless.
 func TestSplitByTokensPreservesUTF8(t *testing.T) {
 	line := strings.Repeat("你好世界", 3000) // multi-byte runes, one long line
-	chunks := splitByTokens(line, 1000)     // maxChars 4000 → forces mid-line hard-splits
+	chunks := splitByTokens(line, 1000)  // maxChars 4000 → forces mid-line hard-splits
 	for i, c := range chunks {
 		if !utf8.ValidString(c) {
 			t.Fatalf("chunk %d is not valid UTF-8 — a rune was split mid-character", i)
@@ -230,9 +230,11 @@ func TestCompactTranscriptFilesAreUnique(t *testing.T) {
 // compaction can't complete.
 type overflowSummarizerFailsLLM struct{ streamCalls int }
 
-func (p *overflowSummarizerFailsLLM) Name() string                                    { return "osf" }
-func (p *overflowSummarizerFailsLLM) Models(context.Context) ([]llm.ModelInfo, error) { return nil, nil }
-func (p *overflowSummarizerFailsLLM) Ping(context.Context) error                      { return nil }
+func (p *overflowSummarizerFailsLLM) Name() string { return "osf" }
+func (p *overflowSummarizerFailsLLM) Models(context.Context) ([]llm.ModelInfo, error) {
+	return nil, nil
+}
+func (p *overflowSummarizerFailsLLM) Ping(context.Context) error { return nil }
 func (p *overflowSummarizerFailsLLM) Chat(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
 	return nil, fmt.Errorf("summarizer down")
 }

@@ -89,7 +89,7 @@ func handleTime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprint(w, `+"`"+`{"time":"2026-01-01T00:00:00Z"}`+"`"+`)
+	fmt.Fprint(w, ` + "`" + `{"time":"2026-01-01T00:00:00Z"}` + "`" + `)
 }
 
 func main() {

@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/revelara-ai/orion/internal/acp"
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/tools"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // TestSubagentSurfacesInnerActivity: a spawned subagent's inner tool calls must

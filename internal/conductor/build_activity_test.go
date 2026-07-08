@@ -8,8 +8,8 @@ func TestPhaseStatusToActivity(t *testing.T) {
 	cases := map[PhaseStatus]string{
 		PhaseRunning: "running",
 		PhaseDone:    "done",
-		PhaseWarn:    "warn",   // advisory — must NOT be "fail"
-		PhaseFailed:  "fail",   // hard error path
+		PhaseWarn:    "warn", // advisory — must NOT be "fail"
+		PhaseFailed:  "fail", // hard error path
 	}
 	for in, want := range cases {
 		if got := phaseStatusToActivity(in); got != want {

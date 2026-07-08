@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // TestChangeFlowToolsRegistered: the change-spec flow is exposed to the brain, build_change Destructive.
@@ -42,8 +42,8 @@ func TestCaseInputGround(t *testing.T) {
 	bad := []caseInput{
 		{Modality: "synth_test", Pkg: "internal/missing", Call: "X()", Want: "1"}, // pkg absent
 		{Modality: "synth_test", Pkg: "internal/foo", Call: "X()"},                // no want
-		{Modality: "command"},                                                     // no assert
-		{Modality: "bogus"},                                                       // unknown modality
+		{Modality: "command"}, // no assert
+		{Modality: "bogus"},   // unknown modality
 	}
 	for _, ci := range bad {
 		if _, why := ci.ground(pkgs); why == "" {

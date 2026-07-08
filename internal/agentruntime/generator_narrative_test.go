@@ -13,7 +13,7 @@ import (
 // narrativeSession is a fake ACPSession that streams agent text + writes one file.
 type narrativeSession struct{ dir string }
 
-func (s narrativeSession) Initialize(context.Context) error      { return nil }
+func (s narrativeSession) Initialize(context.Context) error           { return nil }
 func (s narrativeSession) SessionNew(context.Context) (string, error) { return "s1", nil }
 func (s narrativeSession) Prompt(_ context.Context, _, _ string, onUpdate func(acp.Update)) (acp.PromptResult, error) {
 	onUpdate(acp.Update{Kind: "agent_thought", Text: "The timezone handling was wrong; fixing it."})

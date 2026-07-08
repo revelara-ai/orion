@@ -26,10 +26,10 @@ import (
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/internal/proof/casecheck"
 	"github.com/revelara-ai/orion/internal/proof/execprobe"
-	"github.com/revelara-ai/orion/internal/proof/unitprobe"
 	"github.com/revelara-ai/orion/internal/proof/proofexec"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
+	"github.com/revelara-ai/orion/internal/proof/unitprobe"
 )
 
 // ProbeResult is the empirical evidence surfaced by `orion proof show`.

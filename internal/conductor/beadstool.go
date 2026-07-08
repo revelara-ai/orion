@@ -95,7 +95,7 @@ func registerBeadsTool(r *tools.Registry, c *orchestrator.Conductor) {
 		return
 	}
 	r.Register(tools.Tool{
-		Name: "bd",
+		Name:        "bd",
 		Description: "Run a beads (bd) issue-tracker operation in the developer's repo and return its output + exit code. The project tracks its work in beads — use it to GROUND specs and changes in the real backlog. Read freely: ready, show, list, search, blocked, stats, comments, dep tree. WRITE (create, update, close, dep add, comment, label) only on the developer's say-so — writes mutate their shared issue DB. NEVER run `bd edit` (it opens $EDITOR and blocks forever; update fields with `bd update --title/--description/--notes` instead). `bd dolt push`/`pull` reach the shared remote — only when the developer explicitly asks. The DB is single-writer: a write that loses the lock to another bd process is retried automatically; if it still fails, report the error rather than assuming it applied.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"args":{"type":"array","items":{"type":"string"},"description":"bd arguments after 'bd', e.g. [\"ready\"] or [\"show\",\"or-123\"] or [\"close\",\"or-123\",\"--reason\",\"done\"]"}},"required":["args"]}`),
 		Safety:      tools.Safety{Destructive: true},

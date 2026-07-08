@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/revelara-ai/orion/internal/brownfield"
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // TestMapIntentDirectsWork: intent is mapped onto BOTH models — affected packages

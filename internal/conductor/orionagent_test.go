@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/revelara-ai/orion/internal/acp"
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // fakeLLM is a deterministic provider that replays scripted responses — it stands

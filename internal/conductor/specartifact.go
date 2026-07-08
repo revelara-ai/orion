@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // SpecArtifact renders the WRITTEN ARTIFACT of the spec-definition phase (or-tcs.5): the full

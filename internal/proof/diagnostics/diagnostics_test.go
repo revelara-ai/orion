@@ -1,10 +1,10 @@
 package diagnostics
 
 import (
-	"strings"
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 

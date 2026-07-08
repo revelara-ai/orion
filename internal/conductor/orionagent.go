@@ -12,8 +12,8 @@ import (
 
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/harness"
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // OrionAgent is the native, LLM-driven human-interface agent (SPEC §0 amendment:

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // /compact replaces a session's history with a single model-written summary; /model shows

@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/brownfield"
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // AnalyzeSTAMPBaseline proposes a STAMP control-structure model for the EXISTING

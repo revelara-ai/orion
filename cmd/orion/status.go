@@ -11,9 +11,9 @@ import (
 	"golang.org/x/term"
 
 	"github.com/revelara-ai/orion/internal/health"
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/polaris"
 	"github.com/revelara-ai/orion/internal/tui"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // cmdStatus implements `orion status` (or-gik.4): print the full init status banner — the SAME

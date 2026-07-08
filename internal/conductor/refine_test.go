@@ -105,7 +105,7 @@ func TestBuildAndProveRefinesUntilAccept(t *testing.T) {
 		if feedback == "" {
 			return writeBrokenTimeService(dir, gs) // attempt 1: broken → Reject
 		}
-		gotFeedback = feedback                         // attempt 2 received the analysis
+		gotFeedback = feedback                             // attempt 2 received the analysis
 		return sandbox.GenerateTimeServiceFixture(dir, gs) // correct service → Accept
 	}
 

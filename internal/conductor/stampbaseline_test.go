@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/revelara-ai/orion/internal/brownfield"
-	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // TestAnalyzeSTAMPBaselineMaps: the proposer maps the model's report onto a stpa.Model
