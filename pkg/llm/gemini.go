@@ -361,12 +361,4 @@ func (g *Gemini) Ping(context.Context) error {
 	return nil
 }
 
-// ChatStream is implemented in gemini_stream.go (Task 5); until then, degrade
-// to non-streaming Chat and emit the text once.
-func (g *Gemini) ChatStream(ctx context.Context, req ChatRequest, onText func(string)) (*ChatResponse, error) {
-	resp, err := g.Chat(ctx, req)
-	if err == nil && onText != nil {
-		onText(resp.Text())
-	}
-	return resp, err
-}
+// ChatStream is implemented in gemini_stream.go.
