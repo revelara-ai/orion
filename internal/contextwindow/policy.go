@@ -9,7 +9,7 @@
 // (EstimateTokens, TokenCounter, ErrContextOverflow) live in package llm.
 package contextwindow
 
-import "github.com/revelara-ai/orion/internal/llm"
+import "github.com/revelara-ai/orion/pkg/llm"
 
 // Fractions of the window at which each layer engages. Guard sits below 1.0 to
 // leave room for the response tokens the model still needs to generate.

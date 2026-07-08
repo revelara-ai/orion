@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/revelara-ai/orion/internal/llm"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // TestThresholdsScaleWithWindow: the defensive layers engage at fractions of the

@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/brownfield"
-	"github.com/revelara-ai/orion/internal/llm"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // Domain is one functional capability of the system + the real packages implementing it.

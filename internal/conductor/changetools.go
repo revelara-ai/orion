@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/revelara-ai/orion/internal/brownfield"
-	"github.com/revelara-ai/orion/internal/llm"
+	"github.com/revelara-ai/orion/pkg/llm"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/proof/newbehavior"
 	"github.com/revelara-ai/orion/internal/tools"

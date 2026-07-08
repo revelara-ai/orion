@@ -1,6 +1,6 @@
 package contextwindow
 
-import "github.com/revelara-ai/orion/internal/llm"
+import "github.com/revelara-ai/orion/pkg/llm"
 
 // ClearedMarker replaces a bulky tool_result body that was dropped to fit the
 // context window. It preserves the tool_use/tool_result PAIRING (the API requires

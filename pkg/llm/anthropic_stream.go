@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/revelara-ai/orion/internal/llmclient"
+	"github.com/revelara-ai/orion/pkg/llmclient"
 )
 
 // errTruncatedStream marks a stream that ended without a terminal event — a

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/revelara-ai/orion/internal/brownfield"
-	"github.com/revelara-ai/orion/internal/llm"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // TestAnalyzeFunctionalModelGrounds: the analyzer extracts the model's domains AND

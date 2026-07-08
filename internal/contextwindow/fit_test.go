@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/revelara-ai/orion/internal/llm"
+	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // bigResult is a user message carrying one bulky tool_result body.
