@@ -182,3 +182,66 @@ func TestOpenAIChatStreamErrorEventStringForm(t *testing.T) {
 		t.Fatalf("string-form error must surface, got: %v", err)
 	}
 }
+
+// TestOpenAIChatStreamForwardsReasoningDeltas: reasoning models (Qwen3,
+// DeepSeek-R1 via LM Studio) stream chain-of-thought as delta.reasoning_content
+// BEFORE any content. Dropping it makes the model look hung during long
+// thinking stretches; the deltas must reach onText (the live thought stream)
+// while staying OUT of the assembled answer (conversation history stays clean).
+func TestOpenAIChatStreamForwardsReasoningDeltas(t *testing.T) {
+	srv := oaSseServer(t, []string{
+		`{"choices":[{"delta":{"reasoning_content":"thinking"}}]}`,
+		`{"choices":[{"delta":{"reasoning_content":" hard"}}]}`,
+		`{"choices":[{"delta":{"content":"Answer"}}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		`[DONE]`,
+	})
+	defer srv.Close()
+	o := NewOpenAI(OpenAIConfig{BaseURL: srv.URL + "/v1", Model: "m"})
+	var seen []string
+	resp, err := o.ChatStream(context.Background(), ChatRequest{Messages: []Message{TextMessage(RoleUser, "x")}}, func(s string) {
+		seen = append(seen, s)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(seen, ""); !strings.Contains(got, "thinking hard") || !strings.Contains(got, "Answer") {
+		t.Errorf("onText must carry reasoning AND content deltas, got %q", got)
+	}
+	if resp.Text() != "Answer" {
+		t.Errorf("assembled answer must exclude reasoning, got %q", resp.Text())
+	}
+}
+
+// TestOpenAIChatStreamReasoningCountsAsEmitted: once reasoning text has been
+// shown, a retry would duplicate it — the no-retry-after-emit contract covers
+// reasoning deltas too.
+func TestOpenAIChatStreamReasoningCountsAsEmitted(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("content-type", "text/event-stream")
+		f, _ := w.(http.Flusher)
+		w.Write([]byte(`data: {"choices":[{"delta":{"reasoning_content":"partial thought"}}]}` + "\n\n"))
+		if f != nil {
+			f.Flush()
+		}
+		<-r.Context().Done() // stall until the per-attempt deadline fires mid-stream
+	}))
+	defer srv.Close()
+	o := NewOpenAI(OpenAIConfig{BaseURL: srv.URL + "/v1", Model: "m"})
+	o.rc = llmclient.New(llmclient.Config{Timeout: 100 * time.Millisecond, MaxRetries: 4})
+	var got strings.Builder
+	_, err := o.ChatStream(context.Background(), ChatRequest{Messages: []Message{TextMessage(RoleUser, "x")}}, func(s string) {
+		got.WriteString(s)
+	})
+	if err == nil {
+		t.Fatal("stalled stream must error")
+	}
+	if n := hits.Load(); n != 1 {
+		t.Errorf("reasoning already shown → no retry allowed, got %d attempts", n)
+	}
+	if got.String() != "partial thought" {
+		t.Errorf("duplicated output: %q", got.String())
+	}
+}
