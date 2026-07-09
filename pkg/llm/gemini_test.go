@@ -169,3 +169,36 @@ func TestGeminiModelsPingCapabilities(t *testing.T) {
 	}
 	var _ Provider = g
 }
+
+func TestGeminiOmitsEmptyToolSchemas(t *testing.T) {
+	// Gemini rejects OBJECT schemas with no/empty properties; for no-arg tools
+	// the declaration must omit parameters entirely.
+	var got gemRequest
+	srv := geminiTestServer(t, `{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`, &got)
+	defer srv.Close()
+	g := NewGemini(GeminiConfig{APIKey: "k", Model: "m", BaseURL: srv.URL})
+	_, err := g.Chat(context.Background(), ChatRequest{
+		Messages: []Message{TextMessage(RoleUser, "x")},
+		Tools: []Tool{
+			{Name: "noargs", InputSchema: json.RawMessage(`{"type":"object"}`)},
+			{Name: "emptyprops", InputSchema: json.RawMessage(`{"type":"object","properties":{}}`)},
+			{Name: "nilschema", InputSchema: nil},
+			{Name: "full", InputSchema: json.RawMessage(`{"type":"object","properties":{"p":{"type":"string"}}}`)},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decls := got.Tools[0].FunctionDeclarations
+	for i, want := range []string{"noargs", "emptyprops", "nilschema"} {
+		if decls[i].Name != want {
+			t.Fatalf("tool order changed: %+v", decls)
+		}
+		if len(decls[i].Parameters) != 0 {
+			t.Errorf("tool %s: parameters must be omitted, got %s", want, decls[i].Parameters)
+		}
+	}
+	if len(decls[3].Parameters) == 0 {
+		t.Errorf("full schema must be passed through, got empty")
+	}
+}

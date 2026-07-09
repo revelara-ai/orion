@@ -181,9 +181,36 @@ func (o *OpenAI) toWire(req ChatRequest, model string) oaRequest {
 		}
 	}
 	for _, t := range req.Tools {
-		w.Tools = append(w.Tools, oaTool{Type: "function", Function: oaToolDef{Name: t.Name, Description: t.Description, Parameters: t.InputSchema}})
+		w.Tools = append(w.Tools, oaTool{Type: "function", Function: oaToolDef{Name: t.Name, Description: t.Description, Parameters: normalizeToolSchema(t.InputSchema)}})
 	}
 	return w
+}
+
+// normalizeToolSchema guarantees a tool's parameters are a JSON-schema object
+// carrying "type" and "properties". OpenAI itself tolerates their absence, but
+// strict OpenAI-compatible servers (LM Studio's zod validation) reject the
+// whole request with a 400 when any tool omits properties — and Orion's no-arg
+// tools default to {"type":"object"}. Unparseable schemas pass through so the
+// server reports them with context.
+func normalizeToolSchema(schema json.RawMessage) json.RawMessage {
+	if len(schema) == 0 {
+		return json.RawMessage(`{"type":"object","properties":{}}`)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(schema, &m); err != nil || m == nil {
+		return schema
+	}
+	if _, ok := m["type"]; !ok {
+		m["type"] = "object"
+	}
+	if _, ok := m["properties"]; !ok {
+		m["properties"] = map[string]any{}
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return schema
+	}
+	return out
 }
 
 // Chat issues one chat-completions request, retried/broken per llmclient policy.

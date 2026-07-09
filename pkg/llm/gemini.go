@@ -197,11 +197,30 @@ func (g *Gemini) toWire(req ChatRequest, maxTok int) gemRequest {
 	if len(req.Tools) > 0 {
 		decls := make([]gemFuncDecl, 0, len(req.Tools))
 		for _, t := range req.Tools {
-			decls = append(decls, gemFuncDecl{Name: t.Name, Description: t.Description, Parameters: t.InputSchema})
+			decls = append(decls, gemFuncDecl{Name: t.Name, Description: t.Description, Parameters: gemToolSchema(t.InputSchema)})
 		}
 		w.Tools = []gemTools{{FunctionDeclarations: decls}}
 	}
 	return w
+}
+
+// gemToolSchema adapts a tool's JSON schema to Gemini's dialect: Gemini rejects
+// OBJECT schemas whose properties are absent or empty (the shape Orion's no-arg
+// tools carry), and the correct declaration for a parameterless function omits
+// parameters entirely. Schemas with real properties pass through unchanged;
+// unparseable ones pass through so the server reports them with context.
+func gemToolSchema(schema json.RawMessage) json.RawMessage {
+	if len(schema) == 0 {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(schema, &m); err != nil || m == nil {
+		return schema
+	}
+	if props, ok := m["properties"].(map[string]any); !ok || len(props) == 0 {
+		return nil
+	}
+	return schema
 }
 
 // Chat issues one generateContent request, retried/broken per llmclient policy.
