@@ -262,7 +262,7 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 
 	r.Register(tools.Tool{
 		Name:        "build_change",
-		Description: "Generate the change and PROVE it against the RATIFIED cases: regression gate (do-no-harm) + new-behavior proof (the ratified oracle) → commit on a review branch ONLY if both hold. Call after ratify_cases. Reports the verdict + per-obligation transcript; if NOT committed, read the transcript to see which obligation failed.",
+		Description: "Generate the change and PROVE it against the RATIFIED cases: regression gate (do-no-harm) + new-behavior proof (the ratified oracle) → commit on a review branch ONLY if both hold. Call after ratify_cases. Reports the verdict + per-obligation transcript; if NOT committed, read the do-no-harm transcript digest in the result, fix the defect it names, and call build_change again — failure→fix→retry is the expected loop (fresh worktree per attempt). Escalate to the developer only if the same defect survives two corrected attempts.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
 		Safety:      tools.Safety{Destructive: true},
 		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
@@ -327,6 +327,11 @@ func renderChangeResult(intent string, res ChangeResult) string {
 		}
 	} else {
 		fmt.Fprintf(&b, "  NOT committed — %s\n", res.Reason)
+		// The retry affordance lives HERE, next to the failure, not only in the
+		// system prompt: small models act on proximal instructions, and without
+		// this they diagnose the digest correctly and then give up (gemma,
+		// or-4gib). Failure→fix→retry is the intended loop.
+		fmt.Fprintf(&b, "  next: this is a normal, recoverable outcome — fix the defect named above and call build_change again with a corrected intent. Each attempt runs in a fresh worktree, so retrying is safe and expected. Do not hand the fix back to the developer unless the same defect survives two corrected attempts.\n")
 		if res.EscalationID != "" { // or-v9f.15: actionable via the unified inbox
 			fmt.Fprintf(&b, "  escalation: %s (orion escalations resolve %s)\n", res.EscalationID, res.EscalationID)
 		}

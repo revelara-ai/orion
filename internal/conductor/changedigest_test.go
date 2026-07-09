@@ -103,3 +103,28 @@ func TestEscalationCarriesFailureDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestRenderChangeResultCarriesRetryAffordance: a NOT-committed result must
+// tell the model the expected next move IN the tool result — small models act
+// on proximal instructions, not a system prompt 100K tokens back. Without
+// this, capable-enough models diagnose the digest correctly and then give up
+// or punt to the human (observed with gemma-4-e4b on or-4gib).
+func TestRenderChangeResultCarriesRetryAffordance(t *testing.T) {
+	out := renderChangeResult("add tests", redChangeResult())
+	if !strings.Contains(out, "call build_change again") {
+		t.Errorf("failed result must carry the retry affordance:\n%s", out)
+	}
+	if !strings.Contains(out, "fresh worktree") {
+		t.Errorf("affordance must state retry is safe (fresh worktree):\n%s", out)
+	}
+}
+
+func TestRenderChangeResultOmitsRetryAffordanceWhenCommitted(t *testing.T) {
+	res := redChangeResult()
+	res.Regression.Held = true
+	res.Regression.After.Passed = true
+	res.Committed = true
+	if out := renderChangeResult("add tests", res); strings.Contains(out, "call build_change again") {
+		t.Errorf("a committed result must not suggest retrying:\n%s", out)
+	}
+}
