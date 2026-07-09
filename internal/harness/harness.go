@@ -164,6 +164,7 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 	// 8K local one. Providers that can't report a window degrade gracefully.
 	policy := contextwindow.For(contextwindow.WindowOf(l.Provider, contextwindow.DefaultWindow))
 	var stall stallTracker
+	leakNudged := false
 
 	for iter := 0; iter < l.Supervisor.maxIter(); iter++ {
 		if err := ctx.Err(); err != nil {
@@ -237,6 +238,22 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 		}
 
 		if resp.StopReason != llm.StopToolUse {
+			// Template-leak guard (or-mvr adjunct): a model that emits its
+			// TRAINED tool-call syntax as text (Hermes-style <tool_call>, seen
+			// from qwen under deep context) has made a FAILED tool attempt,
+			// not a finished answer. Correct it once; a repeat means tool
+			// calling is unreliable at this depth — stop with a named error.
+			if leaksToolCallSyntax(resp.Text()) {
+				if leakNudged {
+					return convo, resp, fmt.Errorf("harness: model emits tool calls as text (template leakage) — tool calling is unreliable at this context depth; stopping the turn")
+				}
+				leakNudged = true
+				convo = append(convo, llm.TextMessage(llm.RoleUser,
+					"Your last message contained tool-call syntax as plain text — it was NOT executed. "+
+						"Invoke tools ONLY through the function-calling mechanism, never by writing <tool_call> tags in your reply. "+
+						"Available tools: "+toolNames(toolSpecs)+". Retry the call properly now."))
+				continue
+			}
 			emit(Event{Kind: EventDone})
 			return convo, resp, nil
 		}
