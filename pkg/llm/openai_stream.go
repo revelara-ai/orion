@@ -20,8 +20,12 @@ type oaChunk struct {
 	Model   string `json:"model"`
 	Choices []struct {
 		Delta struct {
-			Content   string `json:"content"`
-			ToolCalls []struct {
+			Content string `json:"content"`
+			// ReasoningContent is the chain-of-thought stream from reasoning
+			// models (Qwen3, DeepSeek-R1 dialects). Shown live, never part of
+			// the assembled answer.
+			ReasoningContent string `json:"reasoning_content"`
+			ToolCalls        []struct {
 				Index    int    `json:"index"`
 				ID       string `json:"id"`
 				Function struct {
@@ -156,6 +160,13 @@ func (o *OpenAI) doStream(ctx context.Context, body []byte, onText func(string))
 			continue
 		}
 		c := ch.Choices[0]
+		if c.Delta.ReasoningContent != "" {
+			// Live thought stream only: visible to the user (a silent
+			// 30-second think reads as a hang), counts as emitted (a retry
+			// would duplicate it), excluded from the assembled answer.
+			emitted = true
+			onText(c.Delta.ReasoningContent)
+		}
 		if c.Delta.Content != "" {
 			emitted = true
 			text.WriteString(c.Delta.Content)
