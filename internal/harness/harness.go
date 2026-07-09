@@ -163,6 +163,7 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 	// a conservative default), so the same code bounds a 1M Anthropic brain and an
 	// 8K local one. Providers that can't report a window degrade gracefully.
 	policy := contextwindow.For(contextwindow.WindowOf(l.Provider, contextwindow.DefaultWindow))
+	var stall stallTracker
 
 	for iter := 0; iter < l.Supervisor.maxIter(); iter++ {
 		if err := ctx.Err(); err != nil {
@@ -244,7 +245,21 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 		var results []llm.ContentBlock
 		for _, tu := range resp.ToolUses() {
 			emit(Event{Kind: EventToolCall, Tool: tu.Name})
-			content, isErr := l.dispatch(ctx, tu)
+			// Stall detector (or-mvr adjunct): a model repeating the IDENTICAL
+			// call is in a loop the result will never break — nudge it off the
+			// track instead of executing, and cleanly stop the turn if it
+			// persists (a named stop beats grinding to max-iterations).
+			if stall.observe(tu.Name, tu.Input) >= stallAbortAt {
+				return convo, resp, fmt.Errorf("harness: %w — %s repeated %d× with identical input; the turn was stopped so the loop can regroup", ErrStalled, tu.Name, stallAbortAt)
+			}
+			var content string
+			var isErr bool
+			if stall.count >= stallNudgeAt {
+				content = fmt.Sprintf("stall detected: this exact %s call has now been made %d times in a row and the result will not change. Do NOT repeat it. Change the input, take a different approach, or end your turn and explain the blocker to the developer.", tu.Name, stall.count)
+				isErr = true
+			} else {
+				content, isErr = l.dispatch(ctx, tu)
+			}
 			emit(Event{Kind: EventToolResult, Tool: tu.Name, Text: content, Error: isErr})
 			results = append(results, llm.ContentBlock{
 				Type:       llm.BlockToolResult,
