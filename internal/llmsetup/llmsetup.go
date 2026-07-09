@@ -91,6 +91,20 @@ func Rebuild(current Brain, arg string) (llm.Provider, string, error) {
 	return prov, name + "/" + model, nil
 }
 
+// RebuildFrom constructs a provider for a /model switch, resolving a bare
+// model id against the CURRENT ref's provider (the text before the first
+// "/" in currentRef; no provider if currentRef has none) rather than the
+// launch-time brain. This is what makes a bare-id switch track the provider
+// the session is actually running on after an earlier provider switch —
+// callers must pass the LIVE current ref, not the immutable launch Brain.
+func RebuildFrom(currentRef, arg string) (llm.Provider, string, error) {
+	providerName, _, found := strings.Cut(currentRef, "/")
+	if !found {
+		providerName = ""
+	}
+	return Rebuild(Brain{ProviderName: providerName}, arg)
+}
+
 // ListModels aggregates Models() across all configured providers as
 // "provider/model" refs, best-effort: providers that can't be built (missing
 // key) or don't answer within the per-provider timeout are skipped.
