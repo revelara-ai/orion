@@ -165,6 +165,7 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 	policy := contextwindow.For(contextwindow.WindowOf(l.Provider, contextwindow.DefaultWindow))
 	var stall stallTracker
 	leakNudged := false
+	announceNudged := false
 
 	for iter := 0; iter < l.Supervisor.maxIter(); iter++ {
 		if err := ctx.Err(); err != nil {
@@ -252,6 +253,19 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 					"Your last message contained tool-call syntax as plain text — it was NOT executed. "+
 						"Invoke tools ONLY through the function-calling mechanism, never by writing <tool_call> tags in your reply. "+
 						"Available tools: "+toolNames(toolSpecs)+". Retry the call properly now."))
+				continue
+			}
+			// Continuation nudge (or-mvr adjunct): a turn ending "Let me do X:"
+			// with no tool call is an ABANDONED action — chat-trained models
+			// narrate and wait for a beat that never comes in an agent loop.
+			// Nudge once; a second prose ending is accepted as the answer
+			// (never trap a model that legitimately finished).
+			if !announceNudged && endsWithAnnouncement(resp.Text()) {
+				announceNudged = true
+				convo = append(convo, llm.TextMessage(llm.RoleUser,
+					"You announced an action but ended your turn without making the tool call. "+
+						"Emit the tool call NOW through the function-calling mechanism — do not re-describe it. "+
+						"If you did not intend to act, state your final answer instead."))
 				continue
 			}
 			emit(Event{Kind: EventDone})

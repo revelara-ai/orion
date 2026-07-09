@@ -29,3 +29,11 @@ func toolNames(specs []llm.Tool) string {
 	}
 	return strings.Join(names, ", ")
 }
+
+// endsWithAnnouncement reports whether an end-of-turn text trails off with a
+// colon — the signature of an announced-but-unemitted action ("Let me submit
+// the intent:"). Markdown emphasis and whitespace around the tail are ignored.
+func endsWithAnnouncement(text string) bool {
+	t := strings.TrimRight(strings.TrimSpace(text), "*_ \t")
+	return strings.HasSuffix(t, ":")
+}
