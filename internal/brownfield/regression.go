@@ -8,6 +8,7 @@ type RegressionResult struct {
 	After  TestResult // the suite after the change
 	Held   bool       // the change PRESERVED existing behavior (green before AND green after)
 	Reason string     // why not held (no green baseline / a test regressed / no toolchain)
+	Scope  string     // audit stamp: WHICH scoping argument produced this verdict (full / forced-full / vacuous / test-only / changed+blast)
 }
 
 // RegressionGate is the brownfield "preserve existing behavior" guarantee: it captures
@@ -31,7 +32,7 @@ func RegressionGate(ctx context.Context, repoDir string, skip []string, apply fu
 	if err != nil {
 		return RegressionResult{}, err
 	}
-	res := RegressionResult{Before: before}
+	res := RegressionResult{Before: before, Scope: "full suite (ORION_REGRESSION_SCOPE=full)"}
 	if !before.Detected {
 		res.Reason = "no test toolchain — cannot establish a regression baseline"
 		return res, nil

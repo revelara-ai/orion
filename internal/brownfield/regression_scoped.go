@@ -30,7 +30,7 @@ func baselineScopedSkip(ctx context.Context, repoDir string, patterns, skip []st
 	if total == 1 && patterns[0] == "./..." {
 		total = 0 // full-suite pattern: package count unknown
 	}
-	argv := withSkip(append([]string{tc.TestCmd[0], "test"}, patterns...), skip)
+	argv := withGateTimeout(withSkip(append([]string{tc.TestCmd[0], "test"}, patterns...), skip))
 	out, err := runTests(ctx, repoDir, argv, progress, step, total)
 	return TestResult{
 		Detected:  true,
@@ -69,21 +69,43 @@ func RegressionGateScoped(ctx context.Context, repoDir string, m RepoMap, skip [
 		}
 	}
 
-	// Scope decision from the ACTUAL post-apply diff.
+	// Scope decision from the ACTUAL post-apply diff. scopeStamp is the audit
+	// trail: every verdict records WHICH scoping argument produced it.
 	changed := changedPaths(ctx, repoDir)
 	var pats []string
+	var scopeStamp string
 	switch {
 	case regressionForcedFull(changed):
 		pats = nil // nil → BaselineScoped runs the full ./... suite
+		scopeStamp = "full suite (go.mod/go.sum changed — import graph can't scope a dependency change)"
 		progress.emit("scope", "go.mod/go.sum changed — escalating to the full suite")
+	case testOnlyChange(changed):
+		// Fast path: only _test.go files changed → dependents provably
+		// unaffected (compiler forbids cross-package _test.go imports), so the
+		// blast radius is skipped and only the changed packages' own tests run.
+		scope := scopeDirsForChange(changed, m)
+		if len(scope) == 0 {
+			scopeStamp = "vacuous (no Go package affected — nothing to regress)"
+			progress.emit("scope", "no Go package affected — nothing to regress")
+			skip := TestResult{Detected: true, Skipped: "no Go package affected — nothing to regress"}
+			return RegressionResult{Held: true, Before: skip, After: skip, Scope: scopeStamp}, nil
+		}
+		for _, d := range scope {
+			pats = append(pats, dirPattern(d))
+		}
+		sort.Strings(pats)
+		scopeStamp = fmt.Sprintf("test-only diff — dependents provably unaffected (compiler: _test.go files cannot be imported); %d package(s): %s", len(pats), clip(strings.Join(pats, " "), 160))
+		progress.emit("scope", scopeStamp)
 	default:
 		scope := scopeDirsForChange(changed, m)
 		if len(scope) == 0 {
+			scopeStamp = "vacuous (no Go package affected — nothing to regress)"
 			progress.emit("scope", "no Go package affected — nothing to regress")
 			skip := TestResult{Detected: true, Skipped: "no Go package affected — nothing to regress"}
-			return RegressionResult{Held: true, Before: skip, After: skip}, nil
+			return RegressionResult{Held: true, Before: skip, After: skip, Scope: scopeStamp}, nil
 		}
 		pats = scopePatterns(m, scope)
+		scopeStamp = fmt.Sprintf("changed packages + blast radius — %d package(s): %s", len(pats), clip(strings.Join(pats, " "), 160))
 		progress.emit("scope", fmt.Sprintf("%d package(s): %s", len(pats), clip(strings.Join(pats, " "), 160)))
 	}
 
@@ -102,7 +124,7 @@ func RegressionGateScoped(ctx context.Context, repoDir string, m RepoMap, skip [
 	if berr != nil {
 		return RegressionResult{}, berr
 	}
-	res := RegressionResult{Before: before}
+	res := RegressionResult{Before: before, Scope: scopeStamp}
 	if !before.Passed {
 		res.Reason = "baseline is RED before the change (within scope) — fix it green first"
 		return res, nil
@@ -168,7 +190,10 @@ func changedPaths(ctx context.Context, repoDir string) []string {
 			continue
 		}
 		path := line[3:]
-		if i := strings.Index(path, " -> "); i >= 0 { // rename: "old -> new"
+		if i := strings.Index(path, " -> "); i >= 0 { // rename: "old -> new" — keep BOTH sides:
+			// the source package loses a file (its non-test code changes), and a
+			// rename like foo.go -> foo_test.go must never classify as test-only.
+			paths = append(paths, strings.Trim(path[:i], `"`))
 			path = path[i+4:]
 		}
 		paths = append(paths, strings.Trim(path, `"`)) // git quotes paths with special chars
@@ -240,4 +265,25 @@ func gitStashPush(ctx context.Context, dir string) (bool, error) {
 func gitStashPop(ctx context.Context, dir string) error {
 	_, err := gitOutput(ctx, dir, "stash", "pop")
 	return err
+}
+
+// testOnlyChange reports whether EVERY changed path is a Go test file. The
+// compiler forbids importing another package's _test.go files, so a diff that
+// touches only _test.go files provably cannot alter any dependent package's
+// behavior — the do-no-harm obligation collapses to the changed packages' own
+// tests (or-6f0q soundness invariant: prune only with a machine-checkable
+// argument). Evaluated AFTER regressionForcedFull, so go.mod changes win; a
+// testdata/ or non-Go file fails the suffix test and keeps the blast path.
+// Rename safety: changedPaths lists BOTH sides of a rename, so a prod→test
+// rename includes the deleted .go path and never classifies as test-only.
+func testOnlyChange(paths []string) bool {
+	if len(paths) == 0 {
+		return false
+	}
+	for _, p := range paths {
+		if !strings.HasSuffix(p, "_test.go") {
+			return false
+		}
+	}
+	return true
 }

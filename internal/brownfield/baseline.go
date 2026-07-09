@@ -68,7 +68,7 @@ func baselineSkip(ctx context.Context, repoDir string, skip []string, progress P
 	if !ok {
 		return TestResult{Skipped: "no known toolchain (looked for go.mod)"}, nil
 	}
-	argv := withSkip(tc.TestCmd, skip)
+	argv := withGateTimeout(withSkip(tc.TestCmd, skip))
 	out, err := runTests(ctx, repoDir, argv, progress, step, 0)
 	return TestResult{
 		Detected:  true,
@@ -159,6 +159,24 @@ func packageVerdict(line string) (pkg, verdict string, ok bool) {
 // explicitly here, keeping the skip a visible exception rather than the default.
 func regressionTestEnv() []string {
 	return append(safeenv.Build(), "ORION_RUN_ACCEPTANCE=false")
+}
+
+// gateTestTimeout raises go test's per-binary timeout for gate runs. The
+// default 10m converts a slow suite on a loaded machine (a local model pinning
+// the same cores, a concurrent gate) into a FALSE-RED baseline — an unsound
+// verdict in the alarm direction (live incident 2026-07-08: or-4gib). A longer
+// timeout never weakens the proof; a test that needs 15 minutes is not less
+// proven at a 20-minute ceiling.
+const gateTestTimeout = "-timeout=20m"
+
+// withGateTimeout inserts the gate timeout right after the test subcommand.
+func withGateTimeout(argv []string) []string {
+	if len(argv) < 2 {
+		return argv
+	}
+	out := append([]string{}, argv[:2]...)
+	out = append(out, gateTestTimeout)
+	return append(out, argv[2:]...)
 }
 
 // withSkip inserts `-skip <re>` right after the test subcommand (argv[1]) when skip is non-empty;

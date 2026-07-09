@@ -179,7 +179,7 @@ func TestRegressionGateScopedEscalatesOnGoMod(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Before.Command != "go test ./..." {
+	if r.Before.Command != "go test -timeout=20m ./..." {
 		t.Errorf("a go.mod change must escalate to the full suite, got command %q (%+v)", r.Before.Command, r)
 	}
 }

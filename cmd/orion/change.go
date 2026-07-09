@@ -74,6 +74,9 @@ func cmdChange(args []string) int {
 		fmt.Printf("  files:  %s\n", strings.Join(res.FilesChanged, ", "))
 	}
 	fmt.Printf("  regression: green-before=%v green-after=%v held=%v\n", res.Regression.Before.Passed, res.Regression.After.Passed, res.Regression.Held)
+	if res.Regression.Scope != "" {
+		fmt.Printf("  scope: %s\n", res.Regression.Scope)
+	}
 	if res.NewBehavior != nil {
 		fmt.Printf("  new-behavior: pass=%v (%d case(s))\n", res.NewBehavior.Pass, len(res.NewBehavior.Obligations))
 	}
