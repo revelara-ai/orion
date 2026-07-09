@@ -33,6 +33,7 @@ import (
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/conductor"
 	"github.com/revelara-ai/orion/internal/health"
+	"github.com/revelara-ai/orion/internal/llmsetup"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/pkg/llm"
 )
@@ -42,21 +43,22 @@ type acpServer interface {
 	Serve(ctx context.Context, r io.Reader, w io.Writer) error
 }
 
-// conductorBrain selects the native LLM "Orion" agent when ANTHROPIC_API_KEY is
-// set, else the deterministic conductor (offline/CI fallback). Both satisfy
-// acp.PromptFunc, so the TUI is identical for either.
-func conductorBrain(oc *orchestrator.Conductor) (acpServer, string) {
+// conductorBrain selects the brain via llmsetup (config file + ORION_MODEL +
+// env keys): a native LLM "Orion" agent when a provider resolves, else the
+// deterministic conductor (offline/CI fallback). Both satisfy acp.PromptFunc,
+// so the TUI is identical for either.
+func conductorBrain(oc *orchestrator.Conductor) (acpServer, string, llm.Provider, string) {
 	role := conductor.RoleTemplate{Project: "orion"}
-	if key := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")); key != "" {
-		model := os.Getenv("ORION_MODEL")
-		if model == "" {
-			model = llm.DefaultAnthropicModel
-		}
-		agent := conductor.NewOrionAgent(llm.NewAnthropic(key, model), oc, role)
-		agent.SetModel(model, func(m string) llm.Provider { return llm.NewAnthropic(key, m) })
-		return agent, "native · " + model
+	b := llmsetup.Select()
+	if b.Provider == nil {
+		return conductor.NewConductorAgent(role, oc), "offline — " + b.Reason, nil, ""
 	}
-	return conductor.NewConductorAgent(role, oc), "offline — set ANTHROPIC_API_KEY for the full grill"
+	agent := conductor.NewOrionAgent(b.Provider, oc, role)
+	agent.SetModel(b.Ref, func(m string) (llm.Provider, error) {
+		p, _, err := llmsetup.Rebuild(b, m)
+		return p, err
+	}, llmsetup.ListModels)
+	return agent, "native · " + b.Ref, b.Provider, b.Model
 }
 
 const emptyState = "Conductor ready (in-process, over ACP). Describe what you want to build."
@@ -150,6 +152,9 @@ type Conversation struct {
 	bannerID     Identity
 	bannerSet    bool
 
+	brainProvider llm.Provider // active native provider (nil offline) — probed async at launch
+	brainModel    string
+
 	// activity is the live per-turn actor stack, phase strip, and log ring (Task 5).
 	activity activityModel
 
@@ -201,7 +206,35 @@ func NewConversation(client *ACPClient, sid string, oc *orchestrator.Conductor, 
 }
 
 // Init satisfies tea.Model.
-func (m Conversation) Init() tea.Cmd { return m.input.Focus() }
+func (m Conversation) Init() tea.Cmd { return tea.Batch(m.input.Focus(), m.probeBrainCmd()) }
+
+// probeBrainCmd asynchronously verifies the active brain can drive tools and
+// surfaces a transcript warning when it can't (spec: probe + warn, fail only
+// tool flows). Providers that advertise tool support via Models() (Anthropic,
+// Gemini) are skipped — zero extra calls or launch cost on the default path.
+// Runs in a bubbletea Cmd goroutine, so a slow local model never blocks launch.
+func (m Conversation) probeBrainCmd() tea.Cmd {
+	prov, model := m.brainProvider, m.brainModel
+	if prov == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if llm.AdvertisesTools(ctx, prov, model) {
+			return nil
+		}
+		ok, err := llm.Probe(ctx, prov)
+		if ok {
+			return nil
+		}
+		reason := "the model did not call the probe tool"
+		if err != nil {
+			reason = err.Error()
+		}
+		return CommandResultMsg{Text: "⚠ tools probe failed for " + model + " — agent flows may not work (" + reason + ")"}
+	}
+}
 
 // Update handles input, window sizing, streamed updates, permission requests, and
 // turn completion. The Update loop NEVER blocks on the Conductor.
@@ -1113,7 +1146,7 @@ func Run(oc *orchestrator.Conductor, bannerReport health.Report, bannerID Identi
 	// Brain selection (SPEC §0 amendment): a native LLM "Orion" agent when an API
 	// key is present, else the deterministic conductor (offline/CI fallback). Both
 	// satisfy acp.PromptFunc — the rest of this function is identical.
-	brain, brainLabel := conductorBrain(oc)
+	brain, brainLabel, brainProv, brainModel := conductorBrain(oc)
 	go func() { _ = brain.Serve(ctx, agentEnd, agentEnd) }()
 
 	gate := &programGate{}
@@ -1133,6 +1166,8 @@ func Run(oc *orchestrator.Conductor, bannerReport health.Report, bannerID Identi
 	conv.bannerID = bannerID
 	conv.bannerSet = true
 	conv.commands = commands
+	conv.brainProvider = brainProv
+	conv.brainModel = brainModel
 	// WithMouseCellMotion enables mouse reporting so the wheel scrolls the transcript
 	// viewport (which already handles wheel events). Trade-off: native terminal text
 	// selection now needs Shift (or Option on macOS) held.

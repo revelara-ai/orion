@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/conductor"
+	"github.com/revelara-ai/orion/internal/llmsetup"
 	"github.com/revelara-ai/orion/internal/proof/newbehavior"
 	"github.com/revelara-ai/orion/pkg/llm"
 )
@@ -29,12 +30,27 @@ func cmdChange(args []string) int {
 		fmt.Fprintln(os.Stderr, `usage: orion change [--cases <file.json>] "<change intent>"`)
 		return 2
 	}
-	key := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
-	if key == "" {
-		fmt.Fprintln(os.Stderr, "orion change needs ANTHROPIC_API_KEY (it drives a model to write the change)")
+	ctx := context.Background()
+	brain := llmsetup.Select()
+	if brain.Provider == nil {
+		fmt.Fprintln(os.Stderr, "orion change needs a model provider (it drives a model to write the change) — "+brain.Reason)
 		return 1
 	}
-	ctx := context.Background()
+	// Tool gate (spec: fail only tool flows): orion change is entirely
+	// tool-call-driven, so a model that can't demonstrate tool calling fails
+	// fast HERE, before any worktree or baseline work starts.
+	if !llm.AdvertisesTools(ctx, brain.Provider, brain.Model) {
+		ok, perr := llm.Probe(ctx, brain.Provider)
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "orion change: probing %s: %v\n", brain.Ref, perr)
+			return 1
+		}
+		if !ok {
+			fmt.Fprintf(os.Stderr, "orion change: model %s did not demonstrate tool calling — orion change requires a tool-capable model\n", brain.Ref)
+			return 1
+		}
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion change:", err)
@@ -46,7 +62,7 @@ func cmdChange(args []string) int {
 		return 1
 	}
 
-	provider := llm.NewAnthropic(key, os.Getenv("ORION_MODEL"))
+	provider := brain.Provider
 	res, err := conductor.ChangeAndProve(ctx, root, nil, provider, intent, cases, nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion change:", err)

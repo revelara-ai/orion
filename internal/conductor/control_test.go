@@ -2,6 +2,7 @@ package conductor
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -32,9 +33,9 @@ func TestControlCompactAndModel(t *testing.T) {
 	}
 
 	// /model with no arg shows the current model.
-	a.SetModel("claude-opus-4-8", func(string) llm.Provider {
-		return &fakeLLM{resp: []*llm.ChatResponse{endTurn("x")}}
-	})
+	a.SetModel("claude-opus-4-8", func(string) (llm.Provider, error) {
+		return &fakeLLM{resp: []*llm.ChatResponse{endTurn("x")}}, nil
+	}, nil)
 	if r, _ := a.Control(context.Background(), "s1", "model", ""); !strings.Contains(r, "claude-opus-4-8") {
 		t.Errorf("/model (show) = %q", r)
 	}
@@ -57,5 +58,35 @@ func TestControlCompactGraceful(t *testing.T) {
 	a.sessions["s1"] = []llm.Message{llm.TextMessage(llm.RoleUser, "hi")}
 	if r, _ := a.Control(context.Background(), "s1", "compact", ""); !strings.Contains(r, "offline") {
 		t.Errorf("nil-provider compact should report offline, got %q", r)
+	}
+}
+
+func TestSwitchModelRebuildError(t *testing.T) {
+	a := NewOrionAgent(nil, nil, RoleTemplate{})
+	a.SetModel("m1", func(string) (llm.Provider, error) {
+		return nil, fmt.Errorf(`unknown provider "nope"`)
+	}, nil)
+	msg, err := a.switchModel("nope/m2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "nope") || strings.Contains(msg, "MODEL:") {
+		t.Errorf("failed switch must report the error and NOT emit the MODEL: sentinel: %q", msg)
+	}
+	if a.model != "m1" {
+		t.Errorf("failed switch must not change the model: %q", a.model)
+	}
+}
+
+func TestSwitchModelListsAcrossProviders(t *testing.T) {
+	a := NewOrionAgent(nil, nil, RoleTemplate{})
+	a.SetModel("m1", func(m string) (llm.Provider, error) { return nil, nil },
+		func(context.Context) []string { return []string{"anthropic/claude-opus-4-8", "lmstudio/qwen3-32b"} })
+	msg, err := a.switchModel("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "lmstudio/qwen3-32b") {
+		t.Errorf("empty-arg /model must list configured providers' models: %q", msg)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Control handles an out-of-turn session control op from the TUI (/compact, /model). It
@@ -47,21 +48,44 @@ func (a *OrionAgent) compact(ctx context.Context, sessionID string) (string, err
 	return fmt.Sprintf("Compacted %d messages into a summary — context reset to the essentials.", count), nil
 }
 
-// switchModel shows the current model (empty arg) or rebuilds the provider for a new one.
+// switchModel shows the current model + available models (empty arg) or
+// rebuilds the provider for a new one. arg is a bare model id (stays on the
+// current provider) or a provider/model ref (switches providers).
 func (a *OrionAgent) switchModel(arg string) (string, error) {
 	arg = strings.TrimSpace(arg)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if arg == "" {
-		if a.model == "" {
-			return "Current model: (unknown). Pass a model id to switch, e.g. /model claude-sonnet-4-6.", nil
+		cur := a.model
+		if cur == "" {
+			cur = "(unknown)"
 		}
-		return "Current model: " + a.model + ". Switch with /model <id> (e.g. claude-sonnet-4-6).", nil
+		msg := "Current model: " + cur + ". Switch with /model <id> or /model <provider>/<id>."
+		if a.list != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if models := a.list(ctx); len(models) > 0 {
+				const maxShown = 30
+				shown := models
+				if len(shown) > maxShown {
+					shown = shown[:maxShown]
+				}
+				msg += "\nAvailable: " + strings.Join(shown, ", ")
+				if len(models) > maxShown {
+					msg += fmt.Sprintf(" … (+%d more)", len(models)-maxShown)
+				}
+			}
+		}
+		return msg, nil
 	}
 	if a.rebuild == nil {
 		return "This brain can't switch models at runtime.", nil
 	}
-	a.provider = a.rebuild(arg)
+	p, err := a.rebuild(arg)
+	if err != nil {
+		return "Couldn't switch to " + arg + ": " + err.Error(), nil
+	}
+	a.provider = p
 	a.model = arg
 	// The result carries a MODEL: sentinel the TUI parses to update its brain label.
 	return "MODEL:" + arg + " · switched to " + arg, nil
