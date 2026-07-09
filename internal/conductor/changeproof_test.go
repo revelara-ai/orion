@@ -73,7 +73,7 @@ func TestChangeAndProveCommitsRegressionSafeChange(t *testing.T) {
 		endTurn("added Mul"),
 	}}
 
-	res, err := ChangeAndProve(context.Background(), repo, nil, prov, "add a Mul helper", nil, nil)
+	res, err := ChangeAndProve(context.Background(), repo, nil, prov, "add a Mul helper", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("change: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestChangeAndProveRejectsRegression(t *testing.T) {
 		endTurn("changed Add"),
 	}}
 
-	res, err := ChangeAndProve(context.Background(), repo, nil, prov, "tweak Add", nil, nil)
+	res, err := ChangeAndProve(context.Background(), repo, nil, prov, "tweak Add", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("change: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestChangeAndProveProvesNewBehavior(t *testing.T) {
 		{Modality: "synth_test", Synth: &newbehavior.SynthTest{Pkg: ".", Call: "Mul(2, 3)", Want: "6"}},
 	}
 
-	res, err := ChangeAndProve(context.Background(), repo, nil, prov, "add a Mul helper", cases, nil)
+	res, err := ChangeAndProve(context.Background(), repo, nil, prov, "add a Mul helper", cases, nil, nil)
 	if err != nil {
 		t.Fatalf("change: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestChangeAndProveRejectsUnprovenNewBehavior(t *testing.T) {
 		{Modality: "synth_test", Synth: &newbehavior.SynthTest{Pkg: ".", Call: "Mul(2, 3)", Want: "7"}}, // wrong oracle
 	}
 
-	res, err := ChangeAndProve(context.Background(), repo, nil, prov, "add a Mul helper", cases, nil)
+	res, err := ChangeAndProve(context.Background(), repo, nil, prov, "add a Mul helper", cases, nil, nil)
 	if err != nil {
 		t.Fatalf("change: %v", err)
 	}

@@ -1,6 +1,8 @@
 package conductor
 
 import (
+	"github.com/revelara-ai/orion/internal/acp"
+
 	"fmt"
 	"strings"
 	"sync"
@@ -83,4 +85,24 @@ func RenderPhaseReport(events []PhaseEvent) string {
 		b.WriteString("\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// phaseActivitySink adapts PhaseEvents to the ACP activity feed — the same
+// Phase→activity mapping build_service uses, but carrying Detail so the
+// regression gate's per-package heartbeat is visible in the TUI activity panel
+// (or-m45w). nil emit → nil sink (phase events are simply dropped).
+func phaseActivitySink(emit func(acp.Update)) PhaseSink {
+	if emit == nil {
+		return nil
+	}
+	return func(e PhaseEvent) {
+		activity := e.Phase
+		if e.Detail != "" {
+			activity += " — " + e.Detail
+		}
+		if len(activity) > 120 {
+			activity = activity[:119] + "…"
+		}
+		emit(acp.Activity("Orion", activity, 0, phaseStatusToActivity(e.Status)))
+	}
 }

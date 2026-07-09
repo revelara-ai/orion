@@ -63,7 +63,7 @@ func cmdChange(args []string) int {
 	}
 
 	provider := brain.Provider
-	res, err := conductor.ChangeAndProve(ctx, root, nil, provider, intent, cases, nil)
+	res, err := conductor.ChangeAndProve(ctx, root, nil, provider, intent, cases, nil, cliPhaseSink())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion change:", err)
 		return 1
@@ -119,4 +119,17 @@ func extractCases(args []string) ([]string, []newbehavior.Case, error) {
 		rest = append(rest, args[i])
 	}
 	return rest, cases, nil
+}
+
+// cliPhaseSink renders change-pipeline phase events as stderr progress lines,
+// so a long regression gate heartbeats package-by-package instead of hanging
+// silently (or-m45w).
+func cliPhaseSink() conductor.PhaseSink {
+	return func(e conductor.PhaseEvent) {
+		if e.Detail != "" {
+			fmt.Fprintf(os.Stderr, "  · %s [%s] %s\n", e.Phase, e.Status, e.Detail)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "  · %s [%s]\n", e.Phase, e.Status)
+	}
 }

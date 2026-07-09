@@ -49,7 +49,8 @@ type ChangeResult struct {
 // deliberate behavior change); the regression gate skips them (so the intended change isn't
 // blocked as a "regression") while every other test must still survive, and the new behavior is
 // proven by the ratified cases. Empty = a pure do-no-harm change.
-func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.Store, provider llm.Provider, intent string, cases []newbehavior.Case, supersedes []string) (ChangeResult, error) {
+func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.Store, provider llm.Provider, intent string, cases []newbehavior.Case, supersedes []string, sink PhaseSink) (ChangeResult, error) {
+	sink = syncSink(sink)
 	m := brownfield.ScanRepoMap(repoRoot)
 
 	mgr := worktree.New(repoRoot, store)
@@ -58,10 +59,13 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	// change branch. A fresh id (suffix -2/-3 on collision) replaces the old broken
 	// Create→CreateResume fallback, which couldn't recover from a pre-existing directory.
 	issueID := freshChangeID(ctx, mgr, repoRoot, "orion-change-"+slugFromIntent(intent))
+	sink.emit("change worktree", PhaseRunning, "")
 	wt, err := mgr.Create(ctx, issueID, "HEAD")
 	if err != nil {
+		sink.emit("change worktree", PhaseFailed, err.Error())
 		return ChangeResult{}, fmt.Errorf("worktree for change: %w", err)
 	}
+	sink.emit("change worktree", PhaseDone, wt.Branch)
 	res := ChangeResult{Branch: wt.Branch, Path: wt.Path}
 
 	// Regression gate: green-before (worktree == HEAD) → the generator edits the
@@ -74,19 +78,29 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	apply := func() error {
 		return DiffGenerator(ctx, provider, wt.Path, intent, m.Digest(), supersedes)
 	}
+	// The gate's Progress heartbeat rides the same sink as the phase events —
+	// per-package completions land in Detail, so a 10-minute suite is visibly
+	// alive in the TUI activity panel and the CLI (or-m45w).
+	progress := brownfield.Progress(func(step, detail string) {
+		sink.emit("regression gate", PhaseRunning, step+" · "+detail)
+	})
 	var reg brownfield.RegressionResult
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("ORION_REGRESSION_SCOPE")), "full") {
-		reg, err = brownfield.RegressionGate(ctx, wt.Path, supersedes, apply)
+		sink.emit("regression gate", PhaseRunning, "full suite (ORION_REGRESSION_SCOPE=full)")
+		reg, err = brownfield.RegressionGate(ctx, wt.Path, supersedes, apply, progress)
 	} else {
-		reg, err = brownfield.RegressionGateScoped(ctx, wt.Path, m, supersedes, apply)
+		sink.emit("regression gate", PhaseRunning, "scoped: changed packages + blast radius")
+		reg, err = brownfield.RegressionGateScoped(ctx, wt.Path, m, supersedes, apply, progress)
 	}
 	if err != nil {
+		sink.emit("regression gate", PhaseFailed, err.Error())
 		return res, fmt.Errorf("regression gate: %w", err)
 	}
 	res.Regression = reg
 	res.FilesChanged = changedFiles(ctx, wt.Path)
 
 	if !reg.Held {
+		sink.emit("regression gate", PhaseWarn, reg.Reason)
 		res.Reason = reg.Reason
 		res.Delivery = "escalate"
 		return finishChange(ctx, store, repoRoot, res, intent), nil // did not preserve existing behavior — not committed
@@ -95,13 +109,18 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	// New-behavior proof (or-3p5.3): the regression gate proved do-no-harm; this proves
 	// the change does what was asked, against the ratified cases (oracle = the case, never
 	// the generator). Commit is gated on regression-held AND new-behavior=Accept.
+	sink.emit("regression gate", PhaseDone, "do-no-harm held")
+
 	if len(cases) > 0 {
+		sink.emit("new-behavior proof", PhaseRunning, fmt.Sprintf("proving %d ratified case(s)", len(cases)))
 		mr, nbErr := newbehavior.ProveNewBehavior(ctx, wt.Path, cases)
 		if nbErr != nil {
+			sink.emit("new-behavior proof", PhaseFailed, nbErr.Error())
 			return res, fmt.Errorf("new-behavior proof: %w", nbErr)
 		}
 		res.NewBehavior = &mr
 		if !mr.Pass {
+			sink.emit("new-behavior proof", PhaseWarn, "cases did not pass")
 			res.Reason = "regression held, but the new-behavior proof did not pass"
 			res.Delivery = "escalate"
 			return finishChange(ctx, store, repoRoot, res, intent), nil // did not prove the asked-for behavior — not committed
@@ -112,7 +131,11 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	// committed with no security check and even while the red button was engaged.
 	// The security gate judges the CHANGE, not the repo: only findings inside the
 	// changed files block, so pre-existing debt never wedges brownfield work.
+	if res.NewBehavior != nil && res.NewBehavior.Pass {
+		sink.emit("new-behavior proof", PhaseDone, "all cases pass")
+	}
 	if findings := secretFindingsInChanged(wt.Path, res.FilesChanged); len(findings) > 0 {
+		sink.emit("security gate", PhaseWarn, "hardcoded secret(s) introduced")
 		res.Reason = "security gate: hardcoded secret(s) introduced by the change: " + strings.Join(findings, ", ")
 		res.Delivery = "escalate"
 		return finishChange(ctx, store, repoRoot, res, intent), nil
@@ -139,12 +162,15 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	if _, err := gitIn(ctx, wt.Path, append([]string{"add", "-A", "--"}, res.FilesChanged...)...); err != nil {
 		return res, err
 	}
+	sink.emit("commit", PhaseRunning, "committing to "+res.Branch)
 	if _, err := gitIn(ctx, wt.Path,
 		"-c", "user.name=Orion", "-c", "user.email=orion@revelara.ai", "-c", "commit.gpgsign=false",
 		"commit", "--no-verify", "-m", changeMessage(intent)); err != nil {
+		sink.emit("commit", PhaseFailed, err.Error())
 		return res, err
 	}
 	res.Committed = true
+	sink.emit("commit", PhaseDone, res.Branch)
 	res.Delivery = "deliver"
 	// Tier classification over the CHANGED files (a change worktree has no single
 	// main.go artifact; non-Go changes classify at the base tier). Pure scan — a

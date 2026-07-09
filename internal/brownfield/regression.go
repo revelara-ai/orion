@@ -25,8 +25,9 @@ type RegressionResult struct {
 // skip names tests whose old assertions a change INTENTIONALLY supersedes — excluded from the
 // do-no-harm requirement (a declared, oracle-proven behavior change), while every other test must
 // still survive. nil/empty skip = the strict gate.
-func RegressionGate(ctx context.Context, repoDir string, skip []string, apply func() error) (RegressionResult, error) {
-	before, err := baselineSkip(ctx, repoDir, skip)
+func RegressionGate(ctx context.Context, repoDir string, skip []string, apply func() error, progress Progress) (RegressionResult, error) {
+	progress.emit("green-before", "running the existing suite (baseline before the change)")
+	before, err := baselineSkip(ctx, repoDir, skip, progress, "green-before")
 	if err != nil {
 		return RegressionResult{}, err
 	}
@@ -41,13 +42,15 @@ func RegressionGate(ctx context.Context, repoDir string, skip []string, apply fu
 	}
 
 	if apply != nil {
+		progress.emit("apply-change", "generating the change in the worktree")
 		if err := apply(); err != nil {
 			res.Reason = "applying the change failed: " + err.Error()
 			return res, nil
 		}
 	}
 
-	after, err := baselineSkip(ctx, repoDir, skip)
+	progress.emit("green-after", "re-running the full suite with the change applied")
+	after, err := baselineSkip(ctx, repoDir, skip, progress, "green-after")
 	if err != nil {
 		return RegressionResult{}, err
 	}

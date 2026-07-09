@@ -2,6 +2,7 @@ package brownfield
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -12,12 +13,12 @@ import (
 // (e.g. ["./a"]). Empty patterns ≡ the full suite (./...). Same untrusted-code isolation
 // (safeenv) as Baseline.
 func BaselineScoped(ctx context.Context, repoDir string, patterns []string) (TestResult, error) {
-	return baselineScopedSkip(ctx, repoDir, patterns, nil)
+	return baselineScopedSkip(ctx, repoDir, patterns, nil, nil, "")
 }
 
 // baselineScopedSkip runs the scoped suite while SKIPPING the named tests (the supersession hook,
 // same as baselineSkip but restricted to the blast-radius patterns).
-func baselineScopedSkip(ctx context.Context, repoDir string, patterns, skip []string) (TestResult, error) {
+func baselineScopedSkip(ctx context.Context, repoDir string, patterns, skip []string, progress Progress, step string) (TestResult, error) {
 	tc, ok := DetectToolchain(repoDir)
 	if !ok {
 		return TestResult{Skipped: "no known toolchain (looked for go.mod)"}, nil
@@ -25,17 +26,18 @@ func baselineScopedSkip(ctx context.Context, repoDir string, patterns, skip []st
 	if len(patterns) == 0 {
 		patterns = []string{"./..."}
 	}
+	total := len(patterns)
+	if total == 1 && patterns[0] == "./..." {
+		total = 0 // full-suite pattern: package count unknown
+	}
 	argv := withSkip(append([]string{tc.TestCmd[0], "test"}, patterns...), skip)
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) // argv[0] == "go"
-	cmd.Dir = repoDir
-	cmd.Env = regressionTestEnv() // untrusted repo code never sees host secrets; skips red-by-design acceptance targets
-	out, err := cmd.CombinedOutput()
+	out, err := runTests(ctx, repoDir, argv, progress, step, total)
 	return TestResult{
 		Detected:  true,
 		Toolchain: tc.Name,
 		Command:   strings.Join(argv, " "),
 		Passed:    err == nil,
-		Output:    clip(string(out), 8000),
+		Output:    clip(out, 8000),
 	}, nil
 }
 
@@ -56,11 +58,12 @@ func baselineScopedSkip(ctx context.Context, repoDir string, patterns, skip []st
 // coupling OUTSIDE the import graph are not covered — set ORION_REGRESSION_SCOPE=full (which
 // routes to RegressionGate) when a change warrants the whole suite.
 // skip names tests whose old assertions a change INTENTIONALLY supersedes (see RegressionGate).
-func RegressionGateScoped(ctx context.Context, repoDir string, m RepoMap, skip []string, apply func() error) (RegressionResult, error) {
+func RegressionGateScoped(ctx context.Context, repoDir string, m RepoMap, skip []string, apply func() error, progress Progress) (RegressionResult, error) {
 	if _, ok := DetectToolchain(repoDir); !ok {
 		return RegressionResult{Reason: "no test toolchain — cannot establish a regression baseline"}, nil
 	}
 	if apply != nil {
+		progress.emit("apply-change", "generating the change in the worktree")
 		if err := apply(); err != nil {
 			return RegressionResult{Reason: "applying the change failed: " + err.Error()}, nil
 		}
@@ -72,13 +75,16 @@ func RegressionGateScoped(ctx context.Context, repoDir string, m RepoMap, skip [
 	switch {
 	case regressionForcedFull(changed):
 		pats = nil // nil → BaselineScoped runs the full ./... suite
+		progress.emit("scope", "go.mod/go.sum changed — escalating to the full suite")
 	default:
 		scope := scopeDirsForChange(changed, m)
 		if len(scope) == 0 {
+			progress.emit("scope", "no Go package affected — nothing to regress")
 			skip := TestResult{Detected: true, Skipped: "no Go package affected — nothing to regress"}
 			return RegressionResult{Held: true, Before: skip, After: skip}, nil
 		}
 		pats = scopePatterns(m, scope)
+		progress.emit("scope", fmt.Sprintf("%d package(s): %s", len(pats), clip(strings.Join(pats, " "), 160)))
 	}
 
 	// Before-of-scope: stash the applied change → clean HEAD → measure → restore.
@@ -86,7 +92,8 @@ func RegressionGateScoped(ctx context.Context, repoDir string, m RepoMap, skip [
 	if err != nil {
 		return RegressionResult{}, err
 	}
-	before, berr := baselineScopedSkip(ctx, repoDir, pats, skip)
+	progress.emit("green-before", "running the scoped baseline (change stashed)")
+	before, berr := baselineScopedSkip(ctx, repoDir, pats, skip, progress, "green-before")
 	if stashed {
 		if perr := gitStashPop(ctx, repoDir); perr != nil {
 			return RegressionResult{}, perr
@@ -101,7 +108,8 @@ func RegressionGateScoped(ctx context.Context, repoDir string, m RepoMap, skip [
 		return res, nil
 	}
 
-	after, err := baselineScopedSkip(ctx, repoDir, pats, skip)
+	progress.emit("green-after", "re-running the scoped suite with the change applied")
+	after, err := baselineScopedSkip(ctx, repoDir, pats, skip, progress, "green-after")
 	if err != nil {
 		return RegressionResult{}, err
 	}
