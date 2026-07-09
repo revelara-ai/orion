@@ -11,9 +11,9 @@ import (
 	"golang.org/x/term"
 
 	"github.com/revelara-ai/orion/internal/health"
+	"github.com/revelara-ai/orion/internal/llmsetup"
 	"github.com/revelara-ai/orion/internal/polaris"
 	"github.com/revelara-ai/orion/internal/tui"
-	"github.com/revelara-ai/orion/pkg/llm"
 )
 
 // cmdStatus implements `orion status` (or-gik.4): print the full init status banner — the SAME
@@ -54,17 +54,14 @@ func abbrevHome(path string) string {
 	return path
 }
 
-// brainLabel mirrors the TUI's conductorBrain selection: native + model when ANTHROPIC_API_KEY
-// is set, else offline/deterministic.
+// brainLabel mirrors the TUI's conductorBrain selection via llmsetup: native +
+// model + provider when a brain resolves, else offline/deterministic.
 func brainLabel() string {
-	if key := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")); key != "" {
-		model := os.Getenv("ORION_MODEL")
-		if model == "" {
-			model = llm.DefaultAnthropicModel
-		}
-		return "native · " + model + " · Anthropic"
+	b := llmsetup.Select()
+	if b.Provider == nil {
+		return "offline — deterministic"
 	}
-	return "offline — deterministic"
+	return "native · " + b.Model + " · " + b.ProviderName
 }
 
 func gitBranch() string {
