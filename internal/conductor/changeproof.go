@@ -191,6 +191,21 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 // finishChange fires the out-of-band event for a SETTLED change outcome
 // (or-v9f.17) — all three callers (CLI, build_change, change_repo) inherit it.
 // Fire-and-forget: a delivery miss never fails the change.
+// FailureDigest distills the regression gate's failing run for the loop: red
+// baseline digests Before, green→red digests After; a held gate has none. This
+// is the evidence a model needs to SELF-CORRECT (or-67av) — "held=false" alone
+// dead-ends the loop; "undefined: filepath" closes it.
+func (r ChangeResult) FailureDigest() string {
+	if r.Regression.Held {
+		return ""
+	}
+	failing := r.Regression.After
+	if !r.Regression.Before.Passed {
+		failing = r.Regression.Before
+	}
+	return brownfield.FailureDigest(failing.Output, 40)
+}
+
 func finishChange(ctx context.Context, store *contextstore.Store, repoRoot string, res ChangeResult, intent string) ChangeResult {
 	kind := "change.delivered"
 	if res.Delivery != "deliver" {
@@ -220,9 +235,12 @@ func finishChange(ctx context.Context, store *contextstore.Store, repoRoot strin
 				if e != nil {
 					return e
 				}
+				detail := "intent: " + oneLine(intent) + "\nreview branch: " + res.Branch
+				if d := res.FailureDigest(); d != "" {
+					detail += "\n\ndo-no-harm transcript (digest):\n" + d
+				}
 				id, e := tx.Escalations().CreateDetailed(ctx, pid, "",
-					"brownfield change: "+res.Reason,
-					"intent: "+oneLine(intent)+"\nreview branch: "+res.Branch)
+					"brownfield change: "+res.Reason, detail)
 				if e == nil {
 					res.EscalationID = id
 					nextAction = "orion escalations resolve " + id

@@ -93,6 +93,9 @@ func cmdChange(args []string) int {
 		return 0
 	}
 	fmt.Printf("  NOT committed — %s\n", res.Reason)
+	if d := res.FailureDigest(); d != "" {
+		fmt.Printf("  do-no-harm transcript (digest):\n    %s\n", strings.ReplaceAll(d, "\n", "\n    "))
+	}
 	if res.EscalationID != "" { // or-v9f.15: actionable via the unified inbox
 		fmt.Printf("  escalation: %s — resolve with: orion escalations resolve %s\n", res.EscalationID, res.EscalationID)
 	}

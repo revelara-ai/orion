@@ -296,6 +296,12 @@ func renderChangeResult(intent string, res ChangeResult) string {
 		fmt.Fprintf(&b, "  files: %s\n", strings.Join(res.FilesChanged, ", "))
 	}
 	fmt.Fprintf(&b, "  regression: do-no-harm held=%v\n", res.Regression.Held)
+	if d := res.FailureDigest(); d != "" {
+		// The failing run's evidence goes INTO the tool result so the model can
+		// self-correct (fix the diff / the cases) instead of asking a human for
+		// a transcript it can't reach (or-67av).
+		fmt.Fprintf(&b, "  do-no-harm transcript (digest):\n    %s\n", strings.ReplaceAll(d, "\n", "\n    "))
+	}
 	if res.Regression.Scope != "" {
 		fmt.Fprintf(&b, "  scope: %s\n", res.Regression.Scope)
 	}
