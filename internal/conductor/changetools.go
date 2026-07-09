@@ -247,15 +247,25 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 
 	r.Register(tools.Tool{
 		Name:        "ratify_cases",
-		Description: "Lock the behavioral cases as the proof ORACLE, BEFORE any code is generated — the trust gate: the oracle predates the diff, so the proof is independent of the generated code. Call once the developer has reviewed and confirmed the cases. Then call build_change.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
-		Run: func(_ context.Context, _ json.RawMessage) (string, error) {
+		Description: "Lock the behavioral cases as the proof ORACLE, BEFORE any code is generated — the trust gate: the oracle predates the diff, so the proof is independent of the generated code. Call once the developer has reviewed and confirmed the cases. For a TEST-ONLY or purely additive change where the regression gate itself is a sufficient oracle (the new tests must compile and pass in green-after), skip case drafting and call ratify_cases with {\"regression_only\": true}. Then call build_change.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"regression_only":{"type":"boolean","description":"ratify WITHOUT behavioral cases: the regression gate (do-no-harm, which runs any newly added tests) is the oracle. For test-only/additive changes; CLI parity with 'orion change' without --cases."}}}`),
+		Run: func(_ context.Context, in json.RawMessage) (string, error) {
+			var p struct {
+				RegressionOnly bool `json:"regression_only"`
+			}
+			_ = json.Unmarshal(in, &p)
 			cs.mu.Lock()
 			defer cs.mu.Unlock()
-			if len(cs.cases) == 0 {
-				return "", fmt.Errorf("ratify_cases: no cases to ratify (propose_cases first)")
+			if p.RegressionOnly && len(cs.cases) > 0 {
+				return "", fmt.Errorf("ratify_cases: regression_only conflicts with %d drafted case(s) — ratify the cases, or remove them first (the oracle must be unambiguous)", len(cs.cases))
+			}
+			if !p.RegressionOnly && len(cs.cases) == 0 {
+				return "", fmt.Errorf("ratify_cases: no cases to ratify. Draft cases with propose_cases/add_case — or, for a TEST-ONLY or purely additive change where the new tests themselves are the proof, call ratify_cases with {\"regression_only\": true} to proceed with the regression gate as the oracle")
 			}
 			cs.ratified = true
+			if p.RegressionOnly {
+				return "ratified with NO behavioral cases: the regression gate is the oracle (do-no-harm must hold, and any newly added tests must compile and pass in green-after). Call build_change to generate + prove.", nil
+			}
 			return fmt.Sprintf("ratified %d case(s) as the proof oracle. Call build_change to generate + prove.", len(cs.cases)), nil
 		},
 	})

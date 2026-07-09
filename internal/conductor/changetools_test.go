@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/revelara-ai/orion/internal/proof/newbehavior"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -237,5 +238,45 @@ func TestProposeCasesRefusesWhenAlreadyRatified(t *testing.T) {
 	}
 	if !cs.ratified {
 		t.Fatal("propose_cases must not clear the ratified flag when refusing")
+	}
+}
+
+// TestRatifyCasesRegressionOnly (or-4gib trap): a test-only/additive change
+// needs no behavioral oracle — the regression gate runs the new tests, so
+// green-after IS the proof. The flow must offer an explicit case-less path
+// (CLI parity: orion change without --cases) instead of trapping the model in
+// case grammar it doesn't need; and the empty-oracle error must TEACH it.
+func TestRatifyCasesRegressionOnly(t *testing.T) {
+	cs := &changeSession{}
+	r := specTools(orchestrator.NewWithStore(openStore(t)), nil, cs, nil)
+	ratify, _ := r.Get("ratify_cases")
+
+	// Empty oracle without the explicit flag: refused, and the error teaches the escape.
+	if _, err := ratify.Run(context.Background(), json.RawMessage(`{}`)); err == nil || !strings.Contains(err.Error(), "regression_only") {
+		t.Fatalf("empty-oracle refusal must teach the regression_only escape, got: %v", err)
+	}
+
+	// The explicit flag ratifies a case-less oracle: build_change may proceed
+	// (regression gate is the oracle).
+	out, err := ratify.Run(context.Background(), json.RawMessage(`{"regression_only":true}`))
+	if err != nil {
+		t.Fatalf("regression_only ratification failed: %v", err)
+	}
+	if !strings.Contains(out, "regression gate") {
+		t.Errorf("confirmation must say what the oracle is: %q", out)
+	}
+	if _, _, _, ratified := cs.snapshot(); !ratified {
+		t.Fatal("session must be ratified after regression_only")
+	}
+
+	// The flag with a non-empty case set is ambiguous: refuse.
+	cs2 := &changeSession{}
+	r2 := specTools(orchestrator.NewWithStore(openStore(t)), nil, cs2, nil)
+	cs2.mu.Lock()
+	cs2.cases = []newbehavior.Case{{}}
+	cs2.mu.Unlock()
+	ratify2, _ := r2.Get("ratify_cases")
+	if _, err := ratify2.Run(context.Background(), json.RawMessage(`{"regression_only":true}`)); err == nil {
+		t.Fatal("regression_only with drafted cases is ambiguous and must refuse")
 	}
 }
