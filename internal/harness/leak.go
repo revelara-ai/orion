@@ -37,3 +37,11 @@ func endsWithAnnouncement(text string) bool {
 	t := strings.TrimRight(strings.TrimSpace(text), "*_ \t")
 	return strings.HasSuffix(t, ":")
 }
+
+// stopReasonHint annotates the empty-turn error for the common budget case.
+func stopReasonHint(r llm.StopReason) string {
+	if r == llm.StopMaxTokens {
+		return " — output budget exhausted, likely by reasoning tokens"
+	}
+	return ""
+}

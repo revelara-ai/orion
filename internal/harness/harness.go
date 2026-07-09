@@ -166,6 +166,7 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 	var stall stallTracker
 	leakNudged := false
 	announceNudged := false
+	emptyNudged := false
 
 	for iter := 0; iter < l.Supervisor.maxIter(); iter++ {
 		if err := ctx.Err(); err != nil {
@@ -239,6 +240,21 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 		}
 
 		if resp.StopReason != llm.StopToolUse {
+			// Empty-turn guard (or-mvr adjunct): no content AND no tool calls is
+			// never a legitimate answer — a reasoning model can burn its whole
+			// output budget thinking (excluded from content by design) or hit
+			// max_tokens mid-thought and end silently. Nudge once; a second
+			// empty turn stops with a NAMED error (a silent nothing is the one
+			// ending the developer can never act on).
+			if resp.Text() == "" && len(resp.ToolUses()) == 0 {
+				if emptyNudged {
+					return convo, resp, fmt.Errorf("harness: model ended the turn with no content and no tool call twice (stop reason %q) — raise max_tokens for reasoning models or try a different model", string(resp.StopReason)+stopReasonHint(resp.StopReason))
+				}
+				emptyNudged = true
+				convo = append(convo, llm.TextMessage(llm.RoleUser,
+					"Your turn ended with no content and no tool call. Continue the task now: make the next tool call through the function-calling mechanism, or state your final answer in plain text. Be brief — do not spend your entire output budget on reasoning."))
+				continue
+			}
 			// Template-leak guard (or-mvr adjunct): a model that emits its
 			// TRAINED tool-call syntax as text (Hermes-style <tool_call>, seen
 			// from qwen under deep context) has made a FAILED tool attempt,
