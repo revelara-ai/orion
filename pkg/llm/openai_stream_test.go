@@ -151,3 +151,34 @@ func TestOpenAIChatStreamRetriesBeforeEmit(t *testing.T) {
 		t.Fatalf("hits = %d, want 2 (500 then success)", n)
 	}
 }
+
+// TestOpenAIChatStreamSurfacesServerErrorEvent: an OpenAI-compatible server
+// that fails mid-stream emits an SSE error event ({"error": ...}) and closes.
+// Swallowing it as keep-alive noise leaves only a generic "stream truncated"
+// — the adapter must surface the server's own explanation (LM Studio context
+// overflows and OOMs land here).
+func TestOpenAIChatStreamSurfacesServerErrorEvent(t *testing.T) {
+	srv := oaSseServer(t, []string{
+		`{"error":{"message":"model context length exceeded: 8192 tokens","type":"invalid_request_error"}}`,
+	})
+	defer srv.Close()
+	o := NewOpenAI(OpenAIConfig{Name: "lmstudio", BaseURL: srv.URL + "/v1", Model: "m"})
+	_, err := o.ChatStream(context.Background(), ChatRequest{Messages: []Message{TextMessage(RoleUser, "x")}}, nil)
+	if err == nil {
+		t.Fatal("server error event must fail the stream")
+	}
+	if !strings.Contains(err.Error(), "context length exceeded") {
+		t.Fatalf("the server's own error must surface, got: %v", err)
+	}
+}
+
+func TestOpenAIChatStreamErrorEventStringForm(t *testing.T) {
+	// Some servers send error as a bare string.
+	srv := oaSseServer(t, []string{`{"error":"out of memory"}`})
+	defer srv.Close()
+	o := NewOpenAI(OpenAIConfig{BaseURL: srv.URL + "/v1", Model: "m"})
+	_, err := o.ChatStream(context.Background(), ChatRequest{Messages: []Message{TextMessage(RoleUser, "x")}}, nil)
+	if err == nil || !strings.Contains(err.Error(), "out of memory") {
+		t.Fatalf("string-form error must surface, got: %v", err)
+	}
+}

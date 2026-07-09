@@ -127,6 +127,17 @@ func (o *OpenAI) doStream(ctx context.Context, body []byte, onText func(string))
 			complete = true
 			break
 		}
+		// A server that fails mid-stream (context overflow, OOM) emits an SSE
+		// error event and closes; swallowing it leaves only a generic
+		// "truncated" — surface the server's own explanation instead. An
+		// overflow maps to the ErrContextOverflow sentinel so the harness
+		// shrinks-and-retries rather than re-sending the same over-long prompt.
+		if msg := sseErrorMessage(data); msg != "" {
+			if isContextOverflow(msg) {
+				return nil, fmt.Errorf("%s: %w (mid-stream): %s", o.cfg.Name, ErrContextOverflow, truncate(msg, 200))
+			}
+			return nil, terminal(o.cfg.Name+": server error mid-stream", errors.New(truncate(msg, 300)))
+		}
 		var ch oaChunk
 		if err := json.Unmarshal([]byte(data), &ch); err != nil {
 			continue // tolerate keep-alive noise between events
@@ -196,4 +207,27 @@ func (o *OpenAI) doStream(ctx context.Context, body []byte, onText func(string))
 		}, i)})
 	}
 	return out, nil
+}
+
+// sseErrorMessage extracts the message from an SSE error event — either
+// {"error":{"message":"..."}} (OpenAI shape) or {"error":"..."} (bare string,
+// some local servers). Returns "" for anything that isn't an error event.
+func sseErrorMessage(data string) string {
+	var probe struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(data), &probe); err != nil || len(probe.Error) == 0 || string(probe.Error) == "null" {
+		return ""
+	}
+	var obj struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(probe.Error, &obj); err == nil && obj.Message != "" {
+		return obj.Message
+	}
+	var str string
+	if err := json.Unmarshal(probe.Error, &str); err == nil && str != "" {
+		return str
+	}
+	return string(probe.Error) // unknown shape: raw JSON beats silence
 }
