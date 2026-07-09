@@ -296,6 +296,9 @@ func renderChangeResult(intent string, res ChangeResult) string {
 		fmt.Fprintf(&b, "  files: %s\n", strings.Join(res.FilesChanged, ", "))
 	}
 	fmt.Fprintf(&b, "  regression: do-no-harm held=%v\n", res.Regression.Held)
+	if res.Regression.Scope != "" {
+		fmt.Fprintf(&b, "  scope: %s\n", res.Regression.Scope)
+	}
 	if res.NewBehavior != nil {
 		fmt.Fprintf(&b, "  verification: pass=%v inconclusive=%v\n", res.NewBehavior.Pass, res.NewBehavior.Inconclusive)
 		for _, line := range strings.Split(strings.TrimSpace(res.NewBehavior.Output), "\n") {
