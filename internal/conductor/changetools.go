@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/revelara-ai/orion/internal/acp"
 	"os"
 	"strings"
 	"sync"
@@ -92,7 +93,7 @@ func renderCases(cases []newbehavior.Case) string {
 // registerChangeTools adds the brownfield change flow to the conductor surface, mirroring the
 // greenfield build tools: submit_change_intent → propose_cases → add_case/edit_case →
 // ratify_cases (oracle gate) → build_change. State lives in cs (per session).
-func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.Conductor, provider llm.Provider) {
+func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.Conductor, provider llm.Provider, emit func(acp.Update)) {
 	repoMap := func(ctx context.Context) (string, brownfield.RepoMap, error) {
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -276,7 +277,7 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 			if err != nil {
 				return "", err
 			}
-			res, cerr := ChangeAndProve(ctx, root, c.Store(), provider, intent, cases, supersedes)
+			res, cerr := ChangeAndProve(ctx, root, c.Store(), provider, intent, cases, supersedes, phaseActivitySink(emit))
 			if cerr != nil {
 				return "", cerr
 			}

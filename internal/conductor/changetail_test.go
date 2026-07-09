@@ -64,7 +64,7 @@ func TestChangeRefusedWhileRedButtonEngaged(t *testing.T) {
 	}
 
 	stub := &stubGen{files: map[string]string{"note.go": "package dogfood\n\n// Note documents the module.\nfunc Note() string { return \"noted\" }\n"}}
-	res, err := ChangeAndProve(context.Background(), repo, store, stub, "add a Note helper", nil, nil)
+	res, err := ChangeAndProve(context.Background(), repo, store, stub, "add a Note helper", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("an engaged button is a refusal, not an error: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestChangeDeliversPRArtifact(t *testing.T) {
 
 	res, err := ChangeAndProve(context.Background(), repo, store, stub,
 		"add a golangci-lint config (v2, enable staticcheck, exclude archive/) and Makefile lint+vet targets",
-		dogfoodCases(), nil)
+		dogfoodCases(), nil, nil)
 	if err != nil {
 		t.Fatalf("ChangeAndProve: %v", err)
 	}

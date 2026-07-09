@@ -28,7 +28,7 @@ import (
 // gates verify (no agent grades its own homework).
 func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSession, emit func(acp.Update)) *tools.Registry {
 	r := tools.NewRegistry()
-	registerChangeTools(r, cs, c, provider)
+	registerChangeTools(r, cs, c, provider, emit)
 	registerBeadsTool(r, c)
 	registerMCPTools(r, c.Store())             // revelara.ai MCP tools, when authenticated (or-xe7.10)
 	registerWorkspaceTools(r, c)               // bash + file I/O + search — general workspace agency (or-5j1)
@@ -453,7 +453,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 					CurateGolangci: v.CurateGolangci,
 				}})
 			}
-			res, cerr := ChangeAndProve(ctx, root, c.Store(), provider, p.Intent, cases, nil)
+			res, cerr := ChangeAndProve(ctx, root, c.Store(), provider, p.Intent, cases, nil, phaseActivitySink(emit))
 			if cerr != nil {
 				return "", cerr
 			}

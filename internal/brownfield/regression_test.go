@@ -27,7 +27,7 @@ func TestRegressionGateHeldOnSafeChange(t *testing.T) {
 	apply := func() error {
 		return os.WriteFile(filepath.Join(dir, "extra.go"), []byte("package t\n\nfunc Mul(a, b int) int { return a * b }\n"), 0o644)
 	}
-	r, err := RegressionGate(context.Background(), dir, nil, apply)
+	r, err := RegressionGate(context.Background(), dir, nil, apply, nil)
 	if err != nil {
 		t.Fatalf("gate: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestRegressionGateCatchesRegression(t *testing.T) {
 	apply := func() error {
 		return os.WriteFile(filepath.Join(dir, "lib.go"), []byte("package t\n\nfunc Add(a, b int) int { return a - b }\n"), 0o644)
 	}
-	r, err := RegressionGate(context.Background(), dir, nil, apply)
+	r, err := RegressionGate(context.Background(), dir, nil, apply, nil)
 	if err != nil {
 		t.Fatalf("gate: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestRegressionGateNeedsGreenBaseline(t *testing.T) {
 	must(t, filepath.Join(dir, "go.mod"), "module example.com/t\n\ngo 1.25\n")
 	must(t, filepath.Join(dir, "lib.go"), "package t\n\nfunc Add(a, b int) int { return a + b }\n")
 	must(t, filepath.Join(dir, "lib_test.go"), "package t\nimport \"testing\"\nfunc TestAdd(t *testing.T){ if Add(2,3)!=99 { t.Fatal(\"red baseline\") } }\n")
-	r, err := RegressionGate(context.Background(), dir, nil, nil)
+	r, err := RegressionGate(context.Background(), dir, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("gate: %v", err)
 	}
