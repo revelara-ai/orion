@@ -178,3 +178,48 @@ func TestOpenAICapabilities(t *testing.T) {
 	}
 	var _ Provider = o // compile-time interface check (ChatStream added in Task 3 — stub until then)
 }
+
+func TestOpenAINormalizesToolSchemas(t *testing.T) {
+	// LM Studio (zod-validated) rejects tools whose function.parameters lacks
+	// "properties" — Orion's no-arg tools default to {"type":"object"}. The
+	// adapter must normalize so any OpenAI-compatible server accepts the request.
+	var got oaRequest
+	srv := openAITestServer(t, `{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}`, &got)
+	defer srv.Close()
+	o := NewOpenAI(OpenAIConfig{BaseURL: srv.URL + "/v1", Model: "m"})
+	_, err := o.Chat(context.Background(), ChatRequest{
+		Messages: []Message{TextMessage(RoleUser, "x")},
+		Tools: []Tool{
+			{Name: "noargs", InputSchema: json.RawMessage(`{"type":"object"}`)},
+			{Name: "empty", InputSchema: nil},
+			{Name: "full", InputSchema: json.RawMessage(`{"type":"object","properties":{"p":{"type":"string"}},"required":["p"]}`)},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []string{"noargs", "empty", "full"} {
+		if got.Tools[i].Function.Name != want {
+			t.Fatalf("tool order changed: %+v", got.Tools)
+		}
+		var schema map[string]any
+		if err := json.Unmarshal(got.Tools[i].Function.Parameters, &schema); err != nil {
+			t.Fatalf("tool %s: parameters not an object: %v", want, err)
+		}
+		if schema["type"] != "object" {
+			t.Errorf("tool %s: type = %v, want object", want, schema["type"])
+		}
+		if _, ok := schema["properties"].(map[string]any); !ok {
+			t.Errorf("tool %s: properties missing or not an object: %v", want, schema["properties"])
+		}
+	}
+	// The full schema must survive normalization intact.
+	var full map[string]any
+	_ = json.Unmarshal(got.Tools[2].Function.Parameters, &full)
+	if props := full["properties"].(map[string]any); props["p"] == nil {
+		t.Errorf("full schema lost its properties: %v", full)
+	}
+	if req, ok := full["required"].([]any); !ok || len(req) != 1 {
+		t.Errorf("full schema lost required: %v", full)
+	}
+}
