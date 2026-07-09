@@ -151,7 +151,11 @@ func (g *Gemini) doStream(ctx context.Context, path string, body []byte, onText 
 		return nil, terminal(g.cfg.Name+": stream", errTruncatedStream)
 	}
 	// Text was accumulated across chunks — prepend it as one block, before the
-	// tool_use blocks (mirrors the non-streaming block order).
+	// tool_use blocks. This places the aggregated text block first regardless of
+	// where it fell among the original parts, which can differ from the
+	// non-streaming part order (fromCandidate preserves that order, so a
+	// functionCall preceding text there stays first). Tool dispatch is
+	// unaffected — callers key off block type, not position.
 	if text.Len() > 0 {
 		out.Content = append([]ContentBlock{{Type: BlockText, Text: text.String()}}, out.Content...)
 	}

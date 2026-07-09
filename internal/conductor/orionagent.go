@@ -30,12 +30,12 @@ type OrionAgent struct {
 
 	mu       sync.Mutex
 	sessions map[string][]llm.Message
-	changes  map[string]*changeSession                // brownfield change-flow state, per session
-	allowed  map[string]map[string]bool               // session → tool names the developer allow-always'd
-	starts   map[string]time.Time                     // session → first-seen time (names the on-disk transcript)
-	model    string                                   // current model id/ref (for /model)
-	rebuild  func(model string) (llm.Provider, error) // rebuilds the provider for a new model (nil = no switch)
-	list     func(ctx context.Context) []string       // lists "provider/model" refs across configured providers (nil = no listing)
+	changes  map[string]*changeSession                                  // brownfield change-flow state, per session
+	allowed  map[string]map[string]bool                                 // session → tool names the developer allow-always'd
+	starts   map[string]time.Time                                       // session → first-seen time (names the on-disk transcript)
+	model    string                                                     // current model ref (for /model) — ALWAYS a full "provider/model" ref
+	rebuild  func(currentRef, arg string) (llm.Provider, string, error) // rebuilds the provider for a new model, resolving a bare arg against currentRef's provider; returns the provider and its NORMALIZED full ref (nil = no switch)
+	list     func(ctx context.Context) []string                         // lists "provider/model" refs across configured providers (nil = no listing)
 }
 
 // NewOrionAgent builds the native agent over the given model provider.
@@ -43,10 +43,13 @@ func NewOrionAgent(p llm.Provider, c *orchestrator.Conductor, role RoleTemplate)
 	return &OrionAgent{provider: p, conductor: c, role: role, sessions: map[string][]llm.Message{}, changes: map[string]*changeSession{}, allowed: map[string]map[string]bool{}, starts: map[string]time.Time{}}
 }
 
-// SetModel records the current model and the factories that rebuild the
+// SetModel records the current model ref and the factories that rebuild the
 // provider for a new model / list available models, enabling the /model
-// control op. Without rebuild, /model is show-only.
-func (a *OrionAgent) SetModel(model string, rebuild func(model string) (llm.Provider, error), list func(ctx context.Context) []string) {
+// control op. rebuild takes the CURRENT full ref (so a bare-id switch resolves
+// against whatever provider the session is actually on, not the launch-time
+// provider) and the requested arg, and returns the new provider plus its
+// normalized full "provider/model" ref. Without rebuild, /model is show-only.
+func (a *OrionAgent) SetModel(model string, rebuild func(currentRef, arg string) (llm.Provider, string, error), list func(ctx context.Context) []string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.model, a.rebuild, a.list = model, rebuild, list

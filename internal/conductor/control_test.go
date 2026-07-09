@@ -33,8 +33,8 @@ func TestControlCompactAndModel(t *testing.T) {
 	}
 
 	// /model with no arg shows the current model.
-	a.SetModel("claude-opus-4-8", func(string) (llm.Provider, error) {
-		return &fakeLLM{resp: []*llm.ChatResponse{endTurn("x")}}, nil
+	a.SetModel("claude-opus-4-8", func(currentRef, m string) (llm.Provider, string, error) {
+		return &fakeLLM{resp: []*llm.ChatResponse{endTurn("x")}}, m, nil
 	}, nil)
 	if r, _ := a.Control(context.Background(), "s1", "model", ""); !strings.Contains(r, "claude-opus-4-8") {
 		t.Errorf("/model (show) = %q", r)
@@ -63,8 +63,8 @@ func TestControlCompactGraceful(t *testing.T) {
 
 func TestSwitchModelRebuildError(t *testing.T) {
 	a := NewOrionAgent(nil, nil, RoleTemplate{})
-	a.SetModel("m1", func(string) (llm.Provider, error) {
-		return nil, fmt.Errorf(`unknown provider "nope"`)
+	a.SetModel("m1", func(currentRef, arg string) (llm.Provider, string, error) {
+		return nil, "", fmt.Errorf(`unknown provider "nope"`)
 	}, nil)
 	msg, err := a.switchModel("nope/m2")
 	if err != nil {
@@ -80,7 +80,7 @@ func TestSwitchModelRebuildError(t *testing.T) {
 
 func TestSwitchModelListsAcrossProviders(t *testing.T) {
 	a := NewOrionAgent(nil, nil, RoleTemplate{})
-	a.SetModel("m1", func(m string) (llm.Provider, error) { return nil, nil },
+	a.SetModel("m1", func(currentRef, arg string) (llm.Provider, string, error) { return nil, arg, nil },
 		func(context.Context) []string { return []string{"anthropic/claude-opus-4-8", "lmstudio/qwen3-32b"} })
 	msg, err := a.switchModel("")
 	if err != nil {
@@ -88,5 +88,52 @@ func TestSwitchModelListsAcrossProviders(t *testing.T) {
 	}
 	if !strings.Contains(msg, "lmstudio/qwen3-32b") {
 		t.Errorf("empty-arg /model must list configured providers' models: %q", msg)
+	}
+}
+
+// TestSwitchModelBareIDResolvesAgainstCurrentProvider is the regression test for the
+// merge-blocking bug: after a provider switch (/model gemini/x), a later bare /model y
+// must resolve against the NEW current provider, not the launch-time one. The fake
+// rebuild records the currentRef it was called with so we can assert on it directly.
+func TestSwitchModelBareIDResolvesAgainstCurrentProvider(t *testing.T) {
+	a := NewOrionAgent(nil, nil, RoleTemplate{})
+	var gotCurrentRef []string
+	rebuild := func(currentRef, arg string) (llm.Provider, string, error) {
+		gotCurrentRef = append(gotCurrentRef, currentRef)
+		ref := arg
+		if !strings.Contains(ref, "/") {
+			provider, _, _ := strings.Cut(currentRef, "/")
+			ref = provider + "/" + arg
+		}
+		return nil, ref, nil
+	}
+	a.SetModel("prov1/m1", rebuild, nil)
+
+	// Switch providers explicitly.
+	msg, err := a.switchModel("prov2/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.model != "prov2/x" {
+		t.Errorf("a.model after provider switch = %q, want %q", a.model, "prov2/x")
+	}
+	if !strings.HasPrefix(msg, "MODEL:prov2/x") {
+		t.Errorf("MODEL: sentinel after provider switch = %q, want full ref prov2/x", msg)
+	}
+
+	// Bare-id switch MUST resolve against the CURRENT provider (prov2), not the
+	// launch-time provider (prov1) — this is the bug the fix closes.
+	msg, err = a.switchModel("y")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotCurrentRef) != 2 || gotCurrentRef[1] != "prov2/x" {
+		t.Fatalf("bare switch must call rebuild with currentRef %q, got calls %v", "prov2/x", gotCurrentRef)
+	}
+	if a.model != "prov2/y" {
+		t.Errorf("a.model after bare switch = %q, want %q", a.model, "prov2/y")
+	}
+	if !strings.HasPrefix(msg, "MODEL:prov2/y") {
+		t.Errorf("MODEL: sentinel for bare-id switch = %q, want full normalized ref prov2/y", msg)
 	}
 }

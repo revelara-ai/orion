@@ -122,3 +122,33 @@ func TestRebuildUnknownProviderErrors(t *testing.T) {
 		t.Fatal("unknown provider must error")
 	}
 }
+
+func TestRebuildFromBareArgResolvesAgainstCurrentRefProvider(t *testing.T) {
+	setHome(t)
+	prov, ref, err := RebuildFrom("lmstudio/qwen3-32b", "other-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref != "lmstudio/other-model" || prov.Name() != "lmstudio" {
+		t.Errorf("bare arg must resolve against currentRef's provider: %s %s", ref, prov.Name())
+	}
+}
+
+func TestRebuildFromArgWithSlashSwitchesProvider(t *testing.T) {
+	setHome(t)
+	prov, ref, err := RebuildFrom("lmstudio/qwen3-32b", "ollama/llama3.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref != "ollama/llama3.3" || prov.Name() != "ollama" {
+		t.Errorf("slash arg must switch provider regardless of currentRef: %s %s", ref, prov.Name())
+	}
+}
+
+func TestRebuildFromGarbageProviderErrors(t *testing.T) {
+	setHome(t)
+	_, _, err := RebuildFrom("lmstudio/qwen3-32b", "nope/m")
+	if err == nil {
+		t.Fatal("unknown provider must error")
+	}
+}

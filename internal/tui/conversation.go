@@ -54,9 +54,8 @@ func conductorBrain(oc *orchestrator.Conductor) (acpServer, string, llm.Provider
 		return conductor.NewConductorAgent(role, oc), "offline — " + b.Reason, nil, ""
 	}
 	agent := conductor.NewOrionAgent(b.Provider, oc, role)
-	agent.SetModel(b.Ref, func(m string) (llm.Provider, error) {
-		p, _, err := llmsetup.Rebuild(b, m)
-		return p, err
+	agent.SetModel(b.Ref, func(currentRef, m string) (llm.Provider, string, error) {
+		return llmsetup.RebuildFrom(currentRef, m)
 	}, llmsetup.ListModels)
 	return agent, "native · " + b.Ref, b.Provider, b.Model
 }

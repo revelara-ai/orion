@@ -1,0 +1,54 @@
+# Example ~/.orion/config.yaml
+#
+# Orion resolves the active model as: ORION_MODEL env var > this file's
+# `model` field > the built-in default (anthropic's default model).
+#
+# IMPORTANT: a ref with no "/" resolves against the "anthropic" provider,
+# not against whatever provider you last used. So `ORION_MODEL=lmstudio`
+# alone does NOT select lmstudio — it is treated as a bare model id and
+# resolves to anthropic/lmstudio (which will fail to find that model). Always
+# give a full "provider/model" ref for a non-anthropic provider, e.g.
+# ORION_MODEL=lmstudio/qwen3-32b.
+#
+# API keys are referenced by ENV VAR NAME only (api_key_env) — the actual key
+# value is never stored in this file or anywhere else on disk.
+
+# The default model ref, "provider/model". Overridden by ORION_MODEL at
+# runtime; omit to fall back to the built-in anthropic default.
+model: anthropic/claude-opus-4-8
+
+providers:
+  # The four built-in providers below are always available even without this
+  # file. Listing them here lets you override their defaults (e.g. pin a
+  # different context_window/max_tokens, or point ollama/lmstudio at a
+  # non-default host). Omit any you don't want to change.
+
+  anthropic:
+    type: anthropic
+    api_key_env: ANTHROPIC_API_KEY
+
+  # A local Ollama server. No API key needed for a local endpoint.
+  ollama:
+    type: openai
+    base_url: http://localhost:11434/v1
+
+  # A local LM Studio server, with explicit context/output limits since local
+  # OpenAI-compatible servers don't always advertise them.
+  lmstudio:
+    type: openai
+    base_url: http://localhost:1234/v1
+    context_window: 32768
+    max_tokens: 8192
+
+  gemini:
+    type: gemini
+    api_key_env: GEMINI_API_KEY
+
+  # A custom provider entry: any OpenAI-compatible endpoint, e.g. OpenRouter.
+  # Select it with a ref like ORION_MODEL=openrouter/meta-llama/llama-3.3-70b
+  # (SplitRef only cuts on the FIRST "/", so the model id may itself contain
+  # slashes).
+  openrouter:
+    type: openai
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY

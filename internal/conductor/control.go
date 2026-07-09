@@ -81,12 +81,11 @@ func (a *OrionAgent) switchModel(arg string) (string, error) {
 	if a.rebuild == nil {
 		return "This brain can't switch models at runtime.", nil
 	}
-	p, err := a.rebuild(arg)
+	p, ref, err := a.rebuild(a.model, arg)
 	if err != nil {
 		return "Couldn't switch to " + arg + ": " + err.Error(), nil
 	}
-	a.provider = p
-	a.model = arg
+	a.provider, a.model = p, ref
 	// The result carries a MODEL: sentinel the TUI parses to update its brain label.
-	return "MODEL:" + arg + " · switched to " + arg, nil
+	return "MODEL:" + ref + " · switched to " + ref, nil
 }
