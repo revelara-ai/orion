@@ -112,8 +112,8 @@ func TestAnthropicRequestShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chat: %v", err)
 	}
-	if got.System != "You are Orion. Grill the intent." {
-		t.Fatalf("system not carried: %q", got.System)
+	if len(got.System) != 1 || got.System[0].Text != "You are Orion. Grill the intent." {
+		t.Fatalf("system not carried: %+v", got.System)
 	}
 	if len(got.Tools) != 1 || got.Tools[0].Name != "check_completeness" {
 		t.Fatalf("tools not mapped: %+v", got.Tools)
@@ -162,5 +162,63 @@ func TestToWireDropsEmptyMessages(t *testing.T) {
 	b, _ := json.Marshal(w)
 	if strings.Contains(string(b), `"content":null`) {
 		t.Fatalf("request contains null content: %s", b)
+	}
+}
+
+// TestAnthropicCachingBreakpoints (or-4qkg): the static prefix (tools +
+// system) must carry cache_control breakpoints — without them Orion re-pays
+// full input price for ~25-30K tokens of system+tool schemas on EVERY agent
+// loop iteration. Breakpoints: the LAST tool (caches the whole tool array)
+// and the system block (caches tools+system). Messages carry none (the
+// context manager rewrites history, so message-prefix caching can't be
+// relied on and breakpoints there would burn the 4-breakpoint budget).
+func TestAnthropicCachingBreakpoints(t *testing.T) {
+	var got wireRequest
+	a := fixtureServer(t, 200, `{"model":"m","stop_reason":"end_turn","content":[],"usage":{}}`, &got)
+	_, err := a.Chat(context.Background(), ChatRequest{
+		System: "You are Orion.",
+		Tools: []Tool{
+			{Name: "alpha", InputSchema: json.RawMessage(`{"type":"object"}`)},
+			{Name: "beta", InputSchema: json.RawMessage(`{"type":"object"}`)},
+		},
+		Messages: []Message{TextMessage(RoleUser, "go")},
+	})
+	if err != nil {
+		t.Fatalf("chat: %v", err)
+	}
+	if len(got.Tools) != 2 {
+		t.Fatalf("tools = %d", len(got.Tools))
+	}
+	if got.Tools[0].CacheControl != nil {
+		t.Error("only the LAST tool carries the breakpoint")
+	}
+	if got.Tools[1].CacheControl == nil || got.Tools[1].CacheControl.Type != "ephemeral" {
+		t.Errorf("last tool must carry cache_control ephemeral: %+v", got.Tools[1].CacheControl)
+	}
+	if len(got.System) != 1 || got.System[0].Text != "You are Orion." {
+		t.Fatalf("system must render as a block array: %+v", got.System)
+	}
+	if got.System[0].CacheControl == nil || got.System[0].CacheControl.Type != "ephemeral" {
+		t.Errorf("system block must carry cache_control ephemeral: %+v", got.System[0])
+	}
+	for _, m := range got.Messages {
+		for _, b := range m.Content {
+			if b.CacheControl != nil {
+				t.Error("messages must not carry breakpoints")
+			}
+		}
+	}
+}
+
+// TestAnthropicCachingOmitsEmpty: no system → no system field; no tools → no
+// stray breakpoints.
+func TestAnthropicCachingOmitsEmpty(t *testing.T) {
+	var got wireRequest
+	a := fixtureServer(t, 200, `{"model":"m","stop_reason":"end_turn","content":[],"usage":{}}`, &got)
+	if _, err := a.Chat(context.Background(), ChatRequest{Messages: []Message{TextMessage(RoleUser, "go")}}); err != nil {
+		t.Fatalf("chat: %v", err)
+	}
+	if len(got.System) != 0 {
+		t.Fatalf("empty system must be omitted: %+v", got.System)
 	}
 }

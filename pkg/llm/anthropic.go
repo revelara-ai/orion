@@ -160,12 +160,29 @@ func (a *Anthropic) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, e
 // ── wire types (Anthropic Messages API shape) ────────────────────────────────
 
 type wireRequest struct {
-	Model     string        `json:"model"`
-	MaxTokens int           `json:"max_tokens"`
-	System    string        `json:"system,omitempty"`
-	Messages  []wireMessage `json:"messages"`
-	Tools     []wireTool    `json:"tools,omitempty"`
-	Stream    bool          `json:"stream,omitempty"`
+	Model     string            `json:"model"`
+	MaxTokens int               `json:"max_tokens"`
+	System    []wireSystemBlock `json:"system,omitempty"`
+	Messages  []wireMessage     `json:"messages"`
+	Tools     []wireTool        `json:"tools,omitempty"`
+	Stream    bool              `json:"stream,omitempty"`
+}
+
+// wireCacheControl marks a prompt-caching breakpoint (or-4qkg). Everything
+// before the marked block is cached: reads bill at 0.1x input price with a
+// 5-minute TTL — and Orion's loop iterations are seconds apart, so the
+// ~25-30K-token static prefix (tools + system) stops being re-billed every
+// iteration.
+type wireCacheControl struct {
+	Type string `json:"type"` // "ephemeral"
+}
+
+// wireSystemBlock renders system as a content-block array so the block can
+// carry a cache_control breakpoint (the string form cannot).
+type wireSystemBlock struct {
+	Type         string            `json:"type"` // "text"
+	Text         string            `json:"text"`
+	CacheControl *wireCacheControl `json:"cache_control,omitempty"`
 }
 type wireMessage struct {
 	Role    string      `json:"role"`
@@ -183,11 +200,16 @@ type wireBlock struct {
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	Content   any    `json:"content,omitempty"`
 	IsError   bool   `json:"is_error,omitempty"`
+	// CacheControl is never set today (the context manager rewrites message
+	// history, so message-prefix caching can't be relied on); present so the
+	// wire shape is complete and tests can pin the absence.
+	CacheControl *wireCacheControl `json:"cache_control,omitempty"`
 }
 type wireTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description,omitempty"`
+	InputSchema  json.RawMessage   `json:"input_schema"`
+	CacheControl *wireCacheControl `json:"cache_control,omitempty"`
 }
 type wireResponse struct {
 	Model      string `json:"model"`
@@ -208,7 +230,13 @@ type wireResponse struct {
 }
 
 func (a *Anthropic) toWire(req ChatRequest, model string, maxTok int) wireRequest {
-	w := wireRequest{Model: model, MaxTokens: maxTok, System: req.System}
+	w := wireRequest{Model: model, MaxTokens: maxTok}
+	if req.System != "" {
+		// The system block carries a breakpoint: it caches tools+system (the
+		// whole static prefix). Requires the prefix to be byte-stable across
+		// iterations — it is (deterministic registry order, no timestamps).
+		w.System = []wireSystemBlock{{Type: "text", Text: req.System, CacheControl: &wireCacheControl{Type: "ephemeral"}}}
+	}
 	for _, m := range req.Messages {
 		wm := wireMessage{Role: string(m.Role)}
 		for _, b := range m.Content {
@@ -235,6 +263,11 @@ func (a *Anthropic) toWire(req ChatRequest, model string, maxTok int) wireReques
 	}
 	for _, t := range req.Tools {
 		w.Tools = append(w.Tools, wireTool{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema})
+	}
+	if n := len(w.Tools); n > 0 {
+		// Breakpoint on the LAST tool caches the whole tool array even when the
+		// system prompt varies. Two breakpoints total — well under the 4 allowed.
+		w.Tools[n-1].CacheControl = &wireCacheControl{Type: "ephemeral"}
 	}
 	return w
 }
