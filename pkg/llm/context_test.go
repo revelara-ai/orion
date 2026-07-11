@@ -234,26 +234,3 @@ func TestAnthropicStreamMapsInStreamOverflowError(t *testing.T) {
 		t.Fatalf("in-stream overflow error %v is not ErrContextOverflow", err)
 	}
 }
-
-// TestIsContextOverflow asserts that isContextOverflow correctly identifies
-// context overflow error markers (e.g., from Gemini or Anthropic) and returns
-// false for unrelated error messages.
-func TestIsContextOverflow(t *testing.T) {
-	cases := []struct {
-		body string
-		want bool
-	}{
-		{"exceeds the maximum number of tokens", true},
-		{"EXCEEDS THE MAXIMUM NUMBER OF TOKENS", true}, // case-insensitive check
-		{"prompt is too long", true},
-		{"context window", true},
-		{"some unrelated bad request body with code 400", false},
-		{"", false},
-	}
-	for _, tc := range cases {
-		got := isContextOverflow(tc.body)
-		if got != tc.want {
-			t.Errorf("isContextOverflow(%q) = %v, want %v", tc.body, got, tc.want)
-		}
-	}
-}

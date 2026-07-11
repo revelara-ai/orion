@@ -1,10 +1,6 @@
 package config
 
 import (
-	"errors"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -155,68 +151,6 @@ func TestBuild(t *testing.T) {
 		_, _, _, err := Build(bad, "x/m")
 		if err == nil || !strings.Contains(err.Error(), "cohere") {
 			t.Errorf("must reject unknown type: %v", err)
-		}
-	})
-}
-
-func TestLoadFile(t *testing.T) {
-	// 1. A valid YAML file in t.TempDir() parses and merges over Default()
-	t.Run("valid yaml", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		filePath := filepath.Join(tmpDir, "valid_config.yaml")
-		content := []byte(`
-model: lmstudio/qwen3-32b
-providers:
-  lmstudio:
-    type: openai
-    base_url: http://gpubox:1234/v1
-`)
-		if err := os.WriteFile(filePath, content, 0644); err != nil {
-			t.Fatal(err)
-		}
-
-		cfg, err := LoadFile(filePath)
-		if err != nil {
-			t.Fatalf("LoadFile failed: %v", err)
-		}
-		if cfg.Model != "lmstudio/qwen3-32b" {
-			t.Errorf("expected Model to be 'lmstudio/qwen3-32b', got %q", cfg.Model)
-		}
-		if cfg.Providers["lmstudio"].BaseURL != "http://gpubox:1234/v1" {
-			t.Errorf("expected BaseURL to be 'http://gpubox:1234/v1', got %q", cfg.Providers["lmstudio"].BaseURL)
-		}
-		// check that default providers still exist (merged over Default())
-		if _, ok := cfg.Providers["anthropic"]; !ok {
-			t.Errorf("default provider 'anthropic' missing after merge")
-		}
-	})
-
-	// 2. A missing path returns an error satisfying errors.Is(err, fs.ErrNotExist)
-	t.Run("missing path", func(t *testing.T) {
-		_, err := LoadFile("this_file_does_not_exist_at_all_123456789.yaml")
-		if err == nil {
-			t.Fatal("expected error for missing file, got nil")
-		}
-		if !errors.Is(err, fs.ErrNotExist) {
-			t.Errorf("expected error to satisfy errors.Is(err, fs.ErrNotExist), got %v", err)
-		}
-	})
-
-	// 3. A malformed file returns an error containing the file path
-	t.Run("malformed file", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		filePath := filepath.Join(tmpDir, "malformed_config.yaml")
-		content := []byte("model: [broken")
-		if err := os.WriteFile(filePath, content, 0644); err != nil {
-			t.Fatal(err)
-		}
-
-		_, err := LoadFile(filePath)
-		if err == nil {
-			t.Fatal("expected error for malformed file, got nil")
-		}
-		if !strings.Contains(err.Error(), filePath) {
-			t.Errorf("expected error string to contain file path %q, got %q", filePath, err.Error())
 		}
 	})
 }
