@@ -55,6 +55,12 @@ func integrateEpic(
 	// to the tree that cluster already proved, so the per-merge re-proof is redundant (and doubles
 	// proof cost). Re-prove only a non-trivial (>1 cluster) ASSEMBLY; the structural wireup gate
 	// (or-tcs.3) still runs on the integrated tree either way.
+	//
+	// DECISION (or-1lz): this skip is safe even w.r.t. overlapping file scopes. Scope overlap only
+	// matters between TWO OR MORE clusters merging onto the same head; with nAccepted <= 1 at most
+	// one cluster integrates, so no cross-cluster textual auto-merge can occur and the merged tree
+	// is byte-identical to the tree that cluster already proved. Any overlapping pair implies
+	// nAccepted >= 2, where the per-merge re-proof runs.
 	effReprove := reprove
 	if nAccepted <= 1 {
 		effReprove = nil
@@ -85,7 +91,10 @@ func integrateEpic(
 			continue
 		}
 
-		out, ierr := integ.Integrate(ctx, cl.Key, wt, cl.Key)
+		// S1 (or-1lz): pass the cluster's declared file scope so Integrate leases it for the whole
+		// merge — overlapping-scope integrations are mutually excluded by the integrator itself,
+		// not by this loop happening to be sequential. An undeclared scope leases the whole tree.
+		out, ierr := integ.Integrate(ctx, cl.Key, wt, cl.Key, clusterLeaseScope(cl))
 		if ierr != nil {
 			return headDir, false, fmt.Errorf("integrate cluster %s: %w", cl.Key, ierr)
 		}
@@ -101,6 +110,18 @@ func integrateEpic(
 		}
 	}
 	return headDir, true, nil
+}
+
+// clusterLeaseScope flattens a cluster's declared FileScopes — each entry is a task's FileScope,
+// possibly comma-separated path prefixes (decomposer.Task syntax) — into the prefix set the
+// integrator leases. Empty (nothing declared) means the integrator leases the whole tree
+// (exclusive), the same fail-safe as the dispatch-time leases (leaseSet, dag.go).
+func clusterLeaseScope(cl decomposer.TaskCluster) []string {
+	var out []string
+	for _, fs := range cl.FileScopes {
+		out = append(out, leaseSet(fs)...)
+	}
+	return out
 }
 
 // clusterAccepted reports whether every member task of the cluster reached Accept.

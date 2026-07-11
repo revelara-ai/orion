@@ -6,7 +6,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func mustWrite(t *testing.T, path, content string) {
@@ -56,21 +58,203 @@ func setup(t *testing.T) (root, headDir string, addCluster func(branch, file, co
 	return root, headDir, addCluster
 }
 
-// TestAcquireLeaseRefusesOverlap: a path-prefix collision is refused; disjoint scopes coexist.
-func TestAcquireLeaseRefusesOverlap(t *testing.T) {
+// TestTryAcquireLeaseRefusesOverlap: a path-prefix collision is refused; disjoint scopes coexist.
+func TestTryAcquireLeaseRefusesOverlap(t *testing.T) {
 	in := New("", "head", nil)
-	if err := in.AcquireLease("a", []string{"internal/foo"}); err != nil {
+	if err := in.TryAcquireLease("a", []string{"internal/foo"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := in.AcquireLease("b", []string{"internal/bar"}); err != nil {
+	if err := in.TryAcquireLease("b", []string{"internal/bar"}); err != nil {
 		t.Errorf("disjoint scope should be allowed: %v", err)
 	}
-	if err := in.AcquireLease("c", []string{"internal/foo/baz"}); err == nil {
+	if err := in.TryAcquireLease("c", []string{"internal/foo/baz"}); err == nil {
 		t.Error("a sub-path of an active lease must be refused")
 	}
 	in.ReleaseLease("a")
-	if err := in.AcquireLease("c", []string{"internal/foo/baz"}); err != nil {
+	if err := in.TryAcquireLease("c", []string{"internal/foo/baz"}); err != nil {
 		t.Errorf("after release, the scope should be acquirable: %v", err)
+	}
+}
+
+// TestEmptyScopeIsExclusive: an UNDECLARED (empty) scope leases the whole tree — same fail-safe
+// as the dispatch-time leases (conductor/dag.go): a task that declares nothing could touch
+// anything, so it must exclude every other lease (and be excluded by any held lease).
+func TestEmptyScopeIsExclusive(t *testing.T) {
+	in := New("", "head", nil)
+	if err := in.TryAcquireLease("a", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.TryAcquireLease("b", []string{"docs/x"}); err == nil {
+		t.Error("an empty scope must lease the whole tree: any other acquire must be refused")
+	}
+	in.ReleaseLease("a")
+	if err := in.TryAcquireLease("b", []string{"docs/x"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.TryAcquireLease("c", nil); err == nil {
+		t.Error("a whole-tree (empty scope) acquire must be refused while any lease is held")
+	}
+}
+
+// TestAcquireLeaseBlocksUntilRelease: the blocking acquire waits while an overlapping lease is
+// held, wakes when it is released, and honours context cancellation while waiting.
+func TestAcquireLeaseBlocksUntilRelease(t *testing.T) {
+	in := New("", "head", nil)
+	if err := in.TryAcquireLease("a", []string{"internal/foo"}); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- in.AcquireLease(context.Background(), "b", []string{"internal/foo/sub"}) }()
+	select {
+	case err := <-done:
+		t.Fatalf("overlapping acquire must block while the lease is held; returned early: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	in.ReleaseLease("a")
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("acquire after release should succeed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocked acquire did not wake after the overlapping lease was released")
+	}
+
+	// "b" now holds internal/foo/sub; a cancelled context must abort an overlapping wait.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancelled := make(chan error, 1)
+	go func() { cancelled <- in.AcquireLease(ctx, "c", []string{"internal/foo"}) }()
+	cancel()
+	select {
+	case err := <-cancelled:
+		if err == nil {
+			t.Fatal("a cancelled context must fail the blocking acquire")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocking acquire ignored context cancellation")
+	}
+}
+
+// TestOverlappingIntegrationsSerialize is the S1 wiring test (or-1lz): Integrate itself must HOLD
+// the file-scope lease for the whole integration, so two integrations with OVERLAPPING declared
+// scope serialize (the second blocks until the first releases) while a DISJOINT scope stays
+// acquirable throughout. The two clusters touch DIFFERENT files, so git alone would happily merge
+// them — only the lease provides the mutual exclusion being asserted.
+func TestOverlappingIntegrationsSerialize(t *testing.T) {
+	_, headDir, addCluster := setup(t)
+	wtA := addCluster("cA", "src_a.txt", "A\n")
+	wtB := addCluster("cB", "src_b.txt", "B\n")
+
+	entered := make(chan struct{}) // closed when A is mid-integration (inside its re-proof)
+	release := make(chan struct{}) // closed to let A finish
+	var once sync.Once
+	in := New(headDir, "head", func(context.Context, string) (bool, error) {
+		once.Do(func() { close(entered); <-release })
+		return true, nil
+	})
+
+	scope := []string{"src"} // both clusters declare the same scope → S1 says they serialize
+	aDone := make(chan error, 1)
+	var aOut Outcome
+	go func() {
+		out, err := in.Integrate(context.Background(), "a", wtA, "cA", scope)
+		aOut = out
+		aDone <- err
+	}()
+	<-entered
+
+	// A is mid-integration: its lease must be LIVE — an overlapping acquire is refused...
+	if err := in.TryAcquireLease("probe", []string{"src/x"}); err == nil {
+		t.Error("overlapping scope must be refused while an integration holds the lease")
+		in.ReleaseLease("probe")
+	}
+	// ...while a disjoint scope proceeds concurrently (leases only exclude overlap).
+	if err := in.TryAcquireLease("probe2", []string{"docs"}); err != nil {
+		t.Errorf("disjoint scope should be acquirable during an integration: %v", err)
+	}
+	in.ReleaseLease("probe2")
+
+	// B (overlapping scope) must BLOCK until A releases.
+	bDone := make(chan error, 1)
+	var bOut Outcome
+	go func() {
+		out, err := in.Integrate(context.Background(), "b", wtB, "cB", scope)
+		bOut = out
+		bDone <- err
+	}()
+	select {
+	case err := <-bDone:
+		t.Fatalf("overlapping-scope integration must block until the first releases; returned: %v %v", bOut, err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+	if err := <-aDone; err != nil {
+		t.Fatal(err)
+	}
+	if aOut != Integrated {
+		t.Fatalf("first integration: want Integrated, got %s", aOut)
+	}
+	select {
+	case err := <-bDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("second integration never completed after the first released its lease")
+	}
+	if bOut != Integrated {
+		t.Fatalf("second integration: want Integrated, got %s", bOut)
+	}
+	for _, f := range []string{"src_a.txt", "src_b.txt"} {
+		if _, err := os.Stat(filepath.Join(headDir, f)); err != nil {
+			t.Errorf("integrated head must contain %s: %v", f, err)
+		}
+	}
+}
+
+// TestLeaseReleasedOnConflict: an integration that ends in Conflict must still release its lease
+// (release on ALL exit paths), or the scope would be locked forever.
+func TestLeaseReleasedOnConflict(t *testing.T) {
+	_, headDir, addCluster := setup(t)
+	wtA := addCluster("cA", "shared.txt", "from A\n")
+	wtB := addCluster("cB", "shared.txt", "from B\n")
+	in := New(headDir, "head", func(context.Context, string) (bool, error) { return true, nil })
+
+	if out, err := in.Integrate(context.Background(), "a", wtA, "cA", []string{"shared.txt"}); err != nil || out != Integrated {
+		t.Fatalf("first integration should succeed: %s %v", out, err)
+	}
+	// The SECOND acquiring the same scope also proves the first released it on success.
+	out, err := in.Integrate(context.Background(), "b", wtB, "cB", []string{"shared.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != Conflict {
+		t.Fatalf("want Conflict, got %s", out)
+	}
+	if err := in.TryAcquireLease("probe", []string{"shared.txt"}); err != nil {
+		t.Errorf("lease must be released after a Conflict outcome: %v", err)
+	}
+}
+
+// TestLeaseReleasedOnRolledBack: a RED re-proof rolls the head back — and must still release the
+// task's lease.
+func TestLeaseReleasedOnRolledBack(t *testing.T) {
+	_, headDir, addCluster := setup(t)
+	wt := addCluster("cB", "b.txt", "B\n")
+	in := New(headDir, "head", func(context.Context, string) (bool, error) { return false, nil })
+
+	out, err := in.Integrate(context.Background(), "b", wt, "cB", []string{"b.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != RolledBack {
+		t.Fatalf("want RolledBack, got %s", out)
+	}
+	if err := in.TryAcquireLease("probe", []string{"b.txt"}); err != nil {
+		t.Errorf("lease must be released after a RolledBack outcome: %v", err)
 	}
 }
 
@@ -84,7 +268,7 @@ func TestIntegrateAdvancesHeadOnGreen(t *testing.T) {
 	in := New(headDir, "head", greenReprove)
 
 	before := git(t, headDir, "rev-parse", "HEAD")
-	out, err := in.Integrate(context.Background(), "a", wt, "clusterA")
+	out, err := in.Integrate(context.Background(), "a", wt, "clusterA", []string{"a.txt"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +293,7 @@ func TestIntegrateRollsBackOnRedReproof(t *testing.T) {
 	in := New(headDir, "head", redReprove)
 
 	before := git(t, headDir, "rev-parse", "HEAD")
-	out, err := in.Integrate(context.Background(), "b", wt, "clusterB")
+	out, err := in.Integrate(context.Background(), "b", wt, "clusterB", []string{"b.txt"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +324,7 @@ func TestInIntegrationPredicate(t *testing.T) {
 	if in.InIntegration("x") {
 		t.Error("task should not be mid-integration before Integrate")
 	}
-	if _, err := in.Integrate(context.Background(), "x", wt, "cX"); err != nil {
+	if _, err := in.Integrate(context.Background(), "x", wt, "cX", nil); err != nil {
 		t.Fatal(err)
 	}
 	if in.InIntegration("x") {
@@ -156,12 +340,12 @@ func TestIntegrateConflictLeavesHeadUntouched(t *testing.T) {
 	wtB := addCluster("cB", "shared.txt", "from B\n")
 	in := New(headDir, "head", func(context.Context, string) (bool, error) { return true, nil })
 
-	if out, err := in.Integrate(context.Background(), "a", wtA, "cA"); err != nil || out != Integrated {
+	if out, err := in.Integrate(context.Background(), "a", wtA, "cA", []string{"shared.txt"}); err != nil || out != Integrated {
 		t.Fatalf("first integration should succeed: %s %v", out, err)
 	}
 	headAfterA := git(t, headDir, "rev-parse", "HEAD")
 
-	out, err := in.Integrate(context.Background(), "b", wtB, "cB")
+	out, err := in.Integrate(context.Background(), "b", wtB, "cB", []string{"shared.txt"})
 	if err != nil {
 		t.Fatal(err)
 	}
