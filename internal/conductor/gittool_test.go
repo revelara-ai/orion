@@ -47,7 +47,7 @@ func TestGitToolReportsFailureAsExitNotError(t *testing.T) {
 	repo := initDogfoodRepo(t)
 	t.Chdir(repo)
 	tool, _ := specTools(oc, nil, &changeSession{}, nil).Get("git")
-	out, err := tool.Run(context.Background(), json.RawMessage(`{"args":["merge","--ff-only","does-not-exist"]}`))
+	out, err := tool.Run(context.Background(), json.RawMessage(`{"args":["merge","--ff-only","orion-does-not-exist"]}`))
 	if err != nil {
 		t.Fatalf("a failed git op must be reported as output, not a Go error: %v", err)
 	}

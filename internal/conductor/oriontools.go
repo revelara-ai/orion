@@ -463,7 +463,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 
 	r.Register(tools.Tool{
 		Name:        "git",
-		Description: "Run a git operation in the developer's repo and return its output + exit code (status, diff, log, show, branch, checkout, merge, commit, add, stash, rev-parse, …). Use it to show the developer a diff, or to LAND a PROVEN change_repo branch into the base branch once they approve. Landing rule (keeps a landed change exactly what was proven): on the base branch run merge --ff-only <change-branch>; if that is NOT a fast-forward (the base moved since the change was proven), do NOT hand-merge or force — the proof is stale, so re-run change_repo off current HEAD to re-prove, then land. Operates on the LOCAL repo; `push` reaches a shared remote, so only push when the developer explicitly asks for it.",
+		Description: "Run a READ-ONLY git review operation in the developer's repo and return its output + exit code. Allowed: status, log, diff, show, rev-parse, ls-files, blame — plus ONE mutation: 'merge --ff-only <orion-… branch>' to LAND a PROVEN change_repo branch after the developer approves. Nothing else: commits happen ONLY through the proof pipeline (build_change / build_service), never via this tool, and push is not available (publishing is the developer's act). Landing rule: if --ff-only refuses (the base moved since the change was proven), the proof is stale — re-run change_repo off current HEAD, do NOT hand-merge.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"args":{"type":"array","items":{"type":"string"},"description":"git arguments after 'git', e.g. [\"merge\",\"--ff-only\",\"orion-change-...\"] or [\"diff\",\"main..orion-change-...\"]"}},"required":["args"]}`),
 		Safety:      tools.Safety{Destructive: true},
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
@@ -475,6 +475,12 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			}
 			if len(p.Args) == 0 {
 				return "", fmt.Errorf("git: args is required (the git arguments to run)")
+			}
+			// Fail-closed policy (or-4gib circumvention): a goal-driven model
+			// WILL use whatever the tool card offers — the allowlist is code,
+			// and the refusal teaches the proof path.
+			if perr := gitPolicy(p.Args); perr != nil {
+				return "", perr
 			}
 			cwd, err := os.Getwd()
 			if err != nil {
