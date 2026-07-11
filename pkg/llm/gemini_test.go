@@ -337,3 +337,28 @@ func TestGeminiThoughtSignatureBypassWhenAbsent(t *testing.T) {
 		}
 	}
 }
+
+// TestGeminiMaxOutputDefaults: thinking models burn reasoning tokens against
+// the output cap — the 8192 universal floor starves think-then-edit turns
+// (live: "output budget exhausted, likely by reasoning tokens" killing a diff
+// generation). Known 2.5+/3.x models get a model-aware default; unknown ids
+// keep the conservative floor; config always wins.
+func TestGeminiMaxOutputDefaults(t *testing.T) {
+	cases := []struct {
+		model string
+		cfg   int
+		want  int
+	}{
+		{"gemini-3.5-flash", 0, 32768},
+		{"gemini-3-pro", 0, 32768},
+		{"gemini-2.5-flash", 0, 32768},
+		{"gemini-1.5-flash", 0, 8192}, // unknown/legacy: conservative floor
+		{"gemini-3.5-flash", 2048, 2048}, // config override always wins
+	}
+	for _, c := range cases {
+		g := NewGemini(GeminiConfig{APIKey: "k", Model: c.model, MaxOutput: c.cfg})
+		if got := g.MaxOutputTokens(); got != c.want {
+			t.Errorf("MaxOutputTokens(%s, cfg=%d) = %d, want %d", c.model, c.cfg, got, c.want)
+		}
+	}
+}
