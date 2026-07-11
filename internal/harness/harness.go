@@ -56,6 +56,25 @@ type Event struct {
 type Supervisor struct {
 	MaxIterations int
 	Budget        *budget.Accountant
+	// CapHint replaces the default "progress is preserved in this session —
+	// send a follow-up to resume" advice in the max-iterations error. Set it
+	// on EPHEMERAL loops (diff generator, subagents) whose conversations are
+	// discarded — the resume advice would be a lie there.
+	CapHint string
+}
+
+// paceHint renders the budget countdown appended to tool results in the BACK
+// half of the iteration budget. Tool-happy models pace themselves when the
+// budget is visible (or-mvr.14: gemini burned 40 generator iterations
+// re-reading files it had already edited); the front half stays clean so
+// normal turns carry no noise.
+func (s Supervisor) paceHint(iter int) string {
+	max := s.maxIter()
+	remaining := max - iter - 1
+	if remaining*2 >= max {
+		return ""
+	}
+	return fmt.Sprintf("\n\n[budget: %d of %d tool turns remain — be economical: no re-reads after edits, batch what you can, finish and end your turn]", remaining, max)
 }
 
 func (s Supervisor) maxIter() int {
@@ -306,6 +325,7 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 				isErr = true
 			} else {
 				content, isErr = l.dispatch(ctx, tu)
+				content += l.Supervisor.paceHint(iter)
 			}
 			emit(Event{Kind: EventToolResult, Tool: tu.Name, Text: content, Error: isErr})
 			results = append(results, llm.ContentBlock{
@@ -324,7 +344,11 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 	// caller's session state, and the next developer message resumes with a
 	// fresh budget. Say so — a bare "max iterations exceeded" reads as lost
 	// work (or-4gib: the model had finished its edits when the cap hit).
-	return convo, nil, fmt.Errorf("%w after %d iterations — progress is preserved in this session; send a follow-up (e.g. \"continue\") to resume with a fresh budget", ErrMaxIterations, l.Supervisor.maxIter())
+	hint := l.Supervisor.CapHint
+	if hint == "" {
+		hint = "progress is preserved in this session; send a follow-up (e.g. \"continue\") to resume with a fresh budget"
+	}
+	return convo, nil, fmt.Errorf("%w after %d iterations — %s", ErrMaxIterations, l.Supervisor.maxIter(), hint)
 }
 
 func (l *Loop) dispatch(ctx context.Context, tu llm.ToolUse) (string, bool) {

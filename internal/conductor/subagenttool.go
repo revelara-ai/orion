@@ -142,7 +142,7 @@ func registerSubagentTool(r *tools.Registry, c *orchestrator.Conductor, provider
 				Provider:   provider,
 				Tools:      sub,
 				System:     subagentSystemPrompt(granted),
-				Supervisor: harness.Supervisor{MaxIterations: 12, Budget: c.Budget()},
+				Supervisor: harness.Supervisor{MaxIterations: 12, Budget: c.Budget(), CapHint: "the subagent's conversation is discarded; its partial answer (if any) is returned to the caller"},
 			}
 			var trace []string
 			convo, resp, runErr := loop.Run(cctx, []llm.Message{llm.TextMessage(llm.RoleUser, p.Task)},
