@@ -148,6 +148,7 @@ func TestLoopSkipsRetryWhenClearingCantHelp(t *testing.T) {
 // records the tool specs it was offered — a deterministic stand-in for a model.
 type scriptedProvider struct {
 	resp    []*llm.ChatResponse
+	next    func() *llm.ChatResponse // optional generator; overrides resp when set
 	i       int
 	calls   int
 	lastReq llm.ChatRequest
@@ -161,6 +162,9 @@ func (p *scriptedProvider) Ping(context.Context) error { return nil }
 func (p *scriptedProvider) Chat(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 	p.calls++
 	p.lastReq = req
+	if p.next != nil {
+		return p.next(), nil
+	}
 	r := p.resp[p.i]
 	if p.i < len(p.resp)-1 {
 		p.i++
@@ -408,7 +412,7 @@ func TestSupervisorCapsIterations(t *testing.T) {
 	prov := &scriptedProvider{resp: []*llm.ChatResponse{toolUseResp("t", "spin", `{}`)}} // always tool_use
 	loop := Loop{Provider: prov, Tools: reg, Supervisor: Supervisor{MaxIterations: 3}}
 	_, _, err := loop.Run(context.Background(), nil, nil)
-	if err != ErrMaxIterations {
+	if !errors.Is(err, ErrMaxIterations) {
 		t.Fatalf("err = %v, want ErrMaxIterations", err)
 	}
 	if prov.calls != 3 {
