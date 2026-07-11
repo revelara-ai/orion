@@ -234,3 +234,15 @@ func TestAnthropicStreamMapsInStreamOverflowError(t *testing.T) {
 		t.Fatalf("in-stream overflow error %v is not ErrContextOverflow", err)
 	}
 }
+
+// TestIsContextOverflow covers the Gemini marker 'exceeds the maximum number of tokens'
+// (expected true) and a nonsense error (expected false).
+func TestIsContextOverflow(t *testing.T) {
+	if !isContextOverflow("error: exceeds the maximum number of tokens") {
+		t.Error("expected true for Gemini marker 'exceeds the maximum number of tokens'")
+	}
+	if isContextOverflow("some nonsense error") {
+		t.Error("expected false for nonsense error")
+	}
+}
+
