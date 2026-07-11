@@ -56,13 +56,19 @@ func DiffGenerator(ctx context.Context, provider llm.Provider, repoDir, intent, 
 	reg.Register(writeFileTool(repoDir)) // reuse the path-guarded greenfield writer (new files only)
 	reg.Register(readFileTool(repoDir))
 	loop := harness.Loop{
-		Provider:   provider,
-		Tools:      reg,
-		System:     diffGenRole(intent, repoContext, supersedes),
-		Supervisor: harness.Supervisor{MaxIterations: 40},
+		Provider: provider,
+		Tools:    reg,
+		System:   diffGenRole(intent, repoContext, supersedes),
+		Supervisor: harness.Supervisor{
+			MaxIterations: 40,
+			// This conversation is discarded with the worktree on failure —
+			// the session-resume advice would be a lie here.
+			CapHint: "this generation attempt is discarded; the change flow may retry with a corrected intent",
+		},
 	}
 	start := []llm.Message{llm.TextMessage(llm.RoleUser,
-		"Make the change now. Read the files you need with read_file, then apply surgical edits with edit_file (replace a unique old_string with new_string). Use write_file only to CREATE a new file. Touch as few files as possible. End your turn when the change is complete.")}
+		"Make the change now. Read the files you need with read_file, then apply surgical edits with edit_file (replace a unique old_string with new_string). Use write_file only to CREATE a new file. Touch as few files as possible. "+
+			"You have a LIMITED tool budget: do not re-read a file after editing it (edit_file returns the changed span — trust it), and do not re-read files you have already seen. End your turn as soon as the change is complete.")}
 	if _, _, err := loop.Run(ctx, start, nil); err != nil {
 		return fmt.Errorf("diff generation: %w", err)
 	}
