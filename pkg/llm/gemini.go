@@ -78,10 +78,21 @@ func (g *Gemini) ContextWindow() int {
 	return 128_000
 }
 
-// MaxOutputTokens prefers the config override, else the universal-safe floor.
+// MaxOutputTokens prefers the config override, else a WHITELIST of known
+// 2.5+/3.x models at 32K (they support ≥64K; we stay conservative), else the
+// universal 8192 floor. The whitelist matters because these are THINKING
+// models: reasoning tokens count against the output cap, and at 8192 a
+// think-then-write-a-large-edit turn starves mid-generation ("output budget
+// exhausted, likely by reasoning tokens" — observed killing a diff run).
 func (g *Gemini) MaxOutputTokens() int {
 	if g.cfg.MaxOutput > 0 {
 		return g.cfg.MaxOutput
+	}
+	m := strings.ToLower(g.cfg.Model)
+	for _, big := range []string{"gemini-3", "gemini-2.5"} {
+		if strings.Contains(m, big) {
+			return 32768
+		}
 	}
 	return 8192
 }
