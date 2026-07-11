@@ -320,7 +320,11 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 		}
 		convo = append(convo, llm.Message{Role: llm.RoleUser, Content: results})
 	}
-	return convo, nil, ErrMaxIterations
+	// The cap is a pause, not a failure: the conversation is preserved in the
+	// caller's session state, and the next developer message resumes with a
+	// fresh budget. Say so — a bare "max iterations exceeded" reads as lost
+	// work (or-4gib: the model had finished its edits when the cap hit).
+	return convo, nil, fmt.Errorf("%w after %d iterations — progress is preserved in this session; send a follow-up (e.g. \"continue\") to resume with a fresh budget", ErrMaxIterations, l.Supervisor.maxIter())
 }
 
 func (l *Loop) dispatch(ctx context.Context, tu llm.ToolUse) (string, bool) {
