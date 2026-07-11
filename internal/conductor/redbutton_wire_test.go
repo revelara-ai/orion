@@ -77,15 +77,22 @@ func TestGitToolGuardedByRedButton(t *testing.T) {
 	if out, err := tool.Run(context.Background(), json.RawMessage(`{"args":["status"]}`)); err != nil {
 		t.Fatalf("read-only git op must pass under the red button: %v (%s)", err, out)
 	}
-	if _, err := tool.Run(context.Background(), json.RawMessage(`{"args":["commit","-m","x"]}`)); err == nil || !strings.Contains(err.Error(), "red button") {
+	if _, err := tool.Run(context.Background(), json.RawMessage(`{"args":["merge","--ff-only","orion-x"]}`)); err == nil || !strings.Contains(err.Error(), "red button") {
 		t.Fatalf("mutating git op must be refused at the gate while engaged, got: %v", err)
+	}
+	// Policy refusals fire even under an engaged button — commit is never
+	// reachable through this tool, red button or not.
+	if _, err := tool.Run(context.Background(), json.RawMessage(`{"args":["commit","-m","x"]}`)); err == nil || !strings.Contains(err.Error(), "build_change") {
+		t.Fatalf("commit must be policy-refused, got: %v", err)
 	}
 
 	if err := rb.Release(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tool.Run(context.Background(), json.RawMessage(`{"args":["commit","--allow-empty","-m","x"]}`)); err != nil {
-		t.Fatalf("release must restore actuation: %v", err)
+	if out, err := tool.Run(context.Background(), json.RawMessage(`{"args":["merge","--ff-only","orion-x"]}`)); err != nil {
+		// orion-x doesn't exist — the op must REACH git (exit-code output),
+		// proving release restored actuation past the gate.
+		t.Fatalf("release must restore actuation: %v (%s)", err, out)
 	}
 }
 

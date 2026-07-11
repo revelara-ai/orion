@@ -34,6 +34,9 @@ func registerWorkspaceTools(r *tools.Registry, c *orchestrator.Conductor) {
 			if err := json.Unmarshal(in, &p); err != nil {
 				return "", err
 			}
+			if gerr := bashGitMutation(p.Command); gerr != nil {
+				return "", gerr
+			}
 			if strings.TrimSpace(p.Command) == "" {
 				return "", fmt.Errorf("bash: command is required")
 			}
