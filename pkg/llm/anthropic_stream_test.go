@@ -96,9 +96,9 @@ func TestAnthropicChatStreamParsesSSE(t *testing.T) {
 // TestAnthropicChatStreamRetriesBeforeEmit: a 503 before any data is retried and
 // the stream then succeeds.
 func TestAnthropicChatStreamRetriesBeforeEmit(t *testing.T) {
-	var hits int32
+	var hits atomic.Int32
 	a := sseServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		if atomic.AddInt32(&hits, 1) == 1 {
+		if hits.Add(1) == 1 {
 			w.WriteHeader(503)
 			return
 		}
@@ -112,7 +112,7 @@ func TestAnthropicChatStreamRetriesBeforeEmit(t *testing.T) {
 	if res.Text() != "Which port?" {
 		t.Fatalf("text = %q", res.Text())
 	}
-	if n := atomic.LoadInt32(&hits); n != 2 {
+	if n := hits.Load(); n != 2 {
 		t.Fatalf("hits = %d, want 2 (503 then success)", n)
 	}
 }
@@ -120,9 +120,9 @@ func TestAnthropicChatStreamRetriesBeforeEmit(t *testing.T) {
 // TestAnthropicChatStreamTruncatedFails: a stream that ends cleanly (EOF) with no
 // terminal event must be an error — never a silently-complete partial turn.
 func TestAnthropicChatStreamTruncatedFails(t *testing.T) {
-	var hits int32
+	var hits atomic.Int32
 	a := sseServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&hits, 1)
+		hits.Add(1)
 		w.Header().Set("content-type", "text/event-stream")
 		_, _ = io.WriteString(w, `event: message_start
 data: {"type":"message_start","message":{"model":"m","usage":{}}}
@@ -144,7 +144,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 	if got != "thinking" {
 		t.Fatalf("emitted = %q", got)
 	}
-	if n := atomic.LoadInt32(&hits); n != 1 {
+	if n := hits.Load(); n != 1 {
 		t.Fatalf("hits = %d, want 1 (terminal after emit, no retry)", n)
 	}
 }
@@ -181,9 +181,9 @@ data: {"type":"message_stop"}
 // TestAnthropicChatStreamNoRetryAfterEmit: an error AFTER text has been emitted is
 // terminal — never retried, so already-shown output is not duplicated.
 func TestAnthropicChatStreamNoRetryAfterEmit(t *testing.T) {
-	var hits int32
+	var hits atomic.Int32
 	a := sseServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&hits, 1)
+		hits.Add(1)
 		w.Header().Set("content-type", "text/event-stream")
 		_, _ = io.WriteString(w, `event: message_start
 data: {"type":"message_start","message":{"model":"m","usage":{}}}
@@ -208,7 +208,7 @@ data: {"type":"error","error":{"message":"overloaded mid-stream"}}
 	if got != "partial" {
 		t.Fatalf("emitted text = %q, want the partial before the error", got)
 	}
-	if n := atomic.LoadInt32(&hits); n != 1 {
+	if n := hits.Load(); n != 1 {
 		t.Fatalf("hits = %d, want 1 (no retry after emit — would duplicate output)", n)
 	}
 }

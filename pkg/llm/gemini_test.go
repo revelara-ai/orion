@@ -352,7 +352,7 @@ func TestGeminiMaxOutputDefaults(t *testing.T) {
 		{"gemini-3.5-flash", 0, 32768},
 		{"gemini-3-pro", 0, 32768},
 		{"gemini-2.5-flash", 0, 32768},
-		{"gemini-1.5-flash", 0, 8192}, // unknown/legacy: conservative floor
+		{"gemini-1.5-flash", 0, 8192},    // unknown/legacy: conservative floor
 		{"gemini-3.5-flash", 2048, 2048}, // config override always wins
 	}
 	for _, c := range cases {

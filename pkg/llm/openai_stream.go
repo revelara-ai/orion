@@ -211,11 +211,17 @@ func (o *OpenAI) doStream(ctx context.Context, body []byte, onText func(string))
 		idxs = append(idxs, i)
 	}
 	sort.Ints(idxs)
+	taken := oaTakenIDs(len(calls))
+	for _, sc := range calls {
+		if sc.id != "" {
+			taken[sc.id] = true
+		}
+	}
 	for _, i := range idxs {
 		sc := calls[i]
 		out.Content = append(out.Content, ContentBlock{Type: BlockToolUse, ToolUse: oaToolUse(oaToolCall{
 			ID: sc.id, Type: "function", Function: oaFunction{Name: sc.name, Arguments: sc.args.String()},
-		}, i)})
+		}, i, taken)})
 	}
 	return out, nil
 }

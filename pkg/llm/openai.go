@@ -253,20 +253,38 @@ func (o *OpenAI) do(ctx context.Context, body []byte) (*ChatResponse, error) {
 	if ch.Message.Content != "" {
 		out.Content = append(out.Content, ContentBlock{Type: BlockText, Text: ch.Message.Content})
 	}
+	taken := oaTakenIDs(len(ch.Message.ToolCalls))
+	for _, tc := range ch.Message.ToolCalls {
+		if tc.ID != "" {
+			taken[tc.ID] = true
+		}
+	}
 	for i, tc := range ch.Message.ToolCalls {
-		out.Content = append(out.Content, ContentBlock{Type: BlockToolUse, ToolUse: oaToolUse(tc, i)})
+		out.Content = append(out.Content, ContentBlock{Type: BlockToolUse, ToolUse: oaToolUse(tc, i, taken)})
 	}
 	return out, nil
 }
 
+// oaTakenIDs allocates the per-response id set passed through oaToolUse.
+func oaTakenIDs(n int) map[string]bool { return make(map[string]bool, n) }
+
 // oaToolUse normalizes one wire tool call: some local servers omit the id
 // (synthesized — the harness needs it to pair tool_results) or send empty
-// arguments (defaulted to {} so json.RawMessage stays valid).
-func oaToolUse(tc oaToolCall, i int) *ToolUse {
+// arguments (defaulted to {} so json.RawMessage stays valid). taken must be
+// pre-seeded with every REAL id in the response and accumulates ids as they
+// are assigned: a server can mix real and missing ids in one turn, and a
+// positional "call_<n>" that collides with a real id would cross-wire
+// tool_results to the wrong call — on collision the synthesized id is
+// prefixed with "synth_" until free.
+func oaToolUse(tc oaToolCall, i int, taken map[string]bool) *ToolUse {
 	id := tc.ID
 	if id == "" {
 		id = "call_" + strconv.Itoa(i+1)
+		for taken[id] {
+			id = "synth_" + id
+		}
 	}
+	taken[id] = true
 	args := strings.TrimSpace(tc.Function.Arguments)
 	if args == "" {
 		args = "{}"
@@ -338,7 +356,7 @@ func (o *OpenAI) Models(ctx context.Context) ([]ModelInfo, error) {
 		}
 		resp, err := o.http.Do(httpReq)
 		if err != nil {
-			return nil, &llmclient.Retryable{Err: fmt.Errorf("%s: cannot reach %s — is it running?: %w", o.cfg.Name, o.cfg.BaseURL, err)}
+			return nil, &llmclient.Retryable{Err: fmt.Errorf("%s: cannot reach %s (is it running?): %w", o.cfg.Name, o.cfg.BaseURL, err)}
 		}
 		defer resp.Body.Close()
 		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
