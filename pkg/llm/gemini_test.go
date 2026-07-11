@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -200,5 +201,69 @@ func TestGeminiOmitsEmptyToolSchemas(t *testing.T) {
 	}
 	if len(decls[3].Parameters) == 0 {
 		t.Errorf("full schema must be passed through, got empty")
+	}
+}
+
+// TestGeminiSanitizesToolSchemas: Gemini function declarations accept an
+// OpenAPI subset, not full JSON Schema — an additionalProperties ANYWHERE in
+// any tool's parameters 400s the whole request (live failure: Orion's verify
+// tool's env map at declarations[47]). The adapter must strip the rejected
+// keywords recursively while leaving semantics-bearing structure intact.
+func TestGeminiSanitizesToolSchemas(t *testing.T) {
+	var got gemRequest
+	srv := geminiTestServer(t, `{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`, &got)
+	defer srv.Close()
+	g := NewGemini(GeminiConfig{APIKey: "k", Model: "m", BaseURL: srv.URL})
+	schema := `{
+		"type":"object",
+		"$schema":"http://json-schema.org/draft-07/schema#",
+		"additionalProperties":false,
+		"properties":{
+			"cmd":{"type":"string","description":"command"},
+			"env":{"type":"object","additionalProperties":{"type":"string"}},
+			"steps":{"type":"array","items":{
+				"type":"object",
+				"additionalProperties":false,
+				"properties":{"run":{"type":"string"}},
+				"required":["run"]
+			}}
+		},
+		"required":["cmd"]
+	}`
+	_, err := g.Chat(context.Background(), ChatRequest{
+		Messages: []Message{TextMessage(RoleUser, "x")},
+		Tools:    []Tool{{Name: "verify", Description: "run checks", InputSchema: json.RawMessage(schema)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl := got.Tools[0].FunctionDeclarations[0]
+	raw, _ := json.Marshal(decl.Parameters)
+	for _, banned := range []string{"additionalProperties", "$schema"} {
+		if strings.Contains(string(raw), banned) {
+			t.Errorf("sanitized schema still contains %q:\n%s", banned, raw)
+		}
+	}
+	// Semantics-bearing structure survives.
+	var m map[string]any
+	if err := json.Unmarshal(decl.Parameters, &m); err != nil {
+		t.Fatalf("sanitized schema not valid JSON: %v", err)
+	}
+	props := m["properties"].(map[string]any)
+	if _, ok := props["cmd"]; !ok {
+		t.Error("cmd property lost")
+	}
+	steps := props["steps"].(map[string]any)
+	items := steps["items"].(map[string]any)
+	if _, ok := items["properties"].(map[string]any)["run"]; !ok {
+		t.Error("nested items.properties.run lost")
+	}
+	if req, ok := m["required"].([]any); !ok || len(req) != 1 {
+		t.Errorf("required lost: %v", m["required"])
+	}
+	// The env map became a plain object (closure keyword stripped) but the
+	// property itself survives.
+	if _, ok := props["env"]; !ok {
+		t.Error("env property lost entirely — strip must remove the KEY, not the node")
 	}
 }

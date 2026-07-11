@@ -220,7 +220,45 @@ func gemToolSchema(schema json.RawMessage) json.RawMessage {
 	if props, ok := m["properties"].(map[string]any); !ok || len(props) == 0 {
 		return nil
 	}
-	return schema
+	stripGeminiUnsupported(m)
+	out, err := json.Marshal(m)
+	if err != nil {
+		return schema
+	}
+	return out
+}
+
+// geminiUnsupportedKeys are JSON-Schema keywords Gemini's OpenAPI-subset
+// function declarations reject — one occurrence ANYWHERE in any tool 400s the
+// whole request ("Unknown name \"additionalProperties\"", observed live at
+// declarations[47]). Removing them only loosens object closure — a constraint
+// Gemini cannot express anyway — never the call semantics.
+var geminiUnsupportedKeys = map[string]bool{
+	"additionalProperties":  true,
+	"$schema":               true,
+	"$ref":                  true,
+	"$defs":                 true,
+	"definitions":           true,
+	"patternProperties":     true,
+	"unevaluatedProperties": true,
+}
+
+// stripGeminiUnsupported removes the rejected keywords recursively, in place.
+func stripGeminiUnsupported(v any) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, child := range t {
+			if geminiUnsupportedKeys[k] {
+				delete(t, k)
+				continue
+			}
+			stripGeminiUnsupported(child)
+		}
+	case []any:
+		for _, child := range t {
+			stripGeminiUnsupported(child)
+		}
+	}
 }
 
 // Chat issues one generateContent request, retried/broken per llmclient policy.
