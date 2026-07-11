@@ -267,3 +267,73 @@ func TestGeminiSanitizesToolSchemas(t *testing.T) {
 		t.Error("env property lost entirely — strip must remove the KEY, not the node")
 	}
 }
+
+// TestGeminiThoughtSignatureRoundTrip: Gemini 3.x thinking models attach a
+// thoughtSignature to functionCall parts and REQUIRE it echoed when the call
+// is replayed in history (live failure: request 1 fine, request 2 400
+// "missing a thought_signature"). The adapter captures it into
+// ToolUse.Signature and replays it on the wire.
+func TestGeminiThoughtSignatureRoundTrip(t *testing.T) {
+	var got gemRequest
+	srv := geminiTestServer(t, `{
+		"candidates":[{"content":{"role":"model","parts":[
+			{"functionCall":{"name":"bd","args":{"q":"show"}},"thoughtSignature":"sig-abc123"}
+		]},"finishReason":"STOP"}]
+	}`, &got)
+	defer srv.Close()
+	g := NewGemini(GeminiConfig{APIKey: "k", Model: "m", BaseURL: srv.URL})
+
+	// Capture: the signature lands on the parsed ToolUse.
+	resp, err := g.Chat(context.Background(), ChatRequest{Messages: []Message{TextMessage(RoleUser, "x")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tus := resp.ToolUses()
+	if len(tus) != 1 || tus[0].Signature != "sig-abc123" {
+		t.Fatalf("thoughtSignature not captured: %+v", tus)
+	}
+
+	// Replay: the signature rides the functionCall part back to the wire.
+	_, err = g.Chat(context.Background(), ChatRequest{Messages: []Message{
+		TextMessage(RoleUser, "x"),
+		{Role: RoleAssistant, Content: []ContentBlock{{Type: BlockToolUse, ToolUse: &tus[0]}}},
+		{Role: RoleUser, Content: []ContentBlock{{Type: BlockToolResult, ToolResult: &ToolResult{ToolUseID: tus[0].ID, Content: "ok"}}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fc := got.Contents[1].Parts[0]
+	if fc.FunctionCall == nil || fc.ThoughtSignature != "sig-abc123" {
+		t.Fatalf("replayed functionCall must carry the signature: %+v", fc)
+	}
+}
+
+// TestGeminiThoughtSignatureBypassWhenAbsent: histories that predate the fix
+// (or arrived via /model switch from another provider) have no signature —
+// send Google's documented validator-skip token instead of omitting the field
+// (omission hard-400s on thinking models).
+func TestGeminiThoughtSignatureBypassWhenAbsent(t *testing.T) {
+	var got gemRequest
+	srv := geminiTestServer(t, `{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`, &got)
+	defer srv.Close()
+	g := NewGemini(GeminiConfig{APIKey: "k", Model: "m", BaseURL: srv.URL})
+	_, err := g.Chat(context.Background(), ChatRequest{Messages: []Message{
+		{Role: RoleAssistant, Content: []ContentBlock{{Type: BlockToolUse, ToolUse: &ToolUse{ID: "c1", Name: "bd", Input: json.RawMessage(`{}`)}}}},
+		{Role: RoleUser, Content: []ContentBlock{{Type: BlockToolResult, ToolResult: &ToolResult{ToolUseID: "c1", Content: "ok"}}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fc := got.Contents[0].Parts[0]
+	if fc.ThoughtSignature != "skip_thought_signature_validator" {
+		t.Fatalf("absent signature must send the validator-skip token, got %q", fc.ThoughtSignature)
+	}
+	// Text parts never carry a signature slot.
+	if len(got.Contents) > 1 {
+		for _, p := range got.Contents[1].Parts {
+			if p.ThoughtSignature != "" {
+				t.Error("non-functionCall parts must not carry signatures")
+			}
+		}
+	}
+}

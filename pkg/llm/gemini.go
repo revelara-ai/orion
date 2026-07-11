@@ -104,6 +104,10 @@ type gemPart struct {
 	Text             string               `json:"text,omitempty"`
 	FunctionCall     *gemFunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *gemFunctionResponse `json:"functionResponse,omitempty"`
+	// ThoughtSignature rides functionCall parts on Gemini 3.x thinking models;
+	// it must be echoed on replay or the request 400s ("missing a
+	// thought_signature").
+	ThoughtSignature string `json:"thoughtSignature,omitempty"`
 }
 
 type gemFunctionCall struct {
@@ -173,7 +177,11 @@ func (g *Gemini) toWire(req ChatRequest, maxTok int) gemRequest {
 				}
 			case BlockToolUse:
 				if b.ToolUse != nil {
-					gc.Parts = append(gc.Parts, gemPart{FunctionCall: &gemFunctionCall{Name: b.ToolUse.Name, Args: b.ToolUse.Input}})
+					sig := b.ToolUse.Signature
+					if sig == "" {
+						sig = geminiSignatureBypass
+					}
+					gc.Parts = append(gc.Parts, gemPart{FunctionCall: &gemFunctionCall{Name: b.ToolUse.Name, Args: b.ToolUse.Input}, ThoughtSignature: sig})
 				}
 			case BlockToolResult:
 				if b.ToolResult != nil {
@@ -203,6 +211,12 @@ func (g *Gemini) toWire(req ChatRequest, maxTok int) gemRequest {
 	}
 	return w
 }
+
+// geminiSignatureBypass is Google's documented validator-skip token for
+// replayed function calls that carry no thoughtSignature (histories predating
+// signature capture, or a mid-session /model switch from another provider).
+// Omitting the field entirely hard-400s on thinking models.
+const geminiSignatureBypass = "skip_thought_signature_validator"
 
 // gemToolSchema adapts a tool's JSON schema to Gemini's dialect: Gemini rejects
 // OBJECT schemas whose properties are absent or empty (the shape Orion's no-arg
@@ -315,9 +329,10 @@ func (g *Gemini) fromCandidate(wr gemResponse) *ChatResponse {
 				args = json.RawMessage(`{}`)
 			}
 			out.Content = append(out.Content, ContentBlock{Type: BlockToolUse, ToolUse: &ToolUse{
-				ID:    "call_" + p.FunctionCall.Name + "_" + strconv.Itoa(n),
-				Name:  p.FunctionCall.Name,
-				Input: args,
+				ID:        "call_" + p.FunctionCall.Name + "_" + strconv.Itoa(n),
+				Name:      p.FunctionCall.Name,
+				Input:     args,
+				Signature: p.ThoughtSignature,
 			}})
 		case p.Text != "":
 			out.Content = append(out.Content, ContentBlock{Type: BlockText, Text: p.Text})

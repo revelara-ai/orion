@@ -124,9 +124,10 @@ func (g *Gemini) doStream(ctx context.Context, path string, body []byte, onText 
 					args = json.RawMessage(`{}`)
 				}
 				out.Content = append(out.Content, ContentBlock{Type: BlockToolUse, ToolUse: &ToolUse{
-					ID:    "call_" + p.FunctionCall.Name + "_" + strconv.Itoa(nCalls),
-					Name:  p.FunctionCall.Name,
-					Input: args,
+					ID:        "call_" + p.FunctionCall.Name + "_" + strconv.Itoa(nCalls),
+					Name:      p.FunctionCall.Name,
+					Input:     args,
+					Signature: p.ThoughtSignature,
 				}})
 			case p.Text != "":
 				emitted = true
