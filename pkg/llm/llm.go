@@ -45,6 +45,11 @@ type ToolUse struct {
 	ID    string          `json:"id"`
 	Name  string          `json:"name"`
 	Input json.RawMessage `json:"input"`
+	// Signature is a provider-opaque replay token. Gemini 3.x thinking models
+	// attach a thoughtSignature to each functionCall and REQUIRE it echoed
+	// when the call is replayed in history — the adapter sets it on parse and
+	// sends it back on replay. Other providers neither set nor read it.
+	Signature string `json:"signature,omitempty"`
 }
 
 // ToolResult is the harness's reply to a ToolUse, fed back to the model.
