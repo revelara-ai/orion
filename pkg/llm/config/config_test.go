@@ -1,6 +1,10 @@
 package config
 
 import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -153,4 +157,53 @@ func TestBuild(t *testing.T) {
 			t.Errorf("must reject unknown type: %v", err)
 		}
 	})
+}
+
+func TestLoadFile(t *testing.T) {
+	// 1. Valid YAML file in t.TempDir() merging over Default()
+	tmpDir := t.TempDir()
+	validPath := filepath.Join(tmpDir, "valid.yaml")
+	validContent := []byte(`
+model: lmstudio/qwen3-32b
+providers:
+  lmstudio:
+    type: openai
+    base_url: http://gpubox:1234/v1
+`)
+	if err := os.WriteFile(validPath, validContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadFile(validPath)
+	if err != nil {
+		t.Fatalf("expected no error loading valid file, got: %v", err)
+	}
+	if cfg.Model != "lmstudio/qwen3-32b" {
+		t.Errorf("expected merged model lmstudio/qwen3-32b, got %q", cfg.Model)
+	}
+	if _, ok := cfg.Providers["anthropic"]; !ok {
+		t.Error("built-in anthropic must survive the merge in LoadFile")
+	}
+
+	// 2. A missing path returning fs.ErrNotExist error
+	missingPath := filepath.Join(tmpDir, "nonexistent.yaml")
+	_, err = LoadFile(missingPath)
+	if err == nil {
+		t.Error("expected error for missing file, got nil")
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("expected error to be fs.ErrNotExist, got: %v", err)
+	}
+
+	// 3. A malformed file returning an error with file path
+	malformedPath := filepath.Join(tmpDir, "malformed.yaml")
+	malformedContent := []byte("model: [broken")
+	if err := os.WriteFile(malformedPath, malformedContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = LoadFile(malformedPath)
+	if err == nil {
+		t.Error("expected error for malformed file, got nil")
+	} else if !strings.Contains(err.Error(), malformedPath) {
+		t.Errorf("expected error message to contain file path %q, got: %v", malformedPath, err)
+	}
 }
