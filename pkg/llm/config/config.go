@@ -109,6 +109,17 @@ func Build(cfg Config, ref string) (prov llm.Provider, name, model string, err e
 	}
 	var key string
 	if p.APIKeyEnv != "" {
+		// Refuse anything that isn't a plausible env-var NAME before the
+		// os.Getenv lookup. The error deliberately never includes the value:
+		// the common mistake is pasting a literal API key into api_key_env,
+		// and Build errors flow into logs, Brain.Reason, and the TUI.
+		if !isEnvName(p.APIKeyEnv) {
+			msg := fmt.Sprintf("provider %q: api_key_env must be the NAME of an environment variable (e.g. GEMINI_API_KEY), not a key value", name)
+			if looksLikeSecret(p.APIKeyEnv) {
+				msg += " — a literal key appears to have been pasted; REMOVE it from the config file and ROTATE it"
+			}
+			return nil, "", "", fmt.Errorf("%s", msg)
+		}
 		key = strings.TrimSpace(os.Getenv(p.APIKeyEnv))
 		if key == "" {
 			return nil, "", "", fmt.Errorf("provider %q: set %s", name, p.APIKeyEnv)
@@ -142,6 +153,44 @@ func Build(cfg Config, ref string) (prov llm.Provider, name, model string, err e
 	default:
 		return nil, "", "", fmt.Errorf("provider %q: unknown type %q (want anthropic, openai, or gemini)", name, p.Type)
 	}
+}
+
+// isEnvName reports whether s is a plausible environment-variable NAME:
+// [A-Za-z_][A-Za-z0-9_]*. This grammar alone has zero false positives for
+// legitimate names, and anything outside it (dashes, dots, spaces — the
+// shapes of pasted literal keys) is refused before it can reach os.Getenv or
+// an error message.
+func isEnvName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '_' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z':
+		case c >= '0' && c <= '9' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// looksLikeSecret classifies an invalid api_key_env value as a probably-real
+// pasted credential: long (>24) AND carrying a known key prefix (Anthropic/
+// OpenAI sk-, Google AIza, AQ., GitHub ghp_, Slack xoxb) or a '.' (JWT-like).
+// Used ONLY to decide whether the refusal error adds the rotate hint — the
+// value itself is never echoed either way.
+func looksLikeSecret(s string) bool {
+	if len(s) <= 24 {
+		return false
+	}
+	for _, p := range []string{"sk-", "AIza", "AQ.", "ghp_", "xoxb"} {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return strings.Contains(s, ".")
 }
 
 func providerNames(cfg Config) []string {

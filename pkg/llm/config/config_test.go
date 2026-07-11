@@ -159,6 +159,78 @@ func TestBuild(t *testing.T) {
 	})
 }
 
+// TestBuildAcceptsValidAPIKeyEnvNames: legitimate env-var NAMES
+// ([A-Za-z_][A-Za-z0-9_]*) must keep working — the grammar check has zero
+// false positives. [or-yga9]
+func TestBuildAcceptsValidAPIKeyEnvNames(t *testing.T) {
+	for _, name := range []string{"MY_KEY_2", "_PRIVATE_KEY", "lowercase_key"} {
+		t.Setenv(name, "some-secret-value")
+		cfg := Default()
+		cfg.Providers["p"] = Provider{Type: "openai", BaseURL: "http://localhost:1/v1", APIKeyEnv: name}
+		if _, _, _, err := Build(cfg, "p/m"); err != nil {
+			t.Errorf("valid env name %q must pass: %v", name, err)
+		}
+	}
+}
+
+// TestBuildRefusesPastedKeyWithoutEcho: an api_key_env value that is not a
+// plausible env-var NAME is refused BEFORE the os.Getenv lookup, and the
+// error must never echo the value — Build errors flow into Brain.Reason,
+// logs, and the TUI, so a pasted literal key in the message is a leak.
+// Secret-shaped values additionally get the remove-and-rotate hint. [or-yga9]
+func TestBuildRefusesPastedKeyWithoutEcho(t *testing.T) {
+	pasted := []string{
+		"sk-ant-api03-AbCdEf0123456789AbCdEf0123456789",       // Anthropic
+		"sk-proj-AbCdEf0123456789AbCdEf0123456789",            // OpenAI
+		"AIzaSyD-AbCdEf0123456789AbCdEf01234",                 // Google
+		"AQ.AbCdEf0123456789AbCdEf0123456789",                 // AQ.-prefixed
+		"xoxb-1234567890-AbCdEf0123456789AbCdEf",              // Slack
+		"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.AbCdEf01234567", // JWT (dots)
+	}
+	for _, key := range pasted {
+		cfg := Default()
+		cfg.Providers["p"] = Provider{Type: "openai", BaseURL: "http://localhost:1/v1", APIKeyEnv: key}
+		_, _, _, err := Build(cfg, "p/m")
+		if err == nil {
+			t.Fatalf("pasted key (prefix %q) must be refused", key[:4])
+		}
+		msg := err.Error()
+		// The value must not appear anywhere in the error — check the whole
+		// key and a distinctive tail substring.
+		if strings.Contains(msg, key) || strings.Contains(msg, key[len(key)-12:]) {
+			t.Errorf("error echoes the pasted key (prefix %q): %s", key[:4], msg)
+		}
+		if !strings.Contains(msg, "NAME of an environment variable") || !strings.Contains(msg, "GEMINI_API_KEY") {
+			t.Errorf("error must explain api_key_env wants a NAME (e.g. GEMINI_API_KEY): %s", msg)
+		}
+		if !strings.Contains(msg, "ROTATE") {
+			t.Errorf("secret-shaped value must carry the remove-and-rotate hint: %s", msg)
+		}
+	}
+}
+
+// TestBuildRefusesInvalidNameWithoutRotateHint: an invalid name that is NOT
+// secret-shaped ("my key") is refused without the value and without the
+// alarming rotate hint. [or-yga9]
+func TestBuildRefusesInvalidNameWithoutRotateHint(t *testing.T) {
+	cfg := Default()
+	cfg.Providers["p"] = Provider{Type: "openai", BaseURL: "http://localhost:1/v1", APIKeyEnv: "my key"}
+	_, _, _, err := Build(cfg, "p/m")
+	if err == nil {
+		t.Fatal("invalid env name must be refused")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "my key") {
+		t.Errorf("error must not echo the value: %s", msg)
+	}
+	if !strings.Contains(msg, "NAME of an environment variable") {
+		t.Errorf("error must explain api_key_env wants a NAME: %s", msg)
+	}
+	if strings.Contains(msg, "ROTATE") {
+		t.Errorf("non-secret-shaped value must NOT get the rotate hint: %s", msg)
+	}
+}
+
 func TestLoadFile(t *testing.T) {
 	// 1. Valid YAML file in t.TempDir() merging over Default()
 	tmpDir := t.TempDir()
