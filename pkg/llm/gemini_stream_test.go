@@ -67,9 +67,9 @@ func TestGeminiChatStreamTruncated(t *testing.T) {
 // (%v), llmclient's retryable() would match through it and llmclient.Do would retry
 // into duplicate output.
 func TestGeminiChatStreamNoRetryAfterEmit(t *testing.T) {
-	var hits int32
+	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&hits, 1)
+		hits.Add(1)
 		w.Header().Set("content-type", "text/event-stream")
 		_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}`+"\n\n")
 		if fl, ok := w.(http.Flusher); ok {
@@ -96,7 +96,7 @@ func TestGeminiChatStreamNoRetryAfterEmit(t *testing.T) {
 	if got != "partial" {
 		t.Fatalf("emitted text = %q, want the partial before the failure", got)
 	}
-	if n := atomic.LoadInt32(&hits); n != 1 {
+	if n := hits.Load(); n != 1 {
 		t.Fatalf("hits = %d, want 1 (no retry after emit — would duplicate output)", n)
 	}
 }
@@ -104,9 +104,9 @@ func TestGeminiChatStreamNoRetryAfterEmit(t *testing.T) {
 // TestGeminiChatStreamRetriesBeforeEmit: a 500 before any data is retried and the
 // stream then succeeds — retries are still allowed when nothing has been shown yet.
 func TestGeminiChatStreamRetriesBeforeEmit(t *testing.T) {
-	var hits int32
+	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if atomic.AddInt32(&hits, 1) == 1 {
+		if hits.Add(1) == 1 {
 			w.WriteHeader(500)
 			return
 		}
@@ -128,7 +128,7 @@ func TestGeminiChatStreamRetriesBeforeEmit(t *testing.T) {
 	if res.Text() != "Hello" {
 		t.Fatalf("text = %q", res.Text())
 	}
-	if n := atomic.LoadInt32(&hits); n != 2 {
+	if n := hits.Load(); n != 2 {
 		t.Fatalf("hits = %d, want 2 (500 then success)", n)
 	}
 }

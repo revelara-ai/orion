@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/revelara-ai/orion/pkg/llm"
@@ -107,7 +108,11 @@ func RebuildFrom(currentRef, arg string) (llm.Provider, string, error) {
 
 // ListModels aggregates Models() across all configured providers as
 // "provider/model" refs, best-effort: providers that can't be built (missing
-// key) or don't answer within the per-provider timeout are skipped.
+// key) or don't answer within the per-provider timeout are skipped. The
+// per-provider calls run concurrently — one unreachable endpoint sitting on
+// its 3s timeout must not serialize the whole listing — while the output
+// stays deterministic: sorted by provider name, each provider's own model
+// order preserved.
 func ListModels(ctx context.Context) []string {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -118,21 +123,33 @@ func ListModels(ctx context.Context) []string {
 		names = append(names, n)
 	}
 	sort.Strings(names)
+	refs := make([][]string, len(names)) // slot per provider keeps the sorted order
+	var wg sync.WaitGroup
+	for i, n := range names {
+		wg.Add(1)
+		go func(i int, n string) {
+			defer wg.Done()
+			prov, _, _, err := config.Build(cfg, n+"/")
+			if err != nil {
+				return
+			}
+			pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			ms, err := prov.Models(pctx)
+			if err != nil {
+				return
+			}
+			out := make([]string, 0, len(ms))
+			for _, m := range ms {
+				out = append(out, n+"/"+m.ID)
+			}
+			refs[i] = out
+		}(i, n)
+	}
+	wg.Wait()
 	var out []string
-	for _, n := range names {
-		prov, _, _, err := config.Build(cfg, n+"/")
-		if err != nil {
-			continue
-		}
-		pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		ms, err := prov.Models(pctx)
-		cancel()
-		if err != nil {
-			continue
-		}
-		for _, m := range ms {
-			out = append(out, n+"/"+m.ID)
-		}
+	for _, r := range refs {
+		out = append(out, r...)
 	}
 	return out
 }

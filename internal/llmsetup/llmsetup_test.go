@@ -1,10 +1,17 @@
 package llmsetup
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // setHome points HOME at a temp dir so ~/.orion/config.yaml is test-controlled.
@@ -87,6 +94,61 @@ func TestSelectMalformedConfigIsOfflineWithReason(t *testing.T) {
 	}
 	if !strings.Contains(b.Reason, "config") {
 		t.Errorf("reason must mention the config problem: %q", b.Reason)
+	}
+}
+
+// TestListModelsParallelSortedByProvider: per-provider Models() calls run
+// CONCURRENTLY (one slow endpoint must not serialize the whole listing behind
+// its 3s timeout) while the output stays sorted by provider name with each
+// provider's own model order preserved. The handlers track how many requests
+// are in flight at once: a sequential implementation never overlaps
+// (maxInflight == 1), the parallel one does. [or-1aw3 minor]
+func TestListModelsParallelSortedByProvider(t *testing.T) {
+	home := setHome(t)
+
+	var mu sync.Mutex
+	inflight, maxInflight := 0, 0
+	srvFor := func(models ...string) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			inflight++
+			if inflight > maxInflight {
+				maxInflight = inflight
+			}
+			mu.Unlock()
+			time.Sleep(200 * time.Millisecond) // generous overlap window
+			mu.Lock()
+			inflight--
+			mu.Unlock()
+			parts := make([]string, len(models))
+			for i, m := range models {
+				parts[i] = fmt.Sprintf(`{"id":%q}`, m)
+			}
+			fmt.Fprintf(w, `{"data":[%s]}`, strings.Join(parts, ","))
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+
+	// Override ALL built-in providers so every configured provider points at a
+	// test-controlled server (no key needed, no real localhost dialing).
+	writeConfig(t, home, fmt.Sprintf(`
+providers:
+  anthropic: {type: openai, base_url: %s}
+  gemini:    {type: openai, base_url: %s}
+  lmstudio:  {type: openai, base_url: %s}
+  ollama:    {type: openai, base_url: %s}
+`, srvFor("a1", "a2").URL, srvFor("g1").URL, srvFor("l1").URL, srvFor("o1").URL))
+
+	got := ListModels(context.Background())
+	want := []string{"anthropic/a1", "anthropic/a2", "gemini/g1", "lmstudio/l1", "ollama/o1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ListModels = %v, want %v (sorted by provider, server model order kept)", got, want)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if maxInflight < 2 {
+		t.Errorf("maxInflight = %d, want >= 2 (per-provider Models() calls must overlap)", maxInflight)
 	}
 }
 

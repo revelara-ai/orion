@@ -151,6 +151,34 @@ func TestOpenAISynthesizesMissingToolCallID(t *testing.T) {
 	}
 }
 
+// TestOpenAISynthesizedToolCallIDAvoidsRealIDs: a server can mix real and
+// missing tool-call ids in one response. Position 0 has no id and position
+// 1's REAL id is exactly the naive positional synthesis for position 0
+// ("call_1") — the synthesized id must dodge it, otherwise the harness pairs
+// tool_results by id and cross-wires results to the wrong call. [or-1aw3 minor]
+func TestOpenAISynthesizedToolCallIDAvoidsRealIDs(t *testing.T) {
+	srv := openAITestServer(t, `{"choices":[{"message":{"tool_calls":[
+		{"type":"function","function":{"name":"ls","arguments":"{}"}},
+		{"id":"call_1","type":"function","function":{"name":"cat","arguments":"{}"}}
+	]},"finish_reason":"tool_calls"}]}`, nil)
+	defer srv.Close()
+	o := NewOpenAI(OpenAIConfig{BaseURL: srv.URL + "/v1", Model: "m"})
+	resp, err := o.Chat(context.Background(), ChatRequest{Messages: []Message{TextMessage(RoleUser, "x")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tus := resp.ToolUses()
+	if len(tus) != 2 {
+		t.Fatalf("want 2 tool uses, got %+v", tus)
+	}
+	if tus[1].ID != "call_1" {
+		t.Fatalf("real id must be preserved verbatim: %+v", tus[1])
+	}
+	if tus[0].ID == "" || tus[0].ID == tus[1].ID {
+		t.Fatalf("synthesized id must be non-empty and distinct from the real id: %q vs %q", tus[0].ID, tus[1].ID)
+	}
+}
+
 func TestOpenAIModelsAndPing(t *testing.T) {
 	srv := openAITestServer(t, `{}`, nil)
 	defer srv.Close()

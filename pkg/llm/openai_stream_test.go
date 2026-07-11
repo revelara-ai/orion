@@ -84,9 +84,9 @@ func TestOpenAIChatStreamTruncated(t *testing.T) {
 // catch this, since that produces a plain (non-DeadlineExceeded) read error that
 // was already non-retryable even before the fix.
 func TestOpenAIChatStreamNoRetryAfterEmit(t *testing.T) {
-	var hits int32
+	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&hits, 1)
+		hits.Add(1)
 		w.Header().Set("content-type", "text/event-stream")
 		_, _ = io.WriteString(w, "data: "+`{"choices":[{"delta":{"content":"partial"}}]}`+"\n\n")
 		if fl, ok := w.(http.Flusher); ok {
@@ -100,9 +100,10 @@ func TestOpenAIChatStreamNoRetryAfterEmit(t *testing.T) {
 	defer srv.Close()
 	o := NewOpenAI(OpenAIConfig{BaseURL: srv.URL + "/v1", Model: "m"})
 	// A short per-attempt timeout so the deadline fires quickly against the
-	// handler's stall, with retries enabled (MaxRetries>0) so an accidental
-	// retryable classification would be observable as hits>1.
-	o.rc = llmclient.New(llmclient.Config{Timeout: 50 * time.Millisecond, MaxRetries: 4, BaseBackoff: time.Millisecond, MaxBackoff: 5 * time.Millisecond})
+	// handler's stall (250ms leaves flake margin on a loaded machine), with
+	// retries enabled (MaxRetries>0) so an accidental retryable classification
+	// would be observable as hits>1.
+	o.rc = llmclient.New(llmclient.Config{Timeout: 250 * time.Millisecond, MaxRetries: 4, BaseBackoff: time.Millisecond, MaxBackoff: 5 * time.Millisecond})
 
 	var got string
 	_, err := o.ChatStream(context.Background(), ChatRequest{Messages: []Message{TextMessage(RoleUser, "x")}},
@@ -113,7 +114,7 @@ func TestOpenAIChatStreamNoRetryAfterEmit(t *testing.T) {
 	if got != "partial" {
 		t.Fatalf("emitted text = %q, want the partial before the failure", got)
 	}
-	if n := atomic.LoadInt32(&hits); n != 1 {
+	if n := hits.Load(); n != 1 {
 		t.Fatalf("hits = %d, want 1 (no retry after emit — would duplicate output)", n)
 	}
 }
@@ -121,9 +122,9 @@ func TestOpenAIChatStreamNoRetryAfterEmit(t *testing.T) {
 // TestOpenAIChatStreamRetriesBeforeEmit: a 500 before any data is retried and the
 // stream then succeeds — retries are still allowed when nothing has been shown yet.
 func TestOpenAIChatStreamRetriesBeforeEmit(t *testing.T) {
-	var hits int32
+	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if atomic.AddInt32(&hits, 1) == 1 {
+		if hits.Add(1) == 1 {
 			w.WriteHeader(500)
 			return
 		}
@@ -147,7 +148,7 @@ func TestOpenAIChatStreamRetriesBeforeEmit(t *testing.T) {
 	if res.Text() != "Hello" {
 		t.Fatalf("text = %q", res.Text())
 	}
-	if n := atomic.LoadInt32(&hits); n != 2 {
+	if n := hits.Load(); n != 2 {
 		t.Fatalf("hits = %d, want 2 (500 then success)", n)
 	}
 }
