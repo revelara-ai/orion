@@ -40,9 +40,10 @@ type Integrator struct {
 
 	queue sync.Mutex // singleton lock: one integration at a time (the serialized queue)
 
-	mu     sync.Mutex          // guards leases + active
+	mu     sync.Mutex          // guards leases + active + freed
 	leases map[string][]string // taskID -> file-scope prefixes it holds
 	active map[string]bool     // taskID -> mid-integration (in the queue / merging)
+	freed  chan struct{}       // closed + replaced on every ReleaseLease — wakes blocked AcquireLease
 }
 
 // New returns an Integrator over an integration worktree checked out on headRef. reprove proves
@@ -51,15 +52,52 @@ func New(headDir, headRef string, reprove func(ctx context.Context, dir string) 
 	return &Integrator{
 		headDir: headDir, headRef: headRef, reprove: reprove,
 		leases: map[string][]string{}, active: map[string]bool{},
+		freed: make(chan struct{}),
 	}
 }
 
-// AcquireLease declares taskID's file scope (path prefixes). It fails if any prefix OVERLAPS a
-// lease another task already holds — the collision-avoidance gate, so two clusters never edit the
-// same files concurrently. Re-acquiring for the same task replaces its scope.
-func (i *Integrator) AcquireLease(taskID string, scope []string) error {
+// TryAcquireLease declares taskID's file scope (path prefixes) WITHOUT waiting. It fails if any
+// prefix OVERLAPS a lease another task already holds — the collision-avoidance gate, so two
+// clusters never edit the same files concurrently. An EMPTY scope leases the whole tree
+// (exclusive). Re-acquiring for the same task replaces its scope.
+func (i *Integrator) TryAcquireLease(taskID string, scope []string) error {
+	scope = normalizeScope(scope)
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	if err := i.leaseConflictLocked(taskID, scope); err != nil {
+		return err
+	}
+	i.leases[taskID] = scope
+	return nil
+}
+
+// AcquireLease BLOCKS until taskID's file scope overlaps no other held lease, then holds it — the
+// S1 gate (no two tasks with overlapping declared file scope integrate concurrently). It returns
+// nil with the lease held, or ctx's error if the context ends first. An EMPTY scope leases the
+// whole tree (exclusive). Re-acquiring for the same task replaces its scope.
+func (i *Integrator) AcquireLease(ctx context.Context, taskID string, scope []string) error {
+	scope = normalizeScope(scope)
+	for {
+		i.mu.Lock()
+		conflict := i.leaseConflictLocked(taskID, scope)
+		if conflict == nil {
+			i.leases[taskID] = scope
+			i.mu.Unlock()
+			return nil
+		}
+		wait := i.freed // snapshot this generation; ReleaseLease closes it (broadcast)
+		i.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("acquire lease for %s: %w (waiting on: %v)", taskID, ctx.Err(), conflict)
+		case <-wait:
+		}
+	}
+}
+
+// leaseConflictLocked reports the first overlap between scope and a lease held by ANOTHER task
+// (nil = acquirable). Caller must hold i.mu.
+func (i *Integrator) leaseConflictLocked(taskID string, scope []string) error {
 	for other, held := range i.leases {
 		if other == taskID {
 			continue
@@ -72,15 +110,33 @@ func (i *Integrator) AcquireLease(taskID string, scope []string) error {
 			}
 		}
 	}
-	i.leases[taskID] = append([]string(nil), scope...)
 	return nil
 }
 
-// ReleaseLease drops taskID's lease (call after the task integrates or is abandoned).
+// ReleaseLease drops taskID's lease and wakes every blocked AcquireLease so freed scopes are
+// re-contested (call after the task integrates or is abandoned).
 func (i *Integrator) ReleaseLease(taskID string) {
 	i.mu.Lock()
 	delete(i.leases, taskID)
+	close(i.freed) // broadcast: some scope may have become free
+	i.freed = make(chan struct{})
 	i.mu.Unlock()
+}
+
+// normalizeScope cleans declared prefixes and maps an UNDECLARED (empty) scope to the root prefix
+// "" — which overlaps everything, so a task that declares nothing integrates exclusively. Same
+// fail-safe as the dispatch-time leases (conductor/dag.go leaseSet: undeclared = whole tree).
+func normalizeScope(scope []string) []string {
+	out := make([]string, 0, len(scope))
+	for _, p := range scope {
+		if c := cleanPrefix(p); c != "" {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
 }
 
 // InIntegration reports whether taskID is mid-integration — the predicate for
@@ -94,12 +150,23 @@ func (i *Integrator) InIntegration(taskID string) bool {
 // Integrate merges the proven cluster at clusterDir (branch) onto the integration head, ONE AT A
 // TIME: rebase the cluster branch onto the head, fast-forward it into the head, re-prove the merged
 // tree, and advance the head iff green — else reset the head to where it was (rolled back). A rebase
-// conflict leaves the head untouched (Conflict).
-func (i *Integrator) Integrate(ctx context.Context, taskID, clusterDir, branch string) (Outcome, error) {
-	i.queue.Lock() // serialized integration queue: exactly one merge in flight
-	defer i.queue.Unlock()
-	i.setActive(taskID, true)
+// conflict leaves the head untouched (Conflict). scope is the cluster's declared file scope (path
+// prefixes; empty = whole tree).
+func (i *Integrator) Integrate(ctx context.Context, taskID, clusterDir, branch string, scope []string) (Outcome, error) {
+	// S1 (or-1lz): the file-scope lease is enforced HERE, on the integration path itself — not by
+	// the caller loop happening to be sequential. Overlapping-scope integrations serialize on the
+	// lease (block until the holder releases); disjoint scopes only serialize on the queue below
+	// (S2: at most one merge onto the head at a time). The deferred release covers EVERY exit
+	// path — Integrated, Conflict, RolledBack, and error.
+	if err := i.AcquireLease(ctx, taskID, scope); err != nil {
+		return "", err
+	}
+	defer i.ReleaseLease(taskID)
+	i.setActive(taskID, true) // mid-integration from lease-held onward: in the queue / merging
 	defer i.setActive(taskID, false)
+
+	i.queue.Lock() // serialized integration queue (S2): exactly one merge in flight
+	defer i.queue.Unlock()
 
 	headBefore, err := i.headRev(ctx)
 	if err != nil {
@@ -151,9 +218,13 @@ func (i *Integrator) headRev(ctx context.Context) (string, error) {
 }
 
 // pathsOverlap reports whether two declared file-scope prefixes can touch the same files — true
-// when one is a path-prefix of the other (directory-prefix scoping).
+// when one is a path-prefix of the other (directory-prefix scoping). The root prefix "" (an
+// undeclared scope, see normalizeScope) overlaps everything.
 func pathsOverlap(a, b string) bool {
 	a, b = cleanPrefix(a), cleanPrefix(b)
+	if a == "" || b == "" {
+		return true
+	}
 	return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
 
