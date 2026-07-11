@@ -183,6 +183,7 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 	// 8K local one. Providers that can't report a window degrade gracefully.
 	policy := contextwindow.For(contextwindow.WindowOf(l.Provider, contextwindow.DefaultWindow))
 	var stall stallTracker
+	var streak errStreakTracker
 	leakNudged := false
 	announceNudged := false
 	emptyNudged := false
@@ -321,10 +322,25 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 			var content string
 			var isErr bool
 			if stall.count >= stallNudgeAt {
+				// Identical-input tracking takes precedence: while the stall guard
+				// intercepts, streak accounting is SKIPPED so the two guards never
+				// double-fire on the same loop.
 				content = fmt.Sprintf("stall detected: this exact %s call has now been made %d times in a row and the result will not change. Do NOT repeat it. Change the input, take a different approach, or end your turn and explain the blocker to the developer.", tu.Name, stall.count)
+				isErr = true
+			} else if streak.observe(tu.Name) >= errStreakAbortAt {
+				// Error-streak guard (or-mvr.13): ONE tool erroring over and over
+				// with VARYING inputs evades the identical-input detector but burns
+				// the iteration budget just the same (observed live: add_case
+				// grounding failures) — stop the turn cleanly with a named error.
+				return convo, resp, fmt.Errorf("harness: %w — %s failed %d× consecutively with varying inputs; the turn was stopped so the loop can regroup", ErrErrorStreak, tu.Name, errStreakAbortAt)
+			} else if streak.count >= errStreakNudgeAt {
+				content = fmt.Sprintf("strategy stall: %s has now failed %d times in a row with different inputs — the approach is not working. Re-read the last error carefully; try a fundamentally different approach or a different tool; or end your turn and report the blocker to the developer.", tu.Name, streak.count)
 				isErr = true
 			} else {
 				content, isErr = l.dispatch(ctx, tu)
+				if !isErr {
+					streak.reset()
+				}
 				content += l.Supervisor.paceHint(iter)
 			}
 			emit(Event{Kind: EventToolResult, Tool: tu.Name, Text: content, Error: isErr})
