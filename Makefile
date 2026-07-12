@@ -1,4 +1,4 @@
-.PHONY: vet lint check test test-short
+.PHONY: vet lint check test test-short license-check
 
 default: build
 
@@ -26,3 +26,10 @@ lint:
 	golangci-lint run
 
 check: vet lint
+
+# Dependency license audit (or-c6zf.1): forbidden/unknown licenses in the module
+# graph fail the build. Install: go install github.com/google/go-licenses@latest
+# modernc.org/mathutil is a licenseclassifier false negative — its LICENSE is
+# standard BSD-3-Clause (verified by hand 2026-07-12); re-check on version bumps.
+license-check:
+	go-licenses check ./... --ignore github.com/revelara-ai/orion --ignore modernc.org/mathutil

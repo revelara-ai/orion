@@ -49,6 +49,12 @@ Early, greenfield. **V2.0** is in active development — a Go-greenfield tracer 
 
 Go · [cobra](https://github.com/spf13/cobra) (CLI) + [bubbletea](https://github.com/charmbracelet/bubbletea) (TUI) · SQLite (Context Store) + sqlite-vec (memory) · gVisor-sandboxed agents · MCP tools + A2A between agents. Local-first; the one cloud dependency is the **Polaris** reliability platform (controls, knowledge, risk register, STPA primitives).
 
+## License
+
+Orion is licensed under the [Apache License 2.0](LICENSE). Copyright 2026 Revelara AI.
+
+The optional local embedding model ([bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5), BAAI) is MIT-licensed and downloaded separately — it is not distributed with this repository.
+
 ---
 
 *The problem is not the model. The problem is that the development loop hasn't caught up. Orion is the loop that has — and the proof is the right to ship.*
