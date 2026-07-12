@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/conductor"
+	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/llmsetup"
 	"github.com/revelara-ai/orion/internal/proof/newbehavior"
 	"github.com/revelara-ai/orion/pkg/llm"
@@ -62,8 +63,23 @@ func cmdChange(args []string) int {
 		return 1
 	}
 
+	// Open the context store so the change loop has the full control plane —
+	// reliability-floor signals resolve Polaris credentials + cache through it
+	// (or-uvw.9 dogfood: store=nil silently disabled the floor). Best-effort: a
+	// store failure degrades to the storeless path (floor fails open) rather
+	// than blocking the change.
+	var store *contextstore.Store
+	if dir, derr := resolveDataDir(); derr == nil {
+		if s, serr := contextstore.Open(dir); serr == nil {
+			store = s
+			defer store.Close()
+		} else {
+			fmt.Fprintln(os.Stderr, "orion change: context store unavailable (continuing without reliability context):", serr)
+		}
+	}
+
 	provider := brain.Provider
-	res, err := conductor.ChangeAndProve(ctx, root, nil, provider, intent, cases, nil, cliPhaseSink())
+	res, err := conductor.ChangeAndProve(ctx, root, store, provider, intent, cases, nil, cliPhaseSink())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion change:", err)
 		return 1
