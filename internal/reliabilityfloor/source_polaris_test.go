@@ -37,6 +37,33 @@ func TestParseSignalsExtractsFields(t *testing.T) {
 	}
 }
 
+func TestParseSignalsUnwrapsResultsEnvelope(t *testing.T) {
+	// Real live-MCP shape (or-uvw.9 dogfood, 2026-07-12): tools wrap items in
+	// {"results":[...],"total":N}; knowledge "fact" items have statement but no title.
+	rc := polaris.ReliabilityContext{
+		Knowledge: json.RawMessage(`{"results":[
+			{"id":"6b514278","type":"procedure","title":"Configure robust circuit breakers and aggressive timeouts for calls to external dependencies.","statement":"","vertical":"fault-tolerance","confidence":0.9},
+			{"id":"4fe0d672","type":"fact","statement":"Load balancers can be configured with appropriate timeouts.","vertical":"fault-tolerance","confidence":0.65}
+		],"total":2}`),
+		Controls: json.RawMessage(`{"results":[],"total":0}`),
+	}
+	got := parseSignals(rc)
+	if len(got) != 2 {
+		t.Fatalf("len=%d want 2: %+v", len(got), got)
+	}
+	if got[0].Title == "" || got[1].Title == "" {
+		t.Fatalf("titles must be populated (statement fallback for facts): %+v", got)
+	}
+	if got[1].Title != "Load balancers can be configured with appropriate timeouts." {
+		t.Fatalf("fact item must use statement as title, got %q", got[1].Title)
+	}
+	for _, s := range got {
+		if s.Source != "knowledge" {
+			t.Fatalf("source tag wrong: %+v", s)
+		}
+	}
+}
+
 func TestParseSignalsHandlesGarbage(t *testing.T) {
 	got := parseSignals(polaris.ReliabilityContext{Controls: json.RawMessage(`{"not":"an array"}`)})
 	if got != nil {
