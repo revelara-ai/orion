@@ -148,6 +148,12 @@ func Do[T any](ctx context.Context, c *Client, op func(context.Context) (T, erro
 		if !retryable(err) || attempt == c.cfg.MaxRetries {
 			return zero, err
 		}
+		// Stack-wide retry budget (or-mvr.1): a retry anywhere in the operation
+		// draws from ONE ceiling, so total attempts can never multiply across
+		// layers. No budget in ctx → per-call semantics unchanged.
+		if b := BudgetFrom(ctx); b != nil && !b.Take() {
+			return zero, exhausted(b, err)
+		}
 		select {
 		case <-ctx.Done():
 			return zero, ctx.Err()
