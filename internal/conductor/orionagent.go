@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,6 +29,12 @@ type OrionAgent struct {
 	conductor *orchestrator.Conductor
 	role      RoleTemplate
 
+	// breaker is the loop-level circuit breaker (or-mvr.2): consecutive
+	// provider-failed TURNS open it, refusing further turns fast (with a
+	// half-open probe per cool-down) instead of burning budget on a dead
+	// dependency. Threshold configurable via ORION_LOOP_BREAKER_TURNS.
+	breaker harness.Breaker
+
 	mu       sync.Mutex
 	sessions map[string][]llm.Message
 	changes  map[string]*changeSession                                  // brownfield change-flow state, per session
@@ -40,7 +47,11 @@ type OrionAgent struct {
 
 // NewOrionAgent builds the native agent over the given model provider.
 func NewOrionAgent(p llm.Provider, c *orchestrator.Conductor, role RoleTemplate) *OrionAgent {
-	return &OrionAgent{provider: p, conductor: c, role: role, sessions: map[string][]llm.Message{}, changes: map[string]*changeSession{}, allowed: map[string]map[string]bool{}, starts: map[string]time.Time{}}
+	a := &OrionAgent{provider: p, conductor: c, role: role, sessions: map[string][]llm.Message{}, changes: map[string]*changeSession{}, allowed: map[string]map[string]bool{}, starts: map[string]time.Time{}}
+	if n, err := strconv.Atoi(os.Getenv("ORION_LOOP_BREAKER_TURNS")); err == nil && n > 0 {
+		a.breaker.Threshold = n
+	}
+	return a
 }
 
 // SetModel records the current model ref and the factories that rebuild the
@@ -91,6 +102,14 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 
 	prov := a.currentProvider() // may have been swapped by a /model control op
 	emit := func(u acp.Update) { stream(u) }
+
+	// Loop breaker (or-mvr.2): refuse the turn FAST while the provider is known
+	// dead — no context assembly, no provider call, no budget burn. A half-open
+	// probe turn is admitted once per cool-down; /model resets the breaker.
+	if berr := a.breaker.Allow(); berr != nil {
+		stream(acp.Update{Kind: "agent_message", Text: berr.Error()})
+		return end, nil
+	}
 
 	a.mu.Lock()
 	history := append([]llm.Message(nil), a.sessions[sessionID]...)
@@ -190,6 +209,14 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 	a.sessions[sessionID] = convo
 	a.mu.Unlock()
 	a.persistSession(sessionID, convo) // best-effort disk record so a failing session is recoverable
+
+	// Feed the turn's outcome to the breaker; announce the open transition so the
+	// human hears the escalation ONCE, on the turn that tripped it.
+	wasOpen := a.breaker.Open()
+	a.breaker.Observe(err)
+	if !wasOpen && a.breaker.Open() {
+		stream(acp.Update{Kind: "agent_message", Text: "\nCircuit breaker OPEN: the model provider failed on consecutive turns. I will refuse turns while it recovers (one probe per minute) — or switch providers with /model."})
+	}
 
 	if err != nil {
 		stream(acp.Update{Kind: "agent_message", Text: "I hit a problem driving this turn: " + err.Error()})

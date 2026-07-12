@@ -86,6 +86,9 @@ func (a *OrionAgent) switchModel(arg string) (string, error) {
 		return "Couldn't switch to " + arg + ": " + err.Error(), nil
 	}
 	a.provider, a.model = p, ref
+	// A model switch replaces the dependency the breaker accumulated evidence
+	// against — stale evidence must not refuse turns on the NEW provider.
+	a.breaker.Reset()
 	// The result carries a MODEL: sentinel the TUI parses to update its brain label.
 	return "MODEL:" + ref + " · switched to " + ref, nil
 }
