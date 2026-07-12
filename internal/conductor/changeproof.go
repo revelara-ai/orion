@@ -58,7 +58,7 @@ type ChangeResult struct {
 func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.Store, provider llm.Provider, intent string, cases []newbehavior.Case, supersedes []string, sink PhaseSink) (ChangeResult, error) {
 	// Operation root: one stack-wide retry budget for the whole change run
 	// (or-mvr.1) — kept if a turn above already installed one.
-	ctx = withRetryBudget(ctx)
+	ctx = withLLMGuards(ctx)
 	sink = syncSink(sink)
 	m := brownfield.ScanRepoMap(repoRoot)
 
