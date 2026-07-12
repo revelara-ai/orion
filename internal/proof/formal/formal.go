@@ -25,6 +25,7 @@ import (
 type Result struct {
 	Passed    bool
 	Invariant string // the violated invariant's name, when the checker names one
+	Deadlock  bool   // a reachable non-terminal state with no enabled action (the liveness failure class)
 	Output    string // combined checker output (the counterexample trace lives here)
 	Skipped   string // non-empty when the checker could not run (toolchain absent)
 }
@@ -107,6 +108,7 @@ func (f *FizzBee) Check(ctx context.Context, modelPath string) (Result, error) {
 	case strings.Contains(res.Output, "PASSED: Model checker completed successfully"):
 		res.Passed = true
 	case strings.Contains(res.Output, "FAILED"):
+		res.Deadlock = strings.Contains(res.Output, "DEADLOCK detected")
 		if m := invariantRe.FindStringSubmatch(res.Output); m != nil {
 			res.Invariant = m[1]
 		}

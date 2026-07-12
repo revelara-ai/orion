@@ -1,0 +1,59 @@
+# Orion DAG-scheduler liveness (or-56c.5): every ready cluster eventually runs
+# and completes — no interleaving of dependency waits and file-scope leases
+# leaves the scheduler stuck. Modeled on internal/conductor/dag.go
+# runClusterDAG: B depends on A; their scopes overlap, so the lease also
+# serializes them. Liveness is checked by FizzBee's deadlock detector: a
+# reachable non-terminal state with no enabled action fails the check (the
+# guarded model completes; see dag_liveness_wedged.fizz for the bug shape).
+
+CLUSTERS = ["A", "B"]
+DEPS = {"A": [], "B": ["A"]}
+SCOPE = {"A": ["internal/foo"], "B": ["internal/foo"]}
+
+action Init:
+    state = {"A": "pending", "B": "pending"}   # pending -> running -> done
+    leases = []                                 # scopes currently held
+
+atomic action Dispatch:
+    any c in CLUSTERS:
+        require state[c] == "pending"
+        ok = True
+        for d in DEPS[c]:
+            if state[d] != "done":
+                ok = False
+        require ok
+        held = False
+        for l in leases:
+            for p in SCOPE[c]:
+                if p == l:
+                    held = True
+        require not held
+        state[c] = "running"
+        for p in SCOPE[c]:
+            leases.append(p)
+
+atomic action Complete:
+    any c in CLUSTERS:
+        require state[c] == "running"
+        state[c] = "done"
+        # --- lease release begin (release on ALL exit paths, or-1lz) ---
+        for p in SCOPE[c]:
+            leases.remove(p)
+        # --- lease release end ---
+
+# Safety rider: the lease actually serializes overlapping clusters.
+always assertion LeaseSerializesOverlap:
+    running = [c for c in CLUSTERS if state[c] == "running"]
+    for t in running:
+        for u in running:
+            if t != u and len([p for p in SCOPE[t] if p in SCOPE[u]]) > 0:
+                return False
+    return True
+
+atomic action DoneAll:
+    settled = True
+    for c in CLUSTERS:
+        if state[c] != "done":
+            settled = False
+    require settled
+    pass
