@@ -57,7 +57,7 @@ func TestResumeAfterSIGKILL(t *testing.T) {
 				return e
 			}
 		}
-		eid, _ := tx.Epics().Create(ctx, pid, sid, "epic")
+		eid, _ := tx.Epics().Create(ctx, pid, sid, "epic", "")
 		var e error
 		taskID, e = tx.Tasks().Create(ctx, eid, "implement", "cmd/")
 		return e

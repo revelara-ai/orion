@@ -79,6 +79,10 @@ type Epic struct {
 	ProjectID string
 	SpecID    string
 	Title     string
+	// SpecHash anchors the epic to the exact ratified spec it was decomposed
+	// from (or-7et.2): a re-ratified anchor makes the plan detectably STALE.
+	// '' on epics created before the migration (grandfathered).
+	SpecHash string
 }
 
 // Proof carries per-mode provenance and quantitative metrics so degradation is
@@ -409,22 +413,32 @@ func (r *SpecDimensionRepo) CountForSpec(ctx context.Context, specID string) (in
 
 type EpicRepo struct{ tx *sql.Tx }
 
-func (r *EpicRepo) Create(ctx context.Context, projectID, specID, title string) (string, error) {
+func (r *EpicRepo) Create(ctx context.Context, projectID, specID, title, specHash string) (string, error) {
 	id, now := newID(), nowRFC3339()
 	_, err := r.tx.ExecContext(ctx,
-		`INSERT INTO epics (id, project_id, spec_id, title, created_at) VALUES (?,?,?,?,?)`,
-		id, projectID, specID, title, now)
+		`INSERT INTO epics (id, project_id, spec_id, title, spec_hash, created_at) VALUES (?,?,?,?,?,?)`,
+		id, projectID, specID, title, specHash, now)
 	if err != nil {
 		return "", fmt.Errorf("create epic: %w", err)
 	}
 	return id, nil
 }
 
+// SetSpecHash re-stamps the epic's spec anchor — the reconciliation primitive
+// (or-7et.2 slice 2 re-anchors a selectively-invalidated plan to the new hash).
+func (r *EpicRepo) SetSpecHash(ctx context.Context, id, specHash string) error {
+	_, err := r.tx.ExecContext(ctx, `UPDATE epics SET spec_hash=? WHERE id=?`, specHash, id)
+	if err != nil {
+		return fmt.Errorf("set epic spec hash: %w", err)
+	}
+	return nil
+}
+
 func (r *EpicRepo) Get(ctx context.Context, id string) (Epic, error) {
 	var e Epic
 	err := r.tx.QueryRowContext(ctx,
-		`SELECT id, project_id, spec_id, title FROM epics WHERE id=?`, id).
-		Scan(&e.ID, &e.ProjectID, &e.SpecID, &e.Title)
+		`SELECT id, project_id, spec_id, title, spec_hash FROM epics WHERE id=?`, id).
+		Scan(&e.ID, &e.ProjectID, &e.SpecID, &e.Title, &e.SpecHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Epic{}, ErrNotFound
 	}
@@ -435,8 +449,8 @@ func (r *EpicRepo) Get(ctx context.Context, id string) (Epic, error) {
 func (r *EpicRepo) LatestForProject(ctx context.Context, projectID string) (Epic, error) {
 	var e Epic
 	err := r.tx.QueryRowContext(ctx,
-		`SELECT id, project_id, spec_id, title FROM epics WHERE project_id=? ORDER BY created_at DESC LIMIT 1`, projectID).
-		Scan(&e.ID, &e.ProjectID, &e.SpecID, &e.Title)
+		`SELECT id, project_id, spec_id, title, spec_hash FROM epics WHERE project_id=? ORDER BY created_at DESC LIMIT 1`, projectID).
+		Scan(&e.ID, &e.ProjectID, &e.SpecID, &e.Title, &e.SpecHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Epic{}, ErrNotFound
 	}

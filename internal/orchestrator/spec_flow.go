@@ -168,6 +168,14 @@ type SpecView struct {
 // errNoStore guards the spec-flow methods, which require persistence.
 var errNoStore = fmt.Errorf("no context store: spec flow requires a persistent store")
 
+// ErrPlanStale (or-7et.2 slice 1): the spec was re-ratified AFTER the plan was
+// decomposed — the epic's tasks/file-scopes/obligations describe an anchor
+// that no longer exists. Every plan read fails LOUD with this instead of
+// silently handing the old decomposition to a build that would generate and
+// prove against the NEW hash (the worst realignment failure: facts right,
+// trajectory wrong). Reconciliation (slice 2) is the recovery path.
+var ErrPlanStale = errors.New("plan is stale: the spec was amended and re-ratified after decomposition")
+
 // loadRequirements decodes the persisted requirements JSON (empty → nil).
 func loadRequirements(jsonStr string) []spec.Requirement {
 	jsonStr = strings.TrimSpace(jsonStr)
@@ -452,6 +460,14 @@ func (c *Conductor) ApproveSpec(ctx context.Context) (spec.ExecutableSpec, error
 		return spec.ExecutableSpec{}, err
 	}
 	c.log.InfoContext(ctx, "spec accepted", "spec_id", sp.ID, "hash", es.Hash)
+	// or-7et.2 slice 1(c): re-ratifying over an existing plan is never SILENT.
+	// The amendment is legitimate (the new anchor is the truth), but the plan
+	// decomposed from the old anchor is now stale — every plan read fails loud
+	// with ErrPlanStale until reconciliation (slice 2) re-anchors it.
+	if epic, err := c.currentEpic(ctx, proj.ID); err == nil && epic.SpecHash != "" && epic.SpecHash != es.Hash {
+		c.log.WarnContext(ctx, "re-ratification makes the existing plan STALE — plan reads will fail until reconciliation",
+			"epic_id", epic.ID, "plan_hash", epic.SpecHash, "new_hash", es.Hash)
+	}
 	return es, nil
 }
 
@@ -626,9 +642,13 @@ func (c *Conductor) PlanView(ctx context.Context) (PlanView, error) {
 // BEFORE the write transaction — the Context Store caps connections at one, so
 // opening a nested transaction inside WithTx would deadlock.
 func (c *Conductor) ensurePlan(ctx context.Context, proj contextstore.Project, sp contextstore.Spec) (string, error) {
-	// Fast path: a plan already exists.
-	if existing, err := c.currentEpicID(ctx, proj.ID); err == nil {
-		return existing, nil
+	// Fast path: a plan already exists — but ONLY if it was decomposed from THIS
+	// anchor (or-7et.2 slice 1). A '' hash is a pre-migration epic, grandfathered.
+	if existing, err := c.currentEpic(ctx, proj.ID); err == nil {
+		if existing.SpecHash != "" && existing.SpecHash != sp.Hash {
+			return "", fmt.Errorf("%w (plan anchored to %.12s, spec is now %.12s) — amend-and-rebuild reconciliation is not yet available; start a fresh project for the amended intent", ErrPlanStale, existing.SpecHash, sp.Hash)
+		}
+		return existing.ID, nil
 	} else if !errors.Is(err, contextstore.ErrNotFound) {
 		return "", err
 	}
@@ -673,7 +693,7 @@ func (c *Conductor) ensurePlan(ctx context.Context, proj contextstore.Project, s
 		} else if !errors.Is(e, contextstore.ErrNotFound) {
 			return e
 		}
-		eid, err := tx.Epics().Create(ctx, proj.ID, sp.ID, epic.Title)
+		eid, err := tx.Epics().Create(ctx, proj.ID, sp.ID, epic.Title, es.Hash)
 		if err != nil {
 			return err
 		}
@@ -702,25 +722,52 @@ func (c *Conductor) ensurePlan(ctx context.Context, proj contextstore.Project, s
 }
 
 // currentEpicID returns the latest epic id for a project (read-only).
+func (c *Conductor) latestSpec(ctx context.Context, projectID string) (contextstore.Spec, error) {
+	var sp contextstore.Spec
+	err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+		s, err := tx.Specs().LatestForProject(ctx, projectID)
+		if err != nil {
+			return err
+		}
+		sp = s
+		return nil
+	})
+	return sp, err
+}
+
 func (c *Conductor) currentEpicID(ctx context.Context, projectID string) (string, error) {
-	var id string
+	e, err := c.currentEpic(ctx, projectID)
+	return e.ID, err
+}
+
+func (c *Conductor) currentEpic(ctx context.Context, projectID string) (contextstore.Epic, error) {
+	var epic contextstore.Epic
 	err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
 		e, err := tx.Epics().LatestForProject(ctx, projectID)
 		if err != nil {
 			return err
 		}
-		id = e.ID
+		epic = e
 		return nil
 	})
-	return id, err
+	return epic, err
 }
 
 func (c *Conductor) readPlan(ctx context.Context, proj contextstore.Project) (PlanView, error) {
+	// The read path re-checks staleness independently (or-7et.2): callers that
+	// skip ensurePlan must still never see a plan the anchor has outlived.
+	sp, err := c.latestSpec(ctx, proj.ID)
+	if err != nil {
+		return PlanView{}, err
+	}
 	var pv PlanView
-	err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+	err = c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
 		epic, err := tx.Epics().LatestForProject(ctx, proj.ID)
 		if err != nil {
 			return err
+		}
+		if epic.SpecHash != "" && epic.SpecHash != sp.Hash {
+			return fmt.Errorf("%w (plan anchored to %.12s, spec is now %.12s)", ErrPlanStale, epic.SpecHash, sp.Hash)
 		}
 		pv.EpicTitle = epic.Title
 		tasks, err := tx.Tasks().ListByEpic(ctx, epic.ID)

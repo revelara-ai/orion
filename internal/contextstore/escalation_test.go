@@ -112,7 +112,7 @@ func TestHasOpenForTask(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		epicID, e := tx.Epics().Create(ctx, projID, specID, "epic")
+		epicID, e := tx.Epics().Create(ctx, projID, specID, "epic", "")
 		if e != nil {
 			return e
 		}
