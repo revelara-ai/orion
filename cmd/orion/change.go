@@ -21,14 +21,33 @@ import (
 //
 //	orion change [--cases <file.json>] "<change intent>"
 func cmdChange(args []string) int {
+	const usage = `usage: orion change [--cases <file.json>] [--] "<change intent>"
+
+Runs the brownfield change-proof loop on the current repo: generate the change
+in a worktree, prove it preserves existing tests (green→green), optionally
+prove NEW behavior against ratified --cases, and commit on a review branch.`
+	// or-ux02: flag-shaped arguments must NEVER become intents — "--help" once
+	// executed a live change loop. --help/-h prints usage; any other leading
+	// "-" arg refuses unless the developer separates a deliberate dash-leading
+	// intent with "--".
+	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h") {
+		fmt.Println(usage)
+		return 0
+	}
 	args, cases, err := extractCases(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion change:", err)
 		return 2
 	}
+	if len(args) > 0 && args[0] == "--" {
+		args = args[1:] // explicit separator: everything after is intent, verbatim
+	} else if len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		fmt.Fprintf(os.Stderr, "orion change: unknown flag %q (an intent never starts with '-'; use -- to force one)\n%s\n", args[0], usage)
+		return 2
+	}
 	intent := strings.TrimSpace(strings.Join(args, " "))
 	if intent == "" {
-		fmt.Fprintln(os.Stderr, `usage: orion change [--cases <file.json>] "<change intent>"`)
+		fmt.Fprintln(os.Stderr, usage)
 		return 2
 	}
 	ctx := context.Background()
