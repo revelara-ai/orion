@@ -246,7 +246,9 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 			}
 		}
 		if err != nil {
-			return convo, nil, fmt.Errorf("harness: provider: %w", err)
+			// Wrap the DEPENDENCY class so long-lived callers can classify the turn
+			// (the loop Breaker counts only ErrProvider failures — or-mvr.2).
+			return convo, nil, fmt.Errorf("%w: %w", ErrProvider, err)
 		}
 		if l.Supervisor.Budget != nil {
 			tok := resp.Usage.InputTokens + resp.Usage.OutputTokens
