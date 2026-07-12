@@ -31,6 +31,10 @@ const (
 // with a pure-Go WordPiece tokenizer. Validated by the or-hd3.7 spike (CGO_ENABLED=0;
 // cosine 0.80 close vs 0.42 unrelated). The GoMLX Exec is single-graph, so calls are
 // serialized under mu.
+//
+// Model licensing: bge-base-en-v1.5 is published by BAAI under the MIT license
+// (https://huggingface.co/BAAI/bge-base-en-v1.5). It is downloaded at provisioning
+// time, never redistributed with Orion.
 type GoMLX struct {
 	mu      sync.Mutex
 	tok     *hftokenizer.Tokenizer
