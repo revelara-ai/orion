@@ -135,7 +135,7 @@ var predicates = []predicate{
 	{"harness", "run halts and escalates when ceiling configured", kindGoTest,
 		`go test ./... -run TestRunHaltsAndEscalatesWhenCeilingConfigured`},
 	{"harness", "loop proceeds when Polaris unreachable", kindGoTest,
-		`go test ./internal/polaris/... -run TestLoopProceedsWhenPolarisUnreachable`},
+		`go test ./internal/polaris/... -run TestLoopProceedsWhenMCPUnreachable`},
 
 	// ── Determinism of the completeness gate ─────────────────────────────────
 	{"determinism", "required-decisions checklist is rules-based", kindGoTest,
