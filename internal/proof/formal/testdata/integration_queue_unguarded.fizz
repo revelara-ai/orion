@@ -1,0 +1,46 @@
+# UNGUARDED variant (or-56c.1): the lease guard deleted — models a parallelized
+# integrateEpic with System-B leases still dead (the or-1lz latent bug). The
+# checker must return the overlapping-interleaving counterexample.
+# Two proven clusters A and B whose DECLARED file scopes overlap (both touch "foo").
+# The lease guard models Integrator.AcquireLease on the integration path (or-1lz).
+# Invariants (docs/SPEC/Orion-Worktree-Git.md §9):
+#   S1 NoOverlappingIntegration — no two overlapping-scope tasks integrate concurrently.
+#   S2 SingletonIntegration     — at most one integration onto the head at a time.
+
+TASKS = ["A", "B"]
+SCOPE = {"A": ["foo"], "B": ["foo"]}
+
+action Init:
+    status = {"A": "ready", "B": "ready"}   # ready -> integrating -> integrated
+    integrating = []                         # tasks currently mid-integration
+
+atomic action StartIntegrate:
+    any t in TASKS:
+        require status[t] == "ready"
+        status[t] = "integrating"
+        integrating.append(t)
+
+atomic action FinishIntegrate:
+    any t in TASKS:
+        require status[t] == "integrating"
+        status[t] = "integrated"
+        integrating.remove(t)
+
+# S1 — no two overlapping-scope tasks integrate concurrently (the lease invariant).
+always assertion NoOverlappingIntegration:
+    for t in integrating:
+        for u in integrating:
+            if t != u and len([p for p in SCOPE[t] if p in SCOPE[u]]) > 0:
+                return False
+    return True
+
+# S2 — at most one integration onto the head at a time (queue.Mutex).
+always assertion SingletonIntegration:
+    return len(integrating) <= 1
+
+# Terminal quiescence: both tasks integrated is the DESIRED end state, not a
+# deadlock — keep one action enabled so the checker's deadlock detector
+# (correctly strict elsewhere) does not flag completion.
+atomic action Done:
+    require status["A"] == "integrated" and status["B"] == "integrated"
+    pass

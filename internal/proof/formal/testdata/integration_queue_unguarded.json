@@ -1,0 +1,982 @@
+{
+  "sourceInfo": {
+    "fileName": "integration_queue_unguarded.fizz",
+    "start": {
+      "line": 10,
+      "column": 1
+    },
+    "end": {
+      "line": 47
+    }
+  },
+  "invariants": [
+    {
+      "sourceInfo": {
+        "start": {
+          "line": 30,
+          "column": 1
+        },
+        "end": {
+          "line": 38
+        }
+      },
+      "name": "NoOverlappingIntegration",
+      "temporalOperators": [
+        "always"
+      ],
+      "block": {
+        "sourceInfo": {
+          "start": {
+            "line": 31,
+            "column": 5
+          },
+          "end": {
+            "line": 38
+          }
+        },
+        "flow": "FLOW_ATOMIC",
+        "stmts": [
+          {
+            "sourceInfo": {
+              "start": {
+                "line": 31,
+                "column": 5
+              },
+              "end": {
+                "line": 35,
+                "column": 4
+              }
+            },
+            "forStmt": {
+              "sourceInfo": {
+                "start": {
+                  "line": 31,
+                  "column": 5
+                },
+                "end": {
+                  "line": 35,
+                  "column": 4
+                }
+              },
+              "loopVars": [
+                "t"
+              ],
+              "pyExpr": "integrating",
+              "block": {
+                "sourceInfo": {
+                  "start": {
+                    "line": 32,
+                    "column": 9
+                  },
+                  "end": {
+                    "line": 35,
+                    "column": 4
+                  }
+                },
+                "stmts": [
+                  {
+                    "sourceInfo": {
+                      "start": {
+                        "line": 32,
+                        "column": 9
+                      },
+                      "end": {
+                        "line": 35,
+                        "column": 4
+                      }
+                    },
+                    "forStmt": {
+                      "sourceInfo": {
+                        "start": {
+                          "line": 32,
+                          "column": 9
+                        },
+                        "end": {
+                          "line": 35,
+                          "column": 4
+                        }
+                      },
+                      "loopVars": [
+                        "u"
+                      ],
+                      "pyExpr": "integrating",
+                      "block": {
+                        "sourceInfo": {
+                          "start": {
+                            "line": 33,
+                            "column": 13
+                          },
+                          "end": {
+                            "line": 35,
+                            "column": 4
+                          }
+                        },
+                        "stmts": [
+                          {
+                            "sourceInfo": {
+                              "start": {
+                                "line": 33,
+                                "column": 13
+                              },
+                              "end": {
+                                "line": 35,
+                                "column": 4
+                              }
+                            },
+                            "ifStmt": {
+                              "sourceInfo": {
+                                "start": {
+                                  "line": 33,
+                                  "column": 13
+                                },
+                                "end": {
+                                  "line": 35,
+                                  "column": 4
+                                }
+                              },
+                              "branches": [
+                                {
+                                  "sourceInfo": {
+                                    "start": {
+                                      "line": 33,
+                                      "column": 16
+                                    },
+                                    "end": {
+                                      "line": 35,
+                                      "column": 4
+                                    }
+                                  },
+                                  "condition": "t != u and len([p for p in SCOPE[t] if p in SCOPE[u]]) > 0",
+                                  "block": {
+                                    "sourceInfo": {
+                                      "start": {
+                                        "line": 34,
+                                        "column": 17
+                                      },
+                                      "end": {
+                                        "line": 35,
+                                        "column": 4
+                                      }
+                                    },
+                                    "stmts": [
+                                      {
+                                        "sourceInfo": {
+                                          "start": {
+                                            "line": 34,
+                                            "column": 17
+                                          },
+                                          "end": {
+                                            "line": 35,
+                                            "column": 4
+                                          }
+                                        },
+                                        "returnStmt": {
+                                          "sourceInfo": {
+                                            "start": {
+                                              "line": 34,
+                                              "column": 17
+                                            },
+                                            "end": {
+                                              "line": 34,
+                                              "column": 28
+                                            }
+                                          },
+                                          "pyExpr": "False",
+                                          "expr": {
+                                            "sourceInfo": {
+                                              "start": {
+                                                "line": 34,
+                                                "column": 24
+                                              },
+                                              "end": {
+                                                "line": 34,
+                                                "column": 28
+                                              }
+                                            },
+                                            "pyExpr": "False"
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  "conditionExpr": {
+                                    "sourceInfo": {
+                                      "start": {
+                                        "line": 33,
+                                        "column": 16
+                                      },
+                                      "end": {
+                                        "line": 33,
+                                        "column": 73
+                                      }
+                                    },
+                                    "pyExpr": "t != u and len([p for p in SCOPE[t] if p in SCOPE[u]]) > 0"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "iterExpr": {
+                        "sourceInfo": {
+                          "start": {
+                            "line": 32,
+                            "column": 18
+                          },
+                          "end": {
+                            "line": 32,
+                            "column": 28
+                          }
+                        },
+                        "pyExpr": "integrating"
+                      }
+                    }
+                  }
+                ]
+              },
+              "iterExpr": {
+                "sourceInfo": {
+                  "start": {
+                    "line": 31,
+                    "column": 14
+                  },
+                  "end": {
+                    "line": 31,
+                    "column": 24
+                  }
+                },
+                "pyExpr": "integrating"
+              }
+            }
+          },
+          {
+            "sourceInfo": {
+              "start": {
+                "line": 35,
+                "column": 5
+              },
+              "end": {
+                "line": 38
+              }
+            },
+            "returnStmt": {
+              "sourceInfo": {
+                "start": {
+                  "line": 35,
+                  "column": 5
+                },
+                "end": {
+                  "line": 35,
+                  "column": 15
+                }
+              },
+              "pyExpr": "True",
+              "expr": {
+                "sourceInfo": {
+                  "start": {
+                    "line": 35,
+                    "column": 12
+                  },
+                  "end": {
+                    "line": 35,
+                    "column": 15
+                  }
+                },
+                "pyExpr": "True"
+              }
+            }
+          }
+        ]
+      },
+      "pyCode": "def NoOverlappingIntegration():\n    for t in integrating:\n        for u in integrating:\n            if t != u and len([p for p in SCOPE[t] if p in SCOPE[u]]) > 0:\n                return False\n    return True\n\n# S2 \u2014 at most one integration onto the head at a time (queue.Mutex).\n"
+    },
+    {
+      "sourceInfo": {
+        "start": {
+          "line": 38,
+          "column": 1
+        },
+        "end": {
+          "line": 44
+        }
+      },
+      "name": "SingletonIntegration",
+      "temporalOperators": [
+        "always"
+      ],
+      "block": {
+        "sourceInfo": {
+          "start": {
+            "line": 39,
+            "column": 5
+          },
+          "end": {
+            "line": 44
+          }
+        },
+        "flow": "FLOW_ATOMIC",
+        "stmts": [
+          {
+            "sourceInfo": {
+              "start": {
+                "line": 39,
+                "column": 5
+              },
+              "end": {
+                "line": 44
+              }
+            },
+            "returnStmt": {
+              "sourceInfo": {
+                "start": {
+                  "line": 39,
+                  "column": 5
+                },
+                "end": {
+                  "line": 39,
+                  "column": 32
+                }
+              },
+              "pyExpr": "len(integrating) <= 1",
+              "expr": {
+                "sourceInfo": {
+                  "start": {
+                    "line": 39,
+                    "column": 12
+                  },
+                  "end": {
+                    "line": 39,
+                    "column": 32
+                  }
+                },
+                "pyExpr": "len(integrating) <= 1"
+              }
+            }
+          }
+        ]
+      },
+      "pyCode": "def SingletonIntegration():\n    return len(integrating) <= 1\n\n# Terminal quiescence: both tasks integrated is the DESIRED end state, not a\n# deadlock \u2014 keep one action enabled so the checker's deadlock detector\n# (correctly strict elsewhere) does not flag completion.\n"
+    }
+  ],
+  "actions": [
+    {
+      "sourceInfo": {
+        "start": {
+          "line": 13,
+          "column": 1
+        },
+        "end": {
+          "line": 17
+        }
+      },
+      "name": "Init",
+      "flow": "FLOW_ATOMIC",
+      "fairness": {
+        "level": "FAIRNESS_LEVEL_STRONG"
+      },
+      "block": {
+        "sourceInfo": {
+          "start": {
+            "line": 14,
+            "column": 5
+          },
+          "end": {
+            "line": 17
+          }
+        },
+        "flow": "FLOW_ATOMIC",
+        "stmts": [
+          {
+            "sourceInfo": {
+              "start": {
+                "line": 14,
+                "column": 5
+              },
+              "end": {
+                "line": 15,
+                "column": 4
+              }
+            },
+            "pyStmt": {
+              "sourceInfo": {
+                "start": {
+                  "line": 14,
+                  "column": 5
+                },
+                "end": {
+                  "line": 14,
+                  "column": 41
+                }
+              },
+              "code": "status = {\"A\": \"ready\", \"B\": \"ready\"}"
+            }
+          },
+          {
+            "sourceInfo": {
+              "start": {
+                "line": 15,
+                "column": 5
+              },
+              "end": {
+                "line": 17
+              }
+            },
+            "pyStmt": {
+              "sourceInfo": {
+                "start": {
+                  "line": 15,
+                  "column": 5
+                },
+                "end": {
+                  "line": 15,
+                  "column": 20
+                }
+              },
+              "code": "integrating = []"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "sourceInfo": {
+        "start": {
+          "line": 17,
+          "column": 1
+        },
+        "end": {
+          "line": 23
+        }
+      },
+      "name": "StartIntegrate",
+      "flow": "FLOW_ATOMIC",
+      "fairness": {
+        "level": "FAIRNESS_LEVEL_UNFAIR"
+      },
+      "block": {
+        "sourceInfo": {
+          "start": {
+            "line": 18,
+            "column": 5
+          },
+          "end": {
+            "line": 23
+          }
+        },
+        "flow": "FLOW_ATOMIC",
+        "stmts": [
+          {
+            "sourceInfo": {
+              "start": {
+                "line": 18,
+                "column": 5
+              },
+              "end": {
+                "line": 23
+              }
+            },
+            "anyStmt": {
+              "sourceInfo": {
+                "start": {
+                  "line": 18,
+                  "column": 5
+                },
+                "end": {
+                  "line": 23
+                }
+              },
+              "loopVars": [
+                "t"
+              ],
+              "pyExpr": "TASKS",
+              "block": {
+                "sourceInfo": {
+                  "start": {
+                    "line": 19,
+                    "column": 9
+                  },
+                  "end": {
+                    "line": 23
+                  }
+                },
+                "stmts": [
+                  {
+                    "sourceInfo": {
+                      "start": {
+                        "line": 19,
+                        "column": 9
+                      },
+                      "end": {
+                        "line": 20,
+                        "column": 8
+                      }
+                    },
+                    "requireStmt": {
+                      "sourceInfo": {
+                        "start": {
+                          "line": 19,
+                          "column": 9
+                        },
+                        "end": {
+                          "line": 19,
+                          "column": 36
+                        }
+                      },
+                      "condition": "status[t] == \"ready\"",
+                      "conditionExpr": {
+                        "sourceInfo": {
+                          "start": {
+                            "line": 19,
+                            "column": 17
+                          },
+                          "end": {
+                            "line": 19,
+                            "column": 36
+                          }
+                        },
+                        "pyExpr": "status[t] == \"ready\""
+                      }
+                    }
+                  },
+                  {
+                    "sourceInfo": {
+                      "start": {
+                        "line": 20,
+                        "column": 9
+                      },
+                      "end": {
+                        "line": 21,
+                        "column": 8
+                      }
+                    },
+                    "pyStmt": {
+                      "sourceInfo": {
+                        "start": {
+                          "line": 20,
+                          "column": 9
+                        },
+                        "end": {
+                          "line": 20,
+                          "column": 33
+                        }
+                      },
+                      "code": "status[t] = \"integrating\""
+                    }
+                  },
+                  {
+                    "sourceInfo": {
+                      "start": {
+                        "line": 21,
+                        "column": 9
+                      },
+                      "end": {
+                        "line": 23
+                      }
+                    },
+                    "callStmt": {
+                      "sourceInfo": {
+                        "start": {
+                          "line": 21,
+                          "column": 9
+                        },
+                        "end": {
+                          "line": 21,
+                          "column": 29
+                        }
+                      },
+                      "name": "append",
+                      "args": [
+                        {
+                          "sourceInfo": {
+                            "start": {
+                              "line": 21,
+                              "column": 28
+                            },
+                            "end": {
+                              "line": 21,
+                              "column": 28
+                            }
+                          },
+                          "pyExpr": "t",
+                          "expr": {
+                            "sourceInfo": {
+                              "start": {
+                                "line": 21,
+                                "column": 28
+                              },
+                              "end": {
+                                "line": 21,
+                                "column": 28
+                              }
+                            },
+                            "pyExpr": "t"
+                          }
+                        }
+                      ],
+                      "receiver": "integrating"
+                    }
+                  }
+                ]
+              },
+              "iterExpr": {
+                "sourceInfo": {
+                  "start": {
+                    "line": 18,
+                    "column": 14
+                  },
+                  "end": {
+                    "line": 18,
+                    "column": 18
+                  }
+                },
+                "pyExpr": "TASKS"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "sourceInfo": {
+        "start": {
+          "line": 23,
+          "column": 1
+        },
+        "end": {
+          "line": 30
+        }
+      },
+      "name": "FinishIntegrate",
+      "flow": "FLOW_ATOMIC",
+      "fairness": {
+        "level": "FAIRNESS_LEVEL_UNFAIR"
+      },
+      "block": {
+        "sourceInfo": {
+          "start": {
+            "line": 24,
+            "column": 5
+          },
+          "end": {
+            "line": 30
+          }
+        },
+        "flow": "FLOW_ATOMIC",
+        "stmts": [
+          {
+            "sourceInfo": {
+              "start": {
+                "line": 24,
+                "column": 5
+              },
+              "end": {
+                "line": 30
+              }
+            },
+            "anyStmt": {
+              "sourceInfo": {
+                "start": {
+                  "line": 24,
+                  "column": 5
+                },
+                "end": {
+                  "line": 30
+                }
+              },
+              "loopVars": [
+                "t"
+              ],
+              "pyExpr": "TASKS",
+              "block": {
+                "sourceInfo": {
+                  "start": {
+                    "line": 25,
+                    "column": 9
+                  },
+                  "end": {
+                    "line": 30
+                  }
+                },
+                "stmts": [
+                  {
+                    "sourceInfo": {
+                      "start": {
+                        "line": 25,
+                        "column": 9
+                      },
+                      "end": {
+                        "line": 26,
+                        "column": 8
+                      }
+                    },
+                    "requireStmt": {
+                      "sourceInfo": {
+                        "start": {
+                          "line": 25,
+                          "column": 9
+                        },
+                        "end": {
+                          "line": 25,
+                          "column": 42
+                        }
+                      },
+                      "condition": "status[t] == \"integrating\"",
+                      "conditionExpr": {
+                        "sourceInfo": {
+                          "start": {
+                            "line": 25,
+                            "column": 17
+                          },
+                          "end": {
+                            "line": 25,
+                            "column": 42
+                          }
+                        },
+                        "pyExpr": "status[t] == \"integrating\""
+                      }
+                    }
+                  },
+                  {
+                    "sourceInfo": {
+                      "start": {
+                        "line": 26,
+                        "column": 9
+                      },
+                      "end": {
+                        "line": 27,
+                        "column": 8
+                      }
+                    },
+                    "pyStmt": {
+                      "sourceInfo": {
+                        "start": {
+                          "line": 26,
+                          "column": 9
+                        },
+                        "end": {
+                          "line": 26,
+                          "column": 32
+                        }
+                      },
+                      "code": "status[t] = \"integrated\""
+                    }
+                  },
+                  {
+                    "sourceInfo": {
+                      "start": {
+                        "line": 27,
+                        "column": 9
+                      },
+                      "end": {
+                        "line": 30
+                      }
+                    },
+                    "callStmt": {
+                      "sourceInfo": {
+                        "start": {
+                          "line": 27,
+                          "column": 9
+                        },
+                        "end": {
+                          "line": 27,
+                          "column": 29
+                        }
+                      },
+                      "name": "remove",
+                      "args": [
+                        {
+                          "sourceInfo": {
+                            "start": {
+                              "line": 27,
+                              "column": 28
+                            },
+                            "end": {
+                              "line": 27,
+                              "column": 28
+                            }
+                          },
+                          "pyExpr": "t",
+                          "expr": {
+                            "sourceInfo": {
+                              "start": {
+                                "line": 27,
+                                "column": 28
+                              },
+                              "end": {
+                                "line": 27,
+                                "column": 28
+                              }
+                            },
+                            "pyExpr": "t"
+                          }
+                        }
+                      ],
+                      "receiver": "integrating"
+                    }
+                  }
+                ]
+              },
+              "iterExpr": {
+                "sourceInfo": {
+                  "start": {
+                    "line": 24,
+                    "column": 14
+                  },
+                  "end": {
+                    "line": 24,
+                    "column": 18
+                  }
+                },
+                "pyExpr": "TASKS"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "sourceInfo": {
+        "start": {
+          "line": 44,
+          "column": 1
+        },
+        "end": {
+          "line": 47
+        }
+      },
+      "name": "Done",
+      "flow": "FLOW_ATOMIC",
+      "fairness": {
+        "level": "FAIRNESS_LEVEL_UNFAIR"
+      },
+      "block": {
+        "sourceInfo": {
+          "start": {
+            "line": 45,
+            "column": 5
+          },
+          "end": {
+            "line": 47
+          }
+        },
+        "flow": "FLOW_ATOMIC",
+        "stmts": [
+          {
+            "sourceInfo": {
+              "start": {
+                "line": 45,
+                "column": 5
+              },
+              "end": {
+                "line": 46,
+                "column": 4
+              }
+            },
+            "requireStmt": {
+              "sourceInfo": {
+                "start": {
+                  "line": 45,
+                  "column": 5
+                },
+                "end": {
+                  "line": 45,
+                  "column": 71
+                }
+              },
+              "condition": "status[\"A\"] == \"integrated\" and status[\"B\"] == \"integrated\"",
+              "conditionExpr": {
+                "sourceInfo": {
+                  "start": {
+                    "line": 45,
+                    "column": 13
+                  },
+                  "end": {
+                    "line": 45,
+                    "column": 71
+                  }
+                },
+                "pyExpr": "status[\"A\"] == \"integrated\" and status[\"B\"] == \"integrated\""
+              }
+            }
+          },
+          {
+            "sourceInfo": {
+              "start": {
+                "line": 46,
+                "column": 5
+              },
+              "end": {
+                "line": 47
+              }
+            },
+            "pyStmt": {
+              "sourceInfo": {
+                "start": {
+                  "line": 46,
+                  "column": 5
+                },
+                "end": {
+                  "line": 46,
+                  "column": 8
+                }
+              },
+              "code": "pass"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "stmts": [
+    {
+      "sourceInfo": {
+        "start": {
+          "line": 10,
+          "column": 1
+        },
+        "end": {
+          "line": 11
+        }
+      },
+      "pyStmt": {
+        "sourceInfo": {
+          "start": {
+            "line": 10,
+            "column": 1
+          },
+          "end": {
+            "line": 10,
+            "column": 18
+          }
+        },
+        "code": "TASKS = [\"A\", \"B\"]"
+      }
+    },
+    {
+      "sourceInfo": {
+        "start": {
+          "line": 11,
+          "column": 1
+        },
+        "end": {
+          "line": 13
+        }
+      },
+      "pyStmt": {
+        "sourceInfo": {
+          "start": {
+            "line": 11,
+            "column": 1
+          },
+          "end": {
+            "line": 11,
+            "column": 36
+          }
+        },
+        "code": "SCOPE = {\"A\": [\"foo\"], \"B\": [\"foo\"]}"
+      }
+    }
+  ],
+  "frontMatter": {}
+}
