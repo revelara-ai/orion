@@ -18,11 +18,11 @@ const modulePath = "github.com/revelara-ai/orion"
 // Process note (or-rsm): six packages were built + unit-proven + mutation-tested
 // yet unreachable from cmd/orion. Per-task Done-when proved components, never the
 // wired system. This gate closes that gap.
-// Previously empty: or-b73 wired memory + contextengine into Conductor context
-// assembly; or-y0z exposed tracker via `orion tracker project`.
-var deferredOrphans = map[string]string{
-	"internal/reliabilityfloor": "or-uvw.8 wires the log-only floor into ChangeAndProve; library slices or-uvw.1–.5 land first by design (docs/PRD/orion-reliability-floor.md slice plan)",
-}
+// Empty again: or-b73 wired memory + contextengine into Conductor context assembly;
+// or-y0z exposed tracker via `orion tracker project`; or-uvw.8 wired reliabilityfloor
+// into ChangeAndProve. The ratchet is fully closed — a new unreachable package now
+// fails the gate outright.
+var deferredOrphans = map[string]string{}
 
 // goListInternal returns the set of internal/ packages emitted by `go list <args>`.
 func goListInternal(t *testing.T, args ...string) map[string]bool {

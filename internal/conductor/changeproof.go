@@ -15,6 +15,7 @@ import (
 	"github.com/revelara-ai/orion/internal/proof"
 	"github.com/revelara-ai/orion/internal/proof/newbehavior"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
+	"github.com/revelara-ai/orion/internal/reliabilityfloor"
 	"github.com/revelara-ai/orion/internal/reliabilityscan"
 	"github.com/revelara-ai/orion/internal/reliabilitytier"
 	"github.com/revelara-ai/orion/internal/worktree"
@@ -34,6 +35,11 @@ type ChangeResult struct {
 	Delivery     string   // "deliver" | "escalate" — the same decision semantic as the greenfield bar
 	PR           PRResult // PR-ready handoff over the review branch on deliver (or-v9f.15)
 	EscalationID string   // inbox escalation recorded on escalate (or-v9f.15)
+
+	// Reliability floor (or-uvw.8, log-only): corpus-sourced signals retrieved once in
+	// the trusted control plane, used twice — advisory generator context + lint checks.
+	FloorSignals []reliabilityfloor.Signal
+	FloorLint    reliabilityfloor.LintResult
 }
 
 // ChangeAndProve runs the brownfield change loop end-to-end: it creates a WORKTREE off
@@ -68,6 +74,11 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	sink.emit("change worktree", PhaseDone, wt.Branch)
 	res := ChangeResult{Branch: wt.Branch, Path: wt.Path}
 
+	// Reliability floor (or-uvw.8): retrieve ONCE in the trusted control plane —
+	// fail-open, never blocks the change on corpus availability.
+	sigs := floorSignals(ctx, store, "", intent)
+	res.FloorSignals = sigs
+
 	// Regression gate: green-before (worktree == HEAD) → the generator edits the
 	// worktree → green-after. The generator IS the change being applied. The DEFAULT is the
 	// scoped gate (changed packages + blast radius; it auto-escalates to the full suite on a
@@ -76,7 +87,8 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	// manual safety hatch (e.g. a build-tag/codegen change with out-of-import-graph coupling).
 	// See or-3p5.5.
 	apply := func() error {
-		return DiffGenerator(ctx, provider, wt.Path, intent, m.Digest(), supersedes)
+		// Use TWICE, part 1: floor signals ride the repo digest as advisory generator context.
+		return DiffGenerator(ctx, provider, wt.Path, intent, m.Digest()+"\n"+reliabilityfloor.RenderContext(sigs), supersedes)
 	}
 	// The gate's Progress heartbeat rides the same sink as the phase events —
 	// per-package completions land in Detail, so a 10-minute suite is visibly
@@ -98,6 +110,11 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	}
 	res.Regression = reg
 	res.FilesChanged = changedFiles(ctx, wt.Path)
+
+	// Use TWICE, part 2: log-only lint of the changed dirs against the mechanizable
+	// signals. Never branch on it (slice 1 is a tracer; blocking arrives tier-gated later).
+	res.FloorLint = runFloorChecks(ctx, wt.Path, sigs, res.FilesChanged)
+	logFloor(res)
 
 	if !reg.Held {
 		sink.emit("regression gate", PhaseWarn, reg.Reason)
