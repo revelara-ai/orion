@@ -142,34 +142,39 @@ var predicates = []predicate{
 		`go test ./internal/orchestrator/completeness/... -run TestRequiredDecisionsChecklist`},
 
 	// ── Round-2: Memory & context-erosion ────────────────────────────────────
+	// or-crmw reconciliation: the memory epic shipped these invariants under
+	// different test names; -run targets updated to the tests that prove them
+	// (TestPredicateRunTargetsResolve guards against future rename rot).
 	{"memory", "anti-erosion pins never evicted under pressure", kindGoTest,
-		`go test ./internal/memory/... -run TestAntiErosionPinsNeverEvictedUnderPressure`},
+		`go test ./internal/memory/... -run TestPinnedSpecItemNeverEvicted`},
 	{"memory", "summarize before evict", kindGoTest,
-		`go test ./internal/memory/... -run TestSummarizeBeforeEvict`},
+		`go test ./internal/memory/... -run TestSummarizeThenEvictNoLossOnCrash`},
 	{"memory", "MTM eviction crash-safe, no loss", kindGoTest,
-		`go test ./internal/memory/... -run TestMTMEvictionCrashSafeNoLoss`},
+		`go test ./internal/memory/... -run TestSummarizeThenEvictNoLossOnCrash`},
 	{"memory", "heat promotion MTM to LTM", kindGoTest,
-		`go test ./internal/memory/... -run TestHeatPromotionMTMToLTM`},
+		`go test ./internal/memory/... -run TestPromotionPromotesHotItem`},
 	{"memory", "constraint honored 50 steps later", kindGoTest,
 		`go test ./internal/contextengine/... -run TestConstraintHonored50StepsLater`},
 	{"memory", "pinned spec item never evicted", kindGoTest,
 		`go test ./internal/memory/... -run TestPinnedSpecItemNeverEvicted`},
 	{"memory", "summarization preserves security constraints", kindGoTest,
-		`go test ./internal/memory/... -run TestSummarizationPreservesSecurityConstraints`},
+		`go test ./internal/memory/... -run TestSecurityItemNeverSummarizedAway`},
 	{"memory", "memory-store / context-store divergence detected", kindGoTest,
 		`go test ./internal/memory/... -run TestMemoryStoreContextStoreDivergenceDetected`},
 	{"memory", "LTM promotion crash-safe, no corruption", kindGoTest,
 		`go test ./internal/memory/... -run TestLTMPromotionCrashSafeNoCorruption`},
 
 	// ── Round-2: Self-evolution (default off; trust-wall; rollback) ───────────
+	// or-crmw: promoted skills are TrustGeneration + generation can never shadow a
+	// proof-trust skill — together the trust wall this predicate names.
 	{"self-evolution", "evolved skill cannot cross proof trust domain", kindGoTest,
-		`go test ./internal/memory/... -run TestEvolvedSkillCannotCrossProofTrustDomain`},
+		`go test ./internal/selfevolve/... ./internal/skill/... -run 'TestPromoteCandidatesCreatesDiscoverableSkill|TestProofSkillNotShadowedByGeneration'`},
 	{"self-evolution", "generation LTM never reaches proof prompt", kindGoTest,
-		`go test ./internal/memory/... -run TestGenerationLTMNeverReachesProofPrompt`},
+		`go test ./internal/contextengine/... -run TestProofDomainExcludesGenerationMemory`},
 	{"self-evolution", "self-evolution regression gate", kindGoTest,
 		`go test ./internal/memory/... -run TestSelfEvolutionRegressionGate`},
 	{"self-evolution", "LTM evolution rollback", kindGoTest,
-		`go test ./internal/memory/... -run TestLTMEvolutionRollback`},
+		`go test ./internal/memory/... -run TestPromotionReversible`},
 	{"self-evolution", "developer-scoped LTM redacts project literals", kindGoTest,
 		`go test ./internal/memory/... -run TestDeveloperScopedLTMRedactsProjectLiterals`},
 
@@ -182,26 +187,31 @@ var predicates = []predicate{
 		`go test ./internal/orchestrator/completeness/... -run TestScaleFallbackPresetProducesConcreteThreshold`},
 
 	// ── Round-2: Phase E2 integration (run with -race) ───────────────────────
+	// or-crmw: or-1lz landed lease enforcement on the integration path; these four
+	// now point at the tests that prove the S1/rollback invariants.
 	{"integration", "lease blocks overlapping scope", kindGoTest,
-		`go test -race ./integration/... -run TestLeaseBlocksOverlappingScope`},
+		`go test -race ./internal/integration/... -run TestTryAcquireLeaseRefusesOverlap`},
 	{"integration", "rebase on moved head triggers re-proof", kindGoTest,
 		`go test ./integration/... -run TestRebaseOnMovedHeadTriggersReproof`},
 	{"integration", "rebase conflict dispatches resolver or escalates", kindGoTest,
 		`go test ./integration/... -run TestRebaseConflictDispatchesResolverOrEscalates`},
 	{"integration", "post-merge proof red causes rollback", kindGoTest,
-		`go test ./integration/... -run TestPostMergeProofRedCausesRollback`},
+		`go test ./internal/integration/... -run TestIntegrateRollsBackOnRedReproof`},
 	{"integration", "stale integration lock recovery on restart", kindGoTest,
 		`go test ./integration/... -run TestIntegrationLockStaleLockRecoveryOnRestart`},
 	{"integration", "worktree baseline restored after rollback", kindGoTest,
-		`go test ./integration/... -run TestWorktreeBaselineRestoredAfterRollback`},
+		`go test ./internal/integration/... -run TestIntegrateRollsBackOnRedReproof`},
 	{"integration", "lease manager no deadlock under contested scopes", kindGoTest,
-		`go test -race ./integration/... -run TestLeaseManagerNoDeadlockUnderContestedScopes`},
+		`go test -race ./internal/integration/... -run 'TestOverlappingIntegrationsSerialize|TestAcquireLeaseBlocksUntilRelease'`},
 	{"integration", "resolved merge proof covers all original obligations", kindGoTest,
 		`go test ./integration/... -run TestResolvedMergeProofCoversAllOriginalObligations`},
 
 	// ── Round-2: Packages / skills ───────────────────────────────────────────
+	// or-crmw: trust is scope-assigned and frontmatter cannot smuggle a claim, so no
+	// loaded third-party dir can yield a proof-trust skill — even without a package
+	// manager (the install surface itself is or-ykz.2).
 	{"packages", "third-party package cannot register proof-domain skill", kindGoTest,
-		`go test ./skill-registry/... -run TestThirdPartyPackageCannotRegisterProofDomainSkill`},
+		`go test ./internal/skill/... -run 'TestExtensionTrustIsReserved|TestTrustIsScopeAssigned|TestProofSkillNotShadowedByGeneration'`},
 	{"packages", "installed skill grants capped to role ceiling", kindGoTest,
 		`go test ./skill-registry/... -run TestInstalledSkillGrantsCappedToRoleCeiling`},
 	{"packages", "eval harness rejects non-deterministic predicate", kindGoTest,
