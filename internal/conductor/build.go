@@ -72,7 +72,9 @@ type BuildResult struct {
 // be nil) streams progress lines to the conversation. Kept as a thin wrapper so
 // existing callers and tests are unchanged.
 func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink, outRoot string) (BuildResult, error) {
-	return BuildDAG(ctx, store, gen, aligner, onPhase, outRoot)
+	// Operation root: one stack-wide retry budget for the whole run (or-mvr.1) —
+	// kept if a turn above already installed one.
+	return BuildDAG(withRetryBudget(ctx), store, gen, aligner, onPhase, outRoot)
 }
 
 // BuildDAG decomposes the accepted spec into an Epic of Tasks and executes the

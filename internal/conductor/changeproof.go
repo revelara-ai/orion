@@ -56,6 +56,9 @@ type ChangeResult struct {
 // blocked as a "regression") while every other test must still survive, and the new behavior is
 // proven by the ratified cases. Empty = a pure do-no-harm change.
 func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.Store, provider llm.Provider, intent string, cases []newbehavior.Case, supersedes []string, sink PhaseSink) (ChangeResult, error) {
+	// Operation root: one stack-wide retry budget for the whole change run
+	// (or-mvr.1) — kept if a turn above already installed one.
+	ctx = withRetryBudget(ctx)
 	sink = syncSink(sink)
 	m := brownfield.ScanRepoMap(repoRoot)
 
