@@ -1,0 +1,50 @@
+# UNGUARDED done-gate (or-56c.5): the Accept trigger deleted — a building task
+# can close "proven" with any verdict. The checker must violate
+# ProvenOnlyThroughAccept.
+# an Accept verdict — the DB trigger (contextstore, or-xgj/or-60u) modeled as
+# the require on CloseProven. The generating agent can claim anything; the
+# TRANSITION is owned by the deterministic gate.
+# Invariant: ProvenOnlyThroughAccept.
+
+TASKS = ["T1", "T2"]
+
+action Init:
+    status = {"T1": "todo", "T2": "todo"}   # todo -> building -> proven | rejected
+    verdict = {"T1": "", "T2": ""}           # "" | "Accept" | "Reject"
+
+atomic action Build:
+    any t in TASKS:
+        require status[t] == "todo"
+        status[t] = "building"
+
+atomic action RecordVerdict:
+    any t in TASKS:
+        require status[t] == "building" and verdict[t] == ""
+        verdict[t] = oneof ["Accept", "Reject"]
+
+atomic action CloseProven:
+    any t in TASKS:
+        require status[t] == "building"
+        status[t] = "proven"
+
+atomic action Escalate:
+    any t in TASKS:
+        require status[t] == "building" and verdict[t] == "Reject"
+        status[t] = "rejected"
+
+# Soundness: "proven" is reachable only through Accept — never by assertion,
+# retry, or any interleaving of the above.
+always assertion ProvenOnlyThroughAccept:
+    for t in TASKS:
+        if status[t] == "proven" and verdict[t] != "Accept":
+            return False
+    return True
+
+# Terminal quiescence: all tasks settled is the desired end state.
+atomic action Done:
+    settled = True
+    for t in TASKS:
+        if status[t] != "proven" and status[t] != "rejected":
+            settled = False
+    require settled
+    pass
