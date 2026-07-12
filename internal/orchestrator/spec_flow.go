@@ -76,6 +76,86 @@ func (c *Conductor) recordShadowPlan(ctx context.Context, projectID string, es s
 	}
 }
 
+// livePlanOrFallback runs the semantic ModuleProposer as the LIVE plan source
+// (or-809 cutover), admitting its epic only through the deterministic trust
+// wall: ReconcileFloor + CoverageGate over its RAW modules (the synthesized
+// bookend would launder any proposer into constant-true) AND coverage-superset
+// vs the oracle. ok=false on ANY failure — the caller keeps the oracle plan;
+// the plan itself never fails. Panics are contained like the shadow path.
+func (c *Conductor) livePlanOrFallback(ctx context.Context, projectID string, es spec.ExecutableSpec, oracle decomposer.Epic) (pe decomposer.Epic, ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.log.WarnContext(ctx, "module proposer live: recovered from panic — oracle drives", "panic", r)
+			ok = false
+		}
+	}()
+	// The live comparison record keeps the measured window honest across the
+	// cutover (regressions after the flip stay visible).
+	c.recordShadowPlan(ctx, projectID, es, oracle)
+
+	floor := decomposer.DefaultFloor()
+	pe, err := decomposer.Propose(ctx, es, c.gate.ProjectType(), floor, c.proposer)
+	if err != nil {
+		c.log.WarnContext(ctx, "module proposer live: propose failed — oracle drives", "err", err)
+		return decomposer.Epic{}, false
+	}
+	raw := decomposer.Epic{Title: pe.Title}
+	for _, t := range pe.Tasks {
+		if t.Key != "acceptance" {
+			raw.Tasks = append(raw.Tasks, t)
+		}
+	}
+	if err := decomposer.ReconcileFloor(floor, raw); err != nil {
+		c.log.WarnContext(ctx, "module proposer live: floor gate failed — oracle drives", "err", err)
+		return decomposer.Epic{}, false
+	}
+	if err := decomposer.CoverageGate(es, raw); err != nil {
+		c.log.WarnContext(ctx, "module proposer live: coverage gate failed — oracle drives", "err", err)
+		return decomposer.Epic{}, false
+	}
+	if superset, missing := decomposer.CoverageDiff(raw, oracle); !superset {
+		c.log.WarnContext(ctx, "module proposer live: not a coverage superset of the oracle — oracle drives", "missing", missing)
+		return decomposer.Epic{}, false
+	}
+	c.log.InfoContext(ctx, "module proposer LIVE: proposer plan drives the build", "modules", len(raw.Tasks))
+	return pe, true
+}
+
+// CutoverView is the `orion plan cutover` projection: the deterministic
+// shadow→live cutover criterion evaluated over the project's measured window.
+type CutoverView struct {
+	Ready      bool   `json:"ready"`
+	Reason     string `json:"reason"`
+	ShadowRuns int    `json:"shadow_runs"`
+	Window     int    `json:"window"`
+}
+
+// CutoverStatus evaluates decomposer.CutoverReady over the current project's
+// recorded shadow runs (or-809). The flip itself stays a human decision
+// (ORION_MODULE_PROPOSER=live); this is the evidence for it.
+func (c *Conductor) CutoverStatus(ctx context.Context) (CutoverView, error) {
+	if c.store == nil {
+		return CutoverView{}, errNoStore
+	}
+	proj, _, err := c.store.CurrentProjectSpec(ctx)
+	if err != nil {
+		return CutoverView{}, err
+	}
+	recs, err := c.store.ShadowPlans(ctx, proj.ID)
+	if err != nil {
+		return CutoverView{}, err
+	}
+	outs := make([]decomposer.ShadowOutcome, 0, len(recs))
+	for _, r := range recs { // newest first, matching CutoverReady's contract
+		outs = append(outs, decomposer.ShadowOutcome{
+			SupersetOK: r.SupersetOK, FloorOK: r.FloorOK, CoverageGateOK: r.CoverageGateOK,
+			ProposerClusters: r.ProposerClusters, OracleClusters: r.OracleClusters,
+		})
+	}
+	ready, reason := decomposer.CutoverReady(outs, decomposer.CutoverWindow)
+	return CutoverView{Ready: ready, Reason: reason, ShadowRuns: len(recs), Window: decomposer.CutoverWindow}, nil
+}
+
 // SpecView is the Spec-review pane / `orion spec show` projection.
 type SpecView struct {
 	Intent           string                      `json:"intent"`
@@ -568,9 +648,20 @@ func (c *Conductor) ensurePlan(ctx context.Context, proj contextstore.Project, s
 	// below — byte-identical behavior) and record how its plan compares. Entirely
 	// best-effort: any proposer/gate/persist error is logged and never fails the
 	// plan (the deterministic oracle is the live plan). Cutover to driving the
-	// build off the proposer is a later slice gated on this measured window.
-	if c.proposer != nil && os.Getenv("ORION_MODULE_PROPOSER") == "shadow" {
+	// build off the proposer is gated on this measured window
+	// (decomposer.CutoverReady) and flipped by a HUMAN via =live.
+	switch mode := os.Getenv("ORION_MODULE_PROPOSER"); {
+	case c.proposer != nil && mode == "shadow":
 		c.recordShadowPlan(ctx, proj.ID, es, epic)
+	case c.proposer != nil && mode == "live":
+		// or-809 LIVE: the proposer drives ONLY through the deterministic trust
+		// wall — ReconcileFloor + CoverageGate on its RAW modules plus
+		// coverage-superset vs the oracle, with Orion's synthesized bookend on
+		// top. Any failure falls back to the oracle plan (fail-safe, never
+		// fail the plan); the shadow record keeps accruing either way.
+		if pe, ok := c.livePlanOrFallback(ctx, proj.ID, es, epic); ok {
+			epic = pe
+		}
 	}
 
 	var epicID string

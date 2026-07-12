@@ -175,8 +175,22 @@ func cmdSpec(args []string) int {
 // cmdPlan implements `orion plan show [--json]`. It decomposes the accepted spec
 // on demand and renders the Epic/Task plan.
 func cmdPlan(args []string) int {
+	if len(args) > 0 && args[0] == "cutover" {
+		// or-809: the deterministic shadow→live cutover evidence. The flip stays
+		// a human decision (ORION_MODULE_PROPOSER=live); this shows whether the
+		// measured window supports it.
+		return withStore(func(ctx context.Context, c *orchestrator.Conductor) int {
+			cv, err := c.CutoverStatus(ctx)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "orion plan cutover:", err)
+				return 1
+			}
+			fmt.Printf("module-proposer cutover ready: %v\n  %s\n  shadow runs: %d (window %d)\n", cv.Ready, cv.Reason, cv.ShadowRuns, cv.Window)
+			return 0
+		})
+	}
 	if len(args) == 0 || args[0] != "show" {
-		fmt.Fprintln(os.Stderr, "orion plan: expected 'show'")
+		fmt.Fprintln(os.Stderr, "orion plan: expected 'show' or 'cutover'")
 		return 2
 	}
 	fs := flag.NewFlagSet("plan show", flag.ContinueOnError)
