@@ -76,6 +76,10 @@ func Open(dir string) (*Store, error) {
 		{"escalations", "detail", "TEXT NOT NULL DEFAULT ''"},
 		{"escalations", "resolution", "TEXT NOT NULL DEFAULT ''"},
 		{"escalations", "resolved_at", "TEXT"},
+		// or-7et.2 slice 1: the epic snapshots the spec HASH it was decomposed
+		// from (spec_id is insufficient — in-place re-ratification keeps the id).
+		// '' = pre-migration epic, grandfathered by the staleness guard.
+		{"epics", "spec_hash", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if _, err := ensureColumn(db, m.table, m.col, m.decl); err != nil {
 			_ = db.Close()

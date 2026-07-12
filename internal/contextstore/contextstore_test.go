@@ -54,7 +54,7 @@ func TestTransactionalWrite(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		eid, err := tx.Epics().Create(ctx, pid, sid, "epic-1")
+		eid, err := tx.Epics().Create(ctx, pid, sid, "epic-1", "")
 		if err != nil {
 			return err
 		}
@@ -157,7 +157,7 @@ func TestDoneGateRejectsWithoutAcceptedProof(t *testing.T) {
 	if err := s.WithTx(ctx, func(tx *Tx) error {
 		pid, _ := tx.Projects().Create(ctx, "demo", "x", "http-service")
 		sid, _ := tx.Specs().CreateDraft(ctx, pid)
-		eid, _ := tx.Epics().Create(ctx, pid, sid, "e")
+		eid, _ := tx.Epics().Create(ctx, pid, sid, "e", "")
 		var err error
 		taskID, err = tx.Tasks().Create(ctx, eid, "t", "scope")
 		if err != nil {

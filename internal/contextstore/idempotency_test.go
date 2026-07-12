@@ -27,7 +27,7 @@ func TestRecordCreatesAreIdempotentOnRerun(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		eid, e := tx.Epics().Create(ctx, pid, sid, "epic")
+		eid, e := tx.Epics().Create(ctx, pid, sid, "epic", "")
 		if e != nil {
 			return e
 		}

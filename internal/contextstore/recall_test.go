@@ -29,7 +29,7 @@ func TestRecallRebuildsContextAfterAgentKill(t *testing.T) {
 				return err
 			}
 		}
-		eid, err := tx.Epics().Create(ctx, pid, specID, "epic")
+		eid, err := tx.Epics().Create(ctx, pid, specID, "epic", "")
 		if err != nil {
 			return err
 		}
