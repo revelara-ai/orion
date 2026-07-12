@@ -131,6 +131,16 @@ func New(cfg Config) *Client {
 // operation's result type.
 func Do[T any](ctx context.Context, c *Client, op func(context.Context) (T, error)) (T, error) {
 	var zero T
+	// Shared in-flight cap (or-mvr.3): every call — coordinator, agent, shadow —
+	// holds ONE slot from the same gate for its whole call (retries included).
+	// Interactive waits; background sheds. No gate in ctx → no gating.
+	if g := GateFrom(ctx); g != nil {
+		release, err := g.Acquire(ctx, ClassFrom(ctx))
+		if err != nil {
+			return zero, err
+		}
+		defer release()
+	}
 	var lastErr error
 	for attempt := 0; attempt <= c.cfg.MaxRetries; attempt++ {
 		if !c.breaker.allow() {

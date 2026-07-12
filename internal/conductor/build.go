@@ -74,7 +74,7 @@ type BuildResult struct {
 func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink, outRoot string) (BuildResult, error) {
 	// Operation root: one stack-wide retry budget for the whole run (or-mvr.1) —
 	// kept if a turn above already installed one.
-	return BuildDAG(withRetryBudget(ctx), store, gen, aligner, onPhase, outRoot)
+	return BuildDAG(withLLMGuards(ctx), store, gen, aligner, onPhase, outRoot)
 }
 
 // BuildDAG decomposes the accepted spec into an Epic of Tasks and executes the

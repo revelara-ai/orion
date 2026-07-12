@@ -12,6 +12,7 @@ import (
 	"github.com/revelara-ai/orion/internal/decomposer"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
+	"github.com/revelara-ai/orion/pkg/llmclient"
 )
 
 // recordShadowPlan runs the injected semantic ModuleProposer in SHADOW and
@@ -27,6 +28,10 @@ func (c *Conductor) recordShadowPlan(ctx context.Context, projectID string, es s
 			c.log.WarnContext(ctx, "module proposer shadow: recovered from panic", "panic", r)
 		}
 	}()
+	// Shadow runs are BACKGROUND traffic (or-mvr.3): they draw from the same
+	// in-flight cap as interactive work and are shed first under pressure —
+	// first-party background load must never starve the live plan path.
+	ctx = llmclient.WithTrafficClass(ctx, llmclient.ClassBackground)
 	floor := decomposer.DefaultFloor()
 	pe, err := decomposer.Propose(ctx, es, c.gate.ProjectType(), floor, c.proposer)
 	if err != nil {

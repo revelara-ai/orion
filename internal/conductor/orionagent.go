@@ -113,7 +113,7 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 	// One stack-wide retry budget for the whole turn (or-mvr.1): the harness
 	// loop, spec tools, build/change pipelines, and proof loops beneath this
 	// turn share a single anti-amplification ceiling.
-	ctx = withRetryBudget(ctx)
+	ctx = withLLMGuards(ctx)
 
 	a.mu.Lock()
 	history := append([]llm.Message(nil), a.sessions[sessionID]...)

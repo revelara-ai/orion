@@ -12,16 +12,22 @@ import (
 
 func TestWithRetryBudgetInstallsAndRespectsEnvAndOuter(t *testing.T) {
 	t.Setenv("ORION_RETRY_BUDGET", "2")
-	ctx := withRetryBudget(context.Background())
+	ctx := withLLMGuards(context.Background())
 	b := llmclient.BudgetFrom(ctx)
 	if b == nil {
 		t.Fatal("root must install a budget")
+	}
+	if llmclient.GateFrom(ctx) == nil {
+		t.Fatal("root must install the shared in-flight gate (or-mvr.3)")
+	}
+	if llmclient.GateFrom(withLLMGuards(context.Background())) != llmclient.GateFrom(ctx) {
+		t.Fatal("every operation root must share ONE process-wide gate — a per-root gate would be the inc-qdi bypass lane")
 	}
 	if !b.Take() || !b.Take() || b.Take() {
 		t.Fatal("env-configured budget must be 2")
 	}
 	// Outermost wins: a nested root keeps the existing budget.
-	if llmclient.BudgetFrom(withRetryBudget(ctx)) != b {
+	if llmclient.BudgetFrom(withLLMGuards(ctx)) != b {
 		t.Fatal("a nested operation root must keep the outer turn's budget")
 	}
 }
