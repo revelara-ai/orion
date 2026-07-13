@@ -169,6 +169,20 @@ func (c *Conductor) currentOrDeliveredProjectSpec(ctx context.Context) (contexts
 // run can be interrupted) and rejects an empty intent rather than silently
 // guessing.
 func (c *Conductor) Submit(ctx context.Context, intent string) (Confirmation, error) {
+	return c.submitClassified(ctx, intent, "")
+}
+
+// SubmitVerbatim intakes an intent while classifying scale/type from the
+// developer's VERBATIM turn (or-hn15.2): the agent's submit_intent argument is
+// a paraphrase, and in the mech-game dogfood that paraphrase dropped "I expect
+// this to be a large project" — silently disabling the large-scale rail. The
+// verbatim signal only ever UPGRADES the classification (large, or a resolved
+// type); a terse verbatim never downgrades what the intent itself states.
+func (c *Conductor) SubmitVerbatim(ctx context.Context, intent, verbatim string) (Confirmation, error) {
+	return c.submitClassified(ctx, intent, verbatim)
+}
+
+func (c *Conductor) submitClassified(ctx context.Context, intent, verbatim string) (Confirmation, error) {
 	if err := ctx.Err(); err != nil {
 		return Confirmation{}, fmt.Errorf("submit cancelled: %w", err)
 	}
@@ -199,6 +213,20 @@ func (c *Conductor) Submit(ctx context.Context, intent string) (Confirmation, er
 	// otherwise the V2.0 http-service path is unchanged (or-3ba.2).
 	ptype := completeness.InferProjectType(trimmed)
 	scale := completeness.ClassifyScale(trimmed)
+	// or-hn15.2: honor the developer's verbatim words — the paraphrase in the
+	// tool argument can drop a scale or type signal the developer actually
+	// stated. Take the STRONGER signal: a large verbatim upgrades the scale, a
+	// typed verbatim resolves an otherwise-unclassified type. Never downgrade.
+	if v := strings.TrimSpace(verbatim); v != "" {
+		if completeness.ClassifyScale(v) == completeness.ScaleLarge {
+			scale = completeness.ScaleLarge
+		}
+		if ptype == completeness.Unclassified {
+			if vt := completeness.InferProjectType(v); vt != completeness.Unclassified {
+				ptype = vt
+			}
+		}
+	}
 
 	// Persist the intent as a project + draft spec so it survives a restart. The
 	// project + spec commit as one transaction (atomic intake). When a project is
@@ -326,6 +354,46 @@ func (c *Conductor) SetProjectType(ctx context.Context, projectType string) erro
 	c.gate = completeness.NewAnalyzerScaled(pt, scale)
 	c.mu.Unlock()
 	c.log.InfoContext(ctx, "project type resolved", "type", pt)
+	return nil
+}
+
+// SetScale re-classifies the ACTIVE project's scale (or-hn15.2) — the recovery
+// path when the deterministic classification got it wrong (e.g. the agent's
+// paraphrase dropped "a large project"). It persists the scale, rebuilds the
+// completeness gate so the large-only rail (goals-first, the direction family)
+// engages, and records an audited gold label — the developer's override is a
+// first-class, auditable act, not a silent retype. Refused for an unknown
+// scale or no active project.
+func (c *Conductor) SetScale(ctx context.Context, scale string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	sc := strings.ToLower(strings.TrimSpace(scale))
+	if sc != completeness.ScaleStandard && sc != completeness.ScaleLarge {
+		return fmt.Errorf("set_scale: %q is not a valid scale — use %q or %q", scale, completeness.ScaleStandard, completeness.ScaleLarge)
+	}
+	if c.store == nil {
+		return errNoStore
+	}
+	proj, sp, err := c.store.CurrentProjectSpec(ctx)
+	if err != nil {
+		return fmt.Errorf("set_scale: no active project: %w", err)
+	}
+	if err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+		if e := tx.Projects().SetScale(ctx, proj.ID, sc); e != nil {
+			return e
+		}
+		// Audit the human override exactly like an approved assumption (or-gb1.8).
+		m, v := c.producerProvenance()
+		_, e := tx.GoldLabels().Create(ctx, proj.ID, "scale", "accept", sp.ID, "scale="+sc, m, v)
+		return e
+	}); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.gate = completeness.NewAnalyzerScaled(proj.ProjectType, sc)
+	c.mu.Unlock()
+	c.log.InfoContext(ctx, "project scale resolved", "scale", sc)
 	return nil
 }
 
