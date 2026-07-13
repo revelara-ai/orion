@@ -15,6 +15,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"errors"
 	_ "embed"
 	"encoding/hex"
 	"fmt"
@@ -55,6 +56,8 @@ const (
 	KindPattern   = "pattern"
 	KindProcedure = "procedure"
 	KindFailure   = "failure" // why a task failed (proof facts) / agent narrative (quarantined)
+	KindRule      = "rule"    // distilled transferable rule (or-gb1.4; generation-tier candidate until verified)
+	KindVerified  = "verified-rule" // stage-3: a rule whose deterministic check passed under the sandbox (or-gb1.4)
 )
 
 // Item is a memory item.
@@ -642,6 +645,28 @@ func (s *Store) ReversePromotion(ctx context.Context, promotionID string) error 
 		return fmt.Errorf("memory reverse promotion: %w", err)
 	}
 	return nil
+}
+
+// Get returns a single item by id (or-gb1.4: verify-and-promote resolves its
+// source hypothesis and asserts the original row's classification is intact).
+func (s *Store) Get(ctx context.Context, id string) (Item, bool, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, visit_count, last_accessed_at, candidate
+		 FROM memory_items WHERE id=?`, id)
+	var it Item
+	var pinned, secRel, cand int
+	var la string
+	if err := row.Scan(&it.ID, &it.Tier, &it.Kind, &it.Content, &it.Hash, &pinned, &secRel, &it.TrustTier, &it.Heat, &it.VisitCount, &la, &cand); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Item{}, false, nil
+		}
+		return Item{}, false, err
+	}
+	it.Pinned = pinned == 1
+	it.SecurityRelevant = secRel == 1
+	it.Candidate = cand == 1
+	it.LastAccessed = parseTS(la)
+	return it, true, nil
 }
 
 // Count returns the number of items in a tier (including pins).

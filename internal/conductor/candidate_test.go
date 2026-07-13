@@ -25,7 +25,7 @@ func TestProposeCandidateOnAccept(t *testing.T) {
 		Verdict: truthalign.Accept,
 		Modes:   []truthalign.ModeResult{{Mode: "behavioral", Pass: true}},
 	}}
-	if err := proposeCandidate(ctx, mem, "T1", accept); err != nil {
+	if err := proposeCandidate(ctx, mem, "T1", accept, &buildTrajectory{}); err != nil {
 		t.Fatal(err)
 	}
 	cands, err := mem.ListCandidates(ctx)
@@ -49,7 +49,7 @@ func TestProposeCandidateOnAccept(t *testing.T) {
 	}
 	defer func() { _ = mem2.Close() }()
 	reject := proof.Report{Outcome: truthalign.Outcome{Verdict: truthalign.Reject}}
-	if err := proposeCandidate(ctx, mem2, "T2", reject); err != nil {
+	if err := proposeCandidate(ctx, mem2, "T2", reject, &buildTrajectory{}); err != nil {
 		t.Fatal(err)
 	}
 	if cands, _ := mem2.ListCandidates(ctx); len(cands) != 0 {

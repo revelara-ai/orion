@@ -51,24 +51,36 @@ const (
 // it is TrustProof (it may enter a trusted prompt; it is not a generation
 // self-report). Only Accept is remembered here — failure-analysis writes are
 // slice 4 (or-hd3.5). Best-effort: a memory miss never fails a green build.
-func rememberOutcome(ctx context.Context, mem *memory.Store, taskID string, report proof.Report) error {
+func rememberOutcome(ctx context.Context, mem *memory.Store, taskID string, report proof.Report, traj *buildTrajectory) error {
 	if mem == nil || report.Outcome.Verdict != truthalign.Accept {
 		return nil
 	}
 	_, err := mem.Write(ctx, memory.Item{
 		Tier:      memory.MTM,
 		Kind:      memory.KindPattern,
-		Content:   summarizeOutcome(taskID, report),
+		Content:   summarizeOutcome(taskID, report, traj),
 		TrustTier: memory.TrustProof,
 		Heat:      1.0,
 	})
 	return err
 }
 
-// summarizeOutcome renders a compact, proof-derived description of a proven task
+// summarizeOutcome renders a proof-derived description of a proven task
 // (no generation self-report, no corpus source — the trust wall holds).
-func summarizeOutcome(taskID string, report proof.Report) string {
-	return fmt.Sprintf("Proven task %s (verdict %s, %d modes converged)", taskID, report.Outcome.Verdict, len(report.Outcome.Modes))
+// or-gb1.4: when the task converged after failures, the item carries the
+// SUBSTANCE a later task can learn from — what analysis was overcome and what
+// the passing attempt changed — not just the verdict line.
+func summarizeOutcome(taskID string, report proof.Report, traj *buildTrajectory) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Proven task %s (verdict %s, %d modes converged)", taskID, report.Outcome.Verdict, len(report.Outcome.Modes))
+	if traj.overcame() {
+		fmt.Fprintf(&b, "; converged on attempt %d", traj.Attempts)
+		fmt.Fprintf(&b, "\novercame: %s", traj.Overcame[len(traj.Overcame)-1])
+		if traj.ChangeSummary != "" {
+			fmt.Fprintf(&b, "\npassing attempt changed: %s", traj.ChangeSummary)
+		}
+	}
+	return b.String()
 }
 
 // proposeCandidate writes a self-evolution CANDIDATE after a proof-passed task (or-ykz.8): a
@@ -77,14 +89,14 @@ func summarizeOutcome(taskID string, report proof.Report) string {
 // runs. It is doubly contained: TrustGeneration (an agent-proposed item, never a proof input)
 // AND Candidate (excluded from active recall + vector indexing) until the SkillEval/activation
 // lifecycle promotes it (default off; or-lrr). Best-effort: a write miss never fails a build.
-func proposeCandidate(ctx context.Context, mem *memory.Store, taskID string, report proof.Report) error {
+func proposeCandidate(ctx context.Context, mem *memory.Store, taskID string, report proof.Report, traj *buildTrajectory) error {
 	if mem == nil || report.Outcome.Verdict != truthalign.Accept {
 		return nil
 	}
 	_, err := mem.Write(ctx, memory.Item{
 		Tier:      memory.LTM,
 		Kind:      memory.KindProcedure,
-		Content:   summarizeCandidate(taskID, report),
+		Content:   summarizeCandidate(taskID, report, traj),
 		TrustTier: memory.TrustGeneration, // untrusted proposal until SkillEval activates it
 		Candidate: true,                   // active=false: not surfaced in recall yet
 		Heat:      0.5,
@@ -92,10 +104,26 @@ func proposeCandidate(ctx context.Context, mem *memory.Store, taskID string, rep
 	return err
 }
 
-// summarizeCandidate renders the candidate body. It is an agent-domain proposal ("what
-// worked"), not a proof fact — so it is written generation-tier and quarantined.
-func summarizeCandidate(taskID string, report proof.Report) string {
-	return fmt.Sprintf("candidate procedure from proven task %s: approach converged %d modes (verdict %s) — review for reuse", taskID, len(report.Outcome.Modes), report.Outcome.Verdict)
+// summarizeCandidate renders the candidate body: the PROCEDURE TRAJECTORY a
+// later build could reuse (or-gb1.4) — what failed, what the passing attempt
+// changed, and what was proven — not a contentless template. It is an
+// agent-domain proposal ("what worked"), not a proof fact — so it is written
+// generation-tier and quarantined.
+func summarizeCandidate(taskID string, report proof.Report, traj *buildTrajectory) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "candidate procedure from proven task %s (%d modes, verdict %s) — review for reuse", taskID, len(report.Outcome.Modes), report.Outcome.Verdict)
+	if traj.overcame() {
+		fmt.Fprintf(&b, "\nprocedure trajectory (%d attempts):", traj.Attempts)
+		for i, o := range traj.Overcame {
+			fmt.Fprintf(&b, "\n  attempt %d failed: %s", i+1, o)
+		}
+		if traj.ChangeSummary != "" {
+			fmt.Fprintf(&b, "\n  passing fix: %s", traj.ChangeSummary)
+		}
+	} else {
+		b.WriteString("\nproven on the first attempt — no refinement was needed")
+	}
+	return b.String()
 }
 
 // rememberFailure writes failure-analysis memory on a non-Accept verdict so the NEXT
