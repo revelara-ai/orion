@@ -28,6 +28,11 @@ func paneFor(kind string) string {
 		return "fleet"
 	case "proof":
 		return "proof"
+	case acp.ActivityKind:
+		// Activity updates drive the live activity panel via the onUpdate sink,
+		// NOT PaneBuffers; routing them into the (never-read) Conversation slice
+		// only grows it unboundedly per turn (or-3nv). Drop them here.
+		return "activity"
 	default: // agent_thought, agent_message, user_message, …
 		return "conversation"
 	}
@@ -45,6 +50,8 @@ func (p *PaneBuffers) Route(u acp.Update) {
 		p.Fleet = append(p.Fleet, line)
 	case "proof":
 		p.Proof = append(p.Proof, line)
+	case "activity":
+		// no-op: activity is rendered from the live onUpdate sink, not buffered here
 	default:
 		p.Conversation = append(p.Conversation, line)
 	}
