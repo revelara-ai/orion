@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/decomposer"
@@ -32,10 +34,16 @@ func (c *Conductor) recordShadowPlan(ctx context.Context, projectID string, es s
 	// in-flight cap as interactive work and are shed first under pressure —
 	// first-party background load must never starve the live plan path.
 	ctx = llmclient.WithTrafficClass(ctx, llmclient.ClassBackground)
+	// or-7et.1(1): the shadow proposer's LLM call is on the SYNCHRONOUS plan
+	// critical path — bound it so a hung proposer can't stall ensurePlan. On
+	// timeout the shadow is skipped; the deterministic oracle plan is
+	// unaffected (this whole function is best-effort measurement).
+	sctx, cancel := context.WithTimeout(ctx, shadowProposerTimeout())
+	defer cancel()
 	floor := decomposer.DefaultFloor()
-	pe, err := decomposer.ProposeFit(ctx, es, c.gate.ProjectType(), floor, c.proposer, c.fitEstimator)
+	pe, err := decomposer.ProposeFit(sctx, es, c.gate.ProjectType(), floor, c.proposer, c.fitEstimator)
 	if err != nil {
-		c.log.WarnContext(ctx, "module proposer shadow: propose failed", "err", err)
+		c.log.WarnContext(ctx, "module proposer shadow: propose failed (or timed out)", "err", err)
 		return
 	}
 	// Measure the coverage/floor metrics over the proposer's OWN modules — the
@@ -847,4 +855,15 @@ func fallbackValue(od completeness.OpenDecision) string {
 		return "medium"
 	}
 	return od.Fallback
+}
+
+// shadowProposerTimeout bounds the synchronous shadow proposer (or-7et.1);
+// ORION_SHADOW_PROPOSER_TIMEOUT_S overrides (seconds), default 45.
+func shadowProposerTimeout() time.Duration {
+	if v := os.Getenv("ORION_SHADOW_PROPOSER_TIMEOUT_S"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 45 * time.Second
 }
