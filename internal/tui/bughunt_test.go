@@ -109,6 +109,9 @@ func TestCancelResubmitDropsStaleTurnMessages(t *testing.T) {
 	if m.turnGen == genA {
 		t.Fatal("cancelInFlight must advance turnGen so the cancelled turn's late messages are dropped")
 	}
+	// or-or3j: the drain gate holds the resubmit until turn A's goroutine
+	// returns; its completion (the drained gen) clears the gate.
+	m = feed(m, turnDoneMsg{gen: genA})
 	m.input.SetValue("do B")
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // turn B dispatched
 	if m.turnGen <= genA || !m.inFlight {

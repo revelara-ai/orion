@@ -14,6 +14,11 @@ import (
 // terminal result. This is where an agent's reasoning lives (in production, the
 // spawned vendor agent — here, a Go implementation such as the primed Conductor).
 //
+// CONTRACT (or-or3j): a brain must NOT call stream after PromptFunc returns —
+// the client treats the session/prompt response as "this turn stopped
+// emitting" (its cancel drain gate rests on it). A goroutine that outlives the
+// return and streams would leak its output into the NEXT turn's transcript.
+//
 // Deadlock note: ask issues an inbound REQUEST to the client; the client
 // dispatches requests on their own goroutine (off its read loop), so the gate may
 // block on a human without stalling the stream.
@@ -36,12 +41,17 @@ type Agent struct {
 
 	mu       sync.Mutex
 	sessions int
-	cancels  map[string]context.CancelFunc
+	nextTurn int64
+	// cancels is keyed per session AND per turn (or-or3j): a single per-session
+	// slot let an overlapping second prompt overwrite the first's cancel — and
+	// the first's deferred cleanup then deleted the SECOND's, leaving it
+	// uncancellable. session/cancel stops every active turn of the session.
+	cancels map[string]map[int64]context.CancelFunc
 }
 
 // NewAgent builds an ACP agent over the given reader/writer, driven by prompt.
 func NewAgent(r io.Reader, w io.Writer, prompt PromptFunc) *Agent {
-	a := &Agent{prompt: prompt, cancels: map[string]context.CancelFunc{}}
+	a := &Agent{prompt: prompt, cancels: map[string]map[int64]context.CancelFunc{}}
 	a.conn = NewConn(r, w, a.handle, a.onNotify)
 	return a
 }
@@ -74,11 +84,21 @@ func (a *Agent) handle(ctx context.Context, method string, params json.RawMessag
 		}
 		turnCtx, cancel := context.WithCancel(ctx)
 		a.mu.Lock()
-		a.cancels[p.SessionID] = cancel
+		a.nextTurn++
+		turnID := a.nextTurn
+		if a.cancels[p.SessionID] == nil {
+			a.cancels[p.SessionID] = map[int64]context.CancelFunc{}
+		}
+		a.cancels[p.SessionID][turnID] = cancel
 		a.mu.Unlock()
 		defer func() {
 			a.mu.Lock()
-			delete(a.cancels, p.SessionID)
+			if turns := a.cancels[p.SessionID]; turns != nil {
+				delete(turns, turnID) // only THIS turn's entry — never a sibling's
+				if len(turns) == 0 {
+					delete(a.cancels, p.SessionID)
+				}
+			}
 			a.mu.Unlock()
 			cancel()
 		}()
@@ -121,8 +141,8 @@ func (a *Agent) onNotify(method string, params json.RawMessage) {
 	}
 	_ = json.Unmarshal(params, &p)
 	a.mu.Lock()
-	if cancel := a.cancels[p.SessionID]; cancel != nil {
-		cancel()
+	for _, cancel := range a.cancels[p.SessionID] {
+		cancel() // every active turn of the session — not just the newest
 	}
 	a.mu.Unlock()
 }

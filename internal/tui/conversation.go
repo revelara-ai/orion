@@ -132,6 +132,19 @@ type sessionResetMsg struct {
 	sid string
 	err error
 }
+// drainTimeoutMsg unblocks a drain whose agent never acknowledged the cancel
+// (or-or3j): the gate is safe by default, but a wedged agent must not brick
+// the UI — the timeout surfaces a note and accepts input again.
+type drainTimeoutMsg struct{ gen int }
+
+// drainTimeout is how long a cancel waits for the agent to actually stop
+// before force-unblocking input.
+const drainTimeout = 10 * time.Second
+
+func drainTimeoutCmd(gen int) tea.Cmd {
+	return tea.Tick(drainTimeout, func(time.Time) tea.Msg { return drainTimeoutMsg{gen: gen} })
+}
+
 type permMsg struct {                 // the agent requested a permission
 	req   acp.PermissionRequest
 	reply chan acp.PermissionResult
@@ -168,6 +181,14 @@ type Conversation struct {
 	ready         bool
 	inFlight      bool
 	turnGen       int // monotonic prompt-turn id; stale-gen async msgs are dropped (or-5g2q)
+	// draining serializes cancel-then-resubmit (or-or3j): after a cancel, the
+	// cancelled turn's goroutine is still parked in its session/prompt Call and
+	// the agent may still be emitting — a resubmitted turn's sink would adopt
+	// that stale output (acp.Update carries no turn id). New prompts are held
+	// until the cancelled turn's turnDoneMsg lands (drainGen names it) or the
+	// drain times out.
+	draining bool
+	drainGen int
 	// permQueue is the FIFO of in-flight permission requests (or-f06). Only the
 	// head is surfaced to the human; answering it pops the head and surfaces the
 	// next. A single slot would let a second concurrent request overwrite — and
@@ -323,6 +344,17 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case turnDoneMsg:
+		// A draining (cancelled) turn's goroutine returned: the agent has
+		// stopped emitting, so it is safe to accept the next prompt (or-or3j).
+		// Checked BEFORE the stale-gen drop — the drained gen is by definition
+		// stale (cancelInFlight advanced turnGen past it).
+		if m.draining && t.gen == m.drainGen {
+			m.draining = false
+			m.activity.finish() // the cancelled turn's panel state ends with it
+			m.input.Placeholder = "your reply…"
+			m.render()
+			return m, nil
+		}
 		if t.gen != m.turnGen {
 			return m, nil // a superseded turn completing — must not reset the live turn
 		}
@@ -332,6 +364,15 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.msgs = append(m.msgs, msg{role: "orion", text: "error: " + t.err.Error()})
 		}
 		m.render()
+		return m, nil
+
+	case drainTimeoutMsg:
+		if m.draining && t.gen == m.drainGen {
+			m.draining = false
+			m.input.Placeholder = "your reply…"
+			m.msgs = append(m.msgs, msg{role: "orion", text: "cancel unacknowledged after " + drainTimeout.String() + " — accepting input (a cancelled turn's output may still arrive)"})
+			m.render()
+		}
 		return m, nil
 
 	case sessionResetMsg:
@@ -448,8 +489,7 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlC:
 			return m, m.handleCtrlC(wasArmed)
 		case tea.KeyEsc:
-			m.handleEsc()
-			return m, nil
+			return m, m.handleEsc()
 		case tea.KeyEnter:
 			return m, m.handleEnter()
 		}
@@ -559,7 +599,7 @@ func (m *Conversation) handleEnter() tea.Cmd {
 	// A turn is still processing (and no permission is awaiting an answer): keep
 	// the typed text in the box rather than resetting + silently dropping it. The
 	// spinner already signals "working"; the developer can re-send when it clears.
-	if !m.hasPerm() && m.inFlight {
+	if !m.hasPerm() && (m.inFlight || m.draining) {
 		return nil
 	}
 	m.input.Reset()
@@ -697,10 +737,17 @@ func (m *Conversation) cancelInFlight() bool {
 	}
 	if m.inFlight {
 		m.inFlight = false
+		// The cancelled turn's goroutine stays parked in its session/prompt
+		// Call until the agent acknowledges — DRAIN before accepting a new
+		// prompt (or-or3j), so the agent's tail output can never adopt the next
+		// turn's sink. The blocking Call is the drain sentinel by design; that
+		// is why promptCmd deliberately uses context.Background().
+		m.draining = true
+		m.drainGen = m.turnGen
+		m.input.Placeholder = "cancelling… (waiting for the agent to stop)"
 		// Advance the turn generation so the cancelled turn's still-alive
-		// goroutine (its Call is uncancellable today) cannot append its tail to
-		// the transcript after "cancelled" — its late gen-stamped messages no
-		// longer match turnGen and are dropped (or-5g2q).
+		// goroutine cannot append its tail to the transcript after "cancelled"
+		// — its late gen-stamped messages no longer match turnGen (or-5g2q).
 		m.turnGen++
 		cancelled = true
 	}
@@ -719,7 +766,7 @@ func (m *Conversation) handleCtrlC(wasArmed bool) tea.Cmd {
 	if m.cancelInFlight() {
 		m.msgs = append(m.msgs, msg{role: "orion", text: "⨯ cancelled"})
 		m.render()
-		return nil
+		return m.armDrainTimeout()
 	}
 	if strings.TrimSpace(m.input.Value()) != "" {
 		m.input.Reset()
@@ -734,16 +781,26 @@ func (m *Conversation) handleCtrlC(wasArmed bool) tea.Cmd {
 }
 
 // handleEsc cancels an in-flight turn (stops streaming); otherwise clears a drafted line.
-func (m *Conversation) handleEsc() {
+func (m *Conversation) handleEsc() tea.Cmd {
 	if m.cancelInFlight() {
 		m.msgs = append(m.msgs, msg{role: "orion", text: "⨯ cancelled"})
 		m.render()
-		return
+		return m.armDrainTimeout()
 	}
 	if strings.TrimSpace(m.input.Value()) != "" {
 		m.input.Reset()
 		m.relayout()
 	}
+	return nil
+}
+
+// armDrainTimeout schedules the wedged-agent escape hatch for the drain the
+// last cancel opened (nil when nothing is draining).
+func (m *Conversation) armDrainTimeout() tea.Cmd {
+	if !m.draining {
+		return nil
+	}
+	return drainTimeoutCmd(m.drainGen)
 }
 
 // quit tears the session down: interrupt the conductor, cancel the session (off the
