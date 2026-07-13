@@ -24,6 +24,12 @@
 //
 // Hooks run in registration order; the first Block wins; each hook sees the
 // previous hook's rewritten input. Nil callbacks are skipped.
+//
+// RUNTIME REGISTRATION (or-0sk, A2): the bus is consulted LIVE on every
+// dispatch — a hook registered mid-session intercepts already-built tool
+// registries' very next call (SetIntercept holds the bus method, not a
+// snapshot), and unregistering restores them. Pinned by
+// TestHookRegisteredMidSessionInterceptsLiveRegistry.
 package hookbus
 
 import (
