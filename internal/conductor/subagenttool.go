@@ -14,6 +14,23 @@ import (
 	"github.com/revelara-ai/orion/pkg/llm"
 )
 
+// thinkingPreview renders a subagent's in-progress thought as a single-line,
+// bounded activity label (or-3nv) — the freshest tail of the accumulated
+// thought, so the activity panel shows what the subagent is reasoning about
+// instead of a content-free "thinking". Empty/whitespace falls back to the bare
+// label.
+func thinkingPreview(thought string) string {
+	s := strings.Join(strings.Fields(thought), " ") // collapse newlines/runs to one line
+	if s == "" {
+		return "thinking"
+	}
+	const maxLen = 80
+	if r := []rune(s); len(r) > maxLen {
+		s = "…" + string(r[len(r)-maxLen:])
+	}
+	return "thinking: " + s
+}
+
 // delegatableTools is the fail-closed ALLOWLIST of the Conductor's own tools a spawned subagent may
 // hold. A subagent is a bounded nested worker for a self-contained slice (research, code inspection,
 // a scoped edit) — it MUST NOT reach the deterministic spec/build/change pipeline, git, beads, or
@@ -146,17 +163,23 @@ func registerSubagentTool(r *tools.Registry, c *orchestrator.Conductor, provider
 				Role:       "subagent",
 			}
 			var trace []string
+			var thought strings.Builder
 			convo, resp, runErr := loop.Run(cctx, []llm.Message{llm.TextMessage(llm.RoleUser, p.Task)},
 				func(e harness.Event) {
 					switch e.Kind {
 					case harness.EventToolCall:
 						trace = append(trace, e.Tool)
+						thought.Reset() // a new step: the prior thought is done
 						if emit != nil {
 							emit(acp.Activity(label, e.Tool, 1, "running"))
 						}
 					case harness.EventThought:
+						// Thoughts stream as token deltas — accumulate them so the
+						// activity shows WHAT the subagent is reasoning about, not a
+						// content-free "thinking" (or-3nv).
 						if emit != nil && strings.TrimSpace(e.Text) != "" {
-							emit(acp.Activity(label, "thinking", 1, "running"))
+							thought.WriteString(e.Text)
+							emit(acp.Activity(label, thinkingPreview(thought.String()), 1, "running"))
 						}
 					}
 				})

@@ -130,3 +130,24 @@ func TestFsTerminalAccessIsSandboxScoped(t *testing.T) {
 		t.Fatal("out-of-scope corpus read must be rejected")
 	}
 }
+
+// TestRouteDropsActivityUpdates (or-3nv): activity updates drive the live panel
+// via the onUpdate sink, so PaneBuffers must NOT buffer them — routing them into
+// the never-read Conversation slice only grows it unboundedly per turn.
+func TestRouteDropsActivityUpdates(t *testing.T) {
+	p := &PaneBuffers{}
+	// A burst of activity updates (the highest-frequency kind).
+	for i := 0; i < 5; i++ {
+		p.Route(acp.Activity("Orion", "regression gate", 0, "running"))
+	}
+	conv, plan, fleet, proof := p.Snapshot()
+	if n := len(conv) + len(plan) + len(fleet) + len(proof); n != 0 {
+		t.Fatalf("activity updates must not accumulate in any pane buffer, got %d lines (conv=%v)", n, conv)
+	}
+	// Negative: a real conversation update STILL routes — the drop is scoped to
+	// activity, not a blanket swallow of the default case.
+	p.Route(acp.Update{Kind: "agent_message", Text: "hi"})
+	if conv, _, _, _ := p.Snapshot(); len(conv) != 1 || conv[0] != "hi" {
+		t.Fatalf("agent_message must still route to conversation, got %v", conv)
+	}
+}
