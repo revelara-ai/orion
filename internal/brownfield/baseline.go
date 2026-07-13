@@ -69,6 +69,11 @@ func baselineSkip(ctx context.Context, repoDir string, skip []string, progress P
 		return TestResult{Skipped: "no known toolchain (looked for go.mod)"}, nil
 	}
 	argv := withGateTimeout(withSkip(tc.TestCmd, skip))
+	release, lerr := acquireProofLock(ctx) // or-6wbl: one suite machine-wide
+	if lerr != nil {
+		return TestResult{}, lerr
+	}
+	defer release()
 	out, err := runTests(ctx, repoDir, argv, progress, step, 0)
 	return TestResult{
 		Detected:  true,
@@ -169,13 +174,22 @@ func regressionTestEnv() []string {
 // proven at a 20-minute ceiling.
 const gateTestTimeout = "-timeout=20m"
 
+// gateTimeoutFlag returns the per-binary timeout flag (ORION_GATE_TEST_TIMEOUT
+// overrides, e.g. "2s" in tests exercising the timeout-retry path).
+func gateTimeoutFlag() string {
+	if v := strings.TrimSpace(os.Getenv("ORION_GATE_TEST_TIMEOUT")); v != "" {
+		return "-timeout=" + v
+	}
+	return gateTestTimeout
+}
+
 // withGateTimeout inserts the gate timeout right after the test subcommand.
 func withGateTimeout(argv []string) []string {
 	if len(argv) < 2 {
 		return argv
 	}
 	out := append([]string{}, argv[:2]...)
-	out = append(out, gateTestTimeout)
+	out = append(out, gateTimeoutFlag())
 	return append(out, argv[2:]...)
 }
 

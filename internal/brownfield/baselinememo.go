@@ -120,3 +120,9 @@ func cachedBaselineResult(e baselineMemoEntry) TestResult {
 		Output: "baseline: cached green from a prior run at " + e.At + " (same tree/scope/skip/go — ORION_BASELINE_MEMO=off to force a fresh run)",
 	}
 }
+
+// looksTimedOut classifies a suite failure as a per-binary timeout — go test
+// panics with "test timed out" when -timeout fires (or-6wbl b).
+func looksTimedOut(out string) bool {
+	return strings.Contains(out, "test timed out")
+}
