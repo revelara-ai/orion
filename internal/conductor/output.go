@@ -124,7 +124,11 @@ func provenanceNote(es spec.ExecutableSpec) string {
 	b.WriteString("This code was generated and **independently proven** by Orion against a ratified spec\n(behavioral + empirical + hazard proof, all Accept).\n\n")
 	fmt.Fprintf(&b, "- **Intent:** %s\n", strings.TrimSpace(es.Intent))
 	fmt.Fprintf(&b, "- **Spec anchor:** `%s`\n", shortHash(es.Hash))
-	fmt.Fprintf(&b, "- **Route:** %s · **Port:** %d · **Format:** %s\n", es.ResponseContract.Route, es.ResponseContract.Port, es.ResponseContract.Format())
+	// or-hn15.5: only an HTTP artifact has a route/port — a non-HTTP build must
+	// not claim a phantom "/ · port 0" endpoint.
+	if strings.TrimSpace(es.ResponseContract.Route) != "" {
+		fmt.Fprintf(&b, "- **Route:** %s · **Port:** %d · **Format:** %s\n", es.ResponseContract.Route, es.ResponseContract.Port, es.ResponseContract.Format())
+	}
 	b.WriteString("\nEdit freely — re-running the build re-proves and overwrites the source here.\n")
 	return b.String()
 }

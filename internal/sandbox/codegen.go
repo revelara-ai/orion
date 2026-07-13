@@ -39,6 +39,13 @@ type GenSpec struct {
 	// ProgramFamily selects the generation contract: "" == "service" (HTTP, the
 	// default) | "cli" (or-v9f.3 exec cases: a run() entry + thin os.Exit main).
 	ProgramFamily string
+	// Language + Engine carry the ratified direction (or-hn15.5): "" defaults to
+	// Go, the only language the generator/proof harness supports today. A non-Go
+	// language or a real engine is refused at BuildDAG (never silently emitted as
+	// Go); honoring them end-to-end is or-4rxw. Threaded now so the generator can
+	// branch on them once that capability lands.
+	Language string
+	Engine   string
 	// Context is the assembled, trust-tiered recalled context (spec constraints +
 	// retrieved memory, with generation-tier memory quarantined) that the Conductor
 	// injects into the generation prompt (or-b73). The deterministic fixture ignores
