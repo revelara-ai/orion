@@ -162,11 +162,18 @@ func TestPromptPersistsSessionToDisk(t *testing.T) {
 	}
 	var found, foundName string
 	dir := filepath.Join(st.Dir(), "sessions")
-	entries, _ := os.ReadDir(dir)
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".md") {
-			b, _ := os.ReadFile(filepath.Join(dir, e.Name()))
-			found, foundName = string(b), e.Name()
+	// or-08l: persist is async (off the turn's return path) — poll briefly.
+	deadline := time.Now().Add(3 * time.Second)
+	for found == "" && time.Now().Before(deadline) {
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".md") {
+				b, _ := os.ReadFile(filepath.Join(dir, e.Name()))
+				found, foundName = string(b), e.Name()
+			}
+		}
+		if found == "" {
+			time.Sleep(10 * time.Millisecond)
 		}
 	}
 	if !strings.Contains(found, "build a time service") {
