@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/revelara-ai/orion/internal/polaris"
 )
@@ -104,6 +105,17 @@ func cmdLogin(args []string) int {
 		return 1
 	}
 	fmt.Printf("logged in to %s (credential cached at %s)\n", base, store.Path())
+	// or-xe7.9: post-login probe — an org-less JWT only fails at tool-call
+	// time (403); say so now while the developer is still at the keyboard.
+	if mcp := polarisMCPURL(*mcpURL); mcp != "" && tok.AccessToken != "" {
+		pctx, pcancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer pcancel()
+		if detail, perr := polaris.ProbeSession(pctx, mcp, tok); perr != nil {
+			fmt.Fprintln(os.Stderr, "warning:", perr)
+		} else {
+			fmt.Println(detail)
+		}
+	}
 	return 0
 }
 
