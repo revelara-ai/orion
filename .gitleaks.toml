@@ -1,0 +1,13 @@
+# gitleaks config (or-c6zf.4): the two historical findings are DELIBERATE test
+# fixtures with obviously-fake values — the secret scanner's own planted token
+# and the config guard's secret-shaped rejection cases. Allowlisting them keeps
+# the scan CLEAN so any real leak stands out.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "intentional test fixtures (fake values)"
+paths = [
+  '''internal/proof/secretscan_test\.go''',
+  '''pkg/llm/config/config_test\.go''',
+]

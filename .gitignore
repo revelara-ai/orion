@@ -15,3 +15,9 @@
 # Generated build output (orion exports proven code here in USER repos; noise in this one)
 orion-build/
 debug/
+# personal / machine-local
+.claude/settings.local.json
+/bin/
+.beads/
+.agents/
+.codex/
