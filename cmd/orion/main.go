@@ -91,6 +91,12 @@ func run(args []string) int {
 			return cmdCheckpoint(args[1:])
 		case "doctor":
 			return cmdDoctor(args[1:])
+		case "backup":
+			return cmdBackup(args[1:])
+		case "restore":
+			return cmdRestore(args[1:])
+		case "logs":
+			return cmdLogs(args[1:])
 		case "skills":
 			return cmdSkills(args[1:])
 		case "agents":
