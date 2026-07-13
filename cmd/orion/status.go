@@ -96,15 +96,16 @@ func livePolarisCheck() health.Check {
 	if err != nil || !ok {
 		return health.Check{Name: "revelara.ai", Status: health.Warn, Detail: "not logged in"}
 	}
-	id, err := polaris.NewClient(tok.BaseURL).Me(context.Background(), tok.AccessToken)
-	if err != nil {
-		return health.Check{Name: "revelara.ai", Status: health.Warn, Detail: "cached credential present for " + tok.BaseURL + " (server unreachable)"}
+	// or-xe7.5: verify the OAuth token against the MCP service (initialize),
+	// not the retired REST Me() — the MCP endpoint is the single auth surface.
+	cfg, _ := polaris.NewConfigStore(dir)
+	endpoint := polaris.ResolveMCPURL(os.Getenv("ORION_POLARIS_MCP_URL"), func() polaris.Config { c, _ := cfg.Load(); return c }(), tok)
+	pctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	if _, err := polaris.NewMCPClient(endpoint, tok.AccessToken).Initialize(pctx); err != nil {
+		return health.Check{Name: "revelara.ai", Status: health.Warn, Detail: "cached credential present for " + tok.BaseURL + " (MCP unreachable / token stale)"}
 	}
-	who := id.Email
-	if who == "" {
-		who = "authenticated"
-	}
-	return health.Check{Name: "revelara.ai", Status: health.OK, Detail: "connected as " + who}
+	return health.Check{Name: "revelara.ai", Status: health.OK, Detail: "connected (MCP session verified) at " + endpoint}
 }
 
 // spendSummary reads the persistent ledger (or-v9f.28): cumulative project
