@@ -124,6 +124,7 @@ type Checklists struct {
 var validDimensions = map[string]bool{
 	"functional": true, "scale": true, "observability": true, "oncall": true,
 	"data": true, "slo": true, "security": true, "dependencies": true,
+	"direction": true, // or-045a.5: stack/language/engine/protocol/repo-layout
 }
 
 // LoadChecklists reads the externalized checklists. ok=false means "use the

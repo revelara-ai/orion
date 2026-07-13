@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // registers the pure-Go sqlite driver
@@ -89,6 +90,13 @@ func Open(dir string) (*Store, error) {
 			_ = db.Close()
 			return nil, fmt.Errorf("contextstore migrate columns: %w", err)
 		}
+	}
+	// or-045a.5: spec_dimensions' dimension CHECK gained 'direction'. SQLite
+	// cannot ALTER a CHECK constraint — rebuild the table once for DBs created
+	// before the direction dimension existed (detected via the stored DDL).
+	if err := ensureDirectionDimension(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("contextstore migrate spec_dimensions: %w", err)
 	}
 	// projects.status (or-v9f.1): the backfill must run ONLY when the column is
 	// first added to a pre-queue DB — the latest project was the implicit work
@@ -636,4 +644,36 @@ func (s *Store) ListGoldLabels(ctx context.Context, projectID string) ([]GoldLab
 		out = append(out, g)
 	}
 	return out, rows.Err()
+}
+
+// ensureDirectionDimension rebuilds spec_dimensions when its dimension CHECK
+// predates the 'direction' vocabulary (or-045a.5): SQLite cannot alter a CHECK,
+// so the one-time migration recreates the table with the extended constraint
+// and copies every row. Idempotent — a DB whose DDL already names 'direction'
+// is untouched.
+func ensureDirectionDimension(db *sql.DB) error {
+	var ddl string
+	err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='spec_dimensions'`).Scan(&ddl)
+	if err != nil {
+		return err // the table always exists (schemaSQL ran first)
+	}
+	if strings.Contains(ddl, "'direction'") {
+		return nil
+	}
+	_, err = db.Exec(`
+		CREATE TABLE spec_dimensions_new (
+		    id               TEXT PRIMARY KEY,
+		    spec_id          TEXT NOT NULL REFERENCES specs(id) ON DELETE CASCADE,
+		    dimension        TEXT NOT NULL CHECK (dimension IN
+		                       ('functional','scale','observability','oncall','data','slo','security','dependencies','direction')),
+		    value_structured TEXT NOT NULL DEFAULT '{}',
+		    value_kind       TEXT NOT NULL CHECK (value_kind IN ('precise','fallback_preset','unresolved')),
+		    tier_required    INTEGER NOT NULL DEFAULT 0,
+		    resolved_at      TEXT,
+		    UNIQUE (spec_id, dimension)
+		);
+		INSERT INTO spec_dimensions_new SELECT * FROM spec_dimensions;
+		DROP TABLE spec_dimensions;
+		ALTER TABLE spec_dimensions_new RENAME TO spec_dimensions;`)
+	return err
 }

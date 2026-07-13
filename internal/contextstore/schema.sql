@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS spec_dimensions (
     id               TEXT PRIMARY KEY,
     spec_id          TEXT NOT NULL REFERENCES specs(id) ON DELETE CASCADE,
     dimension        TEXT NOT NULL CHECK (dimension IN
-                       ('functional','scale','observability','oncall','data','slo','security','dependencies')),
+                       ('functional','scale','observability','oncall','data','slo','security','dependencies','direction')),
     value_structured TEXT NOT NULL DEFAULT '{}',
     value_kind       TEXT NOT NULL CHECK (value_kind IN ('precise','fallback_preset','unresolved')),
     tier_required    INTEGER NOT NULL DEFAULT 0,

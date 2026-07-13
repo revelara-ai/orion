@@ -13,6 +13,7 @@ package decomposer
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
@@ -48,13 +49,7 @@ func Decompose(es spec.ExecutableSpec, projectType string) Epic {
 	target := capacityTarget(es)
 
 	tasks := []Task{
-		{
-			Key:             "scaffold",
-			Title:           "Scaffold Go module and entrypoint",
-			ProofObligation: "`go build ./...` succeeds and the binary starts cleanly",
-			FileScope:       "go.mod,cmd/",
-			Covers:          []string{string(completeness.DimFunctional)},
-		},
+		scaffoldTask(es),
 		functionalTask(projectType, es),
 		{
 			Key:             "capacity",
@@ -91,6 +86,32 @@ func Decompose(es spec.ExecutableSpec, projectType string) Epic {
 	}
 
 	return Epic{Title: "Deliver: " + es.Intent, Tasks: tasks}
+}
+
+// scaffoldTask is the project-skeleton task. The Go-specific scaffold (module +
+// `go build`) applies only when the ratified direction IS Go (or the default);
+// a ratified non-Go direction gets a language-honest skeleton obligation
+// instead of a blind Go+HTTP one (or-045a.5 — the harness must never silently
+// steer the plan back to its own comfort zone). Full non-Go proof execution is
+// owned by or-4rxw; here the DECISION visibly shapes the plan.
+func scaffoldTask(es spec.ExecutableSpec) Task {
+	lang := strings.ToLower(strings.TrimSpace(es.Decisions["direction.language"]))
+	if lang == "" || lang == "go" {
+		return Task{
+			Key:             "scaffold",
+			Title:           "Scaffold Go module and entrypoint",
+			ProofObligation: "`go build ./...` succeeds and the binary starts cleanly",
+			FileScope:       "go.mod,cmd/",
+			Covers:          []string{string(completeness.DimFunctional)},
+		}
+	}
+	return Task{
+		Key:             "scaffold",
+		Title:           fmt.Sprintf("Scaffold the %s project skeleton (direction.language=%s)", lang, lang),
+		ProofObligation: fmt.Sprintf("the %s project builds cleanly from a fresh checkout — reduced proof until the harness gains this toolchain (or-4rxw)", lang),
+		FileScope:       ".",
+		Covers:          []string{string(completeness.DimFunctional)},
+	}
 }
 
 // functionalTask is the per-type FUNCTIONAL task — the one that bakes in what the

@@ -295,7 +295,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			// first-class decisions in the spec lineage, not checklist entries —
 			// the old allowlist rejected every grill answer ("not a spec decision
 			// key"), so grill-driven intake could never record what it elicited.
-			if !c.DecisionKeys()[p.Key] && !strings.HasPrefix(p.Key, "grill.") {
+			if !c.DecisionKeys()[p.Key] && !strings.HasPrefix(p.Key, "grill.") && !strings.HasPrefix(p.Key, "direction.") {
 				return "", fmt.Errorf("%q is not a spec decision key", p.Key)
 			}
 			if err := c.RecordAnswer(ctx, p.Key, p.Value); err != nil {
@@ -333,6 +333,25 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				return "", err
 			}
 			return "goals ratified (hash " + hash[:12] + "…) — they now steer the grill and the loss-scenario analysis", nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "acknowledge_reduced_proof",
+		Description: "Record the developer's EXPLICIT acceptance that a ratified direction decision (e.g. direction.wire_protocol=grpc) exceeds what the proof harness can prove today, so the build proceeds with the provable subset of obligations (or-045a.5). Call ONLY after ratification was refused with a capability gap AND the developer chose 'reduced proof' over changing direction. Audited (gold-labeled).",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"keys":{"type":"array","minItems":1,"items":{"type":"string"},"description":"the direction keys the developer accepted reduced proof for"}},"required":["keys"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct {
+				Keys []string `json:"keys"`
+			}
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			if err := c.AcknowledgeReducedProof(ctx, p.Keys); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("reduced proof acknowledged for %s — ratification may proceed; the unprovable obligations are recorded, not silently dropped", strings.Join(p.Keys, ", ")), nil
 		},
 	})
 

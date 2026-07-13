@@ -335,6 +335,12 @@ func (c *Conductor) loadAnswers(ctx context.Context, specID string) (answers, ki
 		if d.ValueKind == "assumption_approved" {
 			kinds[d.Key] = "fallback_preset"
 		}
+		// A reduced-proof acknowledgment (or-045a.5) is a human-confirmed
+		// EXPLICIT choice: the decisions table keeps the audit kind, while the
+		// spec_dimensions CHECK vocabulary sees a precise value.
+		if d.ValueKind == "reduced_proof_acknowledged" {
+			kinds[d.Key] = "precise"
+		}
 	}
 	return answers, kinds, nil
 }
@@ -432,6 +438,24 @@ func (c *Conductor) ApproveSpec(ctx context.Context) (spec.ExecutableSpec, error
 		return spec.ExecutableSpec{}, fmt.Errorf(
 			"cannot ratify: the project type is unresolved — the intent carried no explicit software-type signal. Propose a type to the developer (service, CLI, game, pipeline, …) and record their confirmation with set_project_type first")
 	}
+	// Proof-capability gate (or-045a.5): a ratified DIRECTION the harness
+	// cannot prove is refused HONESTLY — never silently steered back to the
+	// Go+HTTP defaults (the mech-game dogfood shipped an HTTP/JSON milestone
+	// against its own gRPC decision). The developer either changes direction
+	// or explicitly accepts reduced proof (acknowledge_reduced_proof).
+	if gaps := completeness.DirectionGaps(es.Decisions); len(gaps) > 0 {
+		var open []string
+		for _, g := range gaps {
+			if !c.reducedProofAcknowledged(ctx, sp.ID, g.Key) {
+				open = append(open, fmt.Sprintf("%s=%s (provable today: %s)", g.Key, g.Value, strings.Join(g.Provable, ", ")))
+			}
+		}
+		if len(open) > 0 {
+			return spec.ExecutableSpec{}, fmt.Errorf(
+				"cannot ratify: %d direction decision(s) exceed the proof harness's current capability: %s — either change the direction, or have the developer EXPLICITLY accept a reduced proof for each with acknowledge_reduced_proof (the build then proceeds with the provable subset of obligations)",
+				len(open), strings.Join(open, "; "))
+		}
+	}
 	// Zero-case hard fail (or-8ti.1, the or-y9d false-pass class): a spec with
 	// nothing to execute would "prove" vacuously green. Ratification is where
 	// that stops — intermediate compiles (preview, decomposer) may pass through
@@ -527,6 +551,63 @@ func (c *Conductor) ApproveAssumptions(ctx context.Context) ([]string, error) {
 	}
 	c.log.InfoContext(ctx, "assumptions approved", "count", len(approved))
 	return approved, nil
+}
+
+// reducedProofAcknowledged reports whether the developer explicitly accepted
+// reduced proof for a direction key on this spec (or-045a.5).
+func (c *Conductor) reducedProofAcknowledged(ctx context.Context, specID, key string) bool {
+	ds, err := c.store.DecisionsForSpec(ctx, specID)
+	if err != nil {
+		return false
+	}
+	for _, d := range ds {
+		if d.Key == key && d.ValueKind == "reduced_proof_acknowledged" {
+			return true
+		}
+	}
+	return false
+}
+
+// AcknowledgeReducedProof records the developer's EXPLICIT acceptance that the
+// named direction decisions exceed the harness's proof capability and the
+// build proceeds with the provable subset of obligations (or-045a.5). Only
+// keys with a REAL capability gap may be acknowledged — the acknowledgment is
+// an audited act (gold-labeled), mirroring ApproveAssumptions.
+func (c *Conductor) AcknowledgeReducedProof(ctx context.Context, keys []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c.store == nil {
+		return errNoStore
+	}
+	proj, sp, err := c.currentProjectSpec(ctx)
+	if err != nil {
+		return err
+	}
+	answers, _, err := c.loadAnswers(ctx, sp.ID)
+	if err != nil {
+		return err
+	}
+	gapped := map[string]string{}
+	for _, g := range completeness.DirectionGaps(answers) {
+		gapped[g.Key] = g.Value
+	}
+	return c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+		m, v := c.producerProvenance()
+		for _, k := range keys {
+			val, ok := gapped[k]
+			if !ok {
+				return fmt.Errorf("acknowledge_reduced_proof: %q has no capability gap — nothing to acknowledge", k)
+			}
+			if _, e := tx.Decisions().Create(ctx, proj.ID, sp.ID, k, val, "reduced_proof_acknowledged", false); e != nil {
+				return e
+			}
+			if _, e := tx.GoldLabels().Create(ctx, proj.ID, "reduced_proof", "accept", sp.ID, k+"="+val, m, v); e != nil {
+				return e
+			}
+		}
+		return nil
+	})
 }
 
 // SpecView returns the current spec projection (open decisions recomputed from
