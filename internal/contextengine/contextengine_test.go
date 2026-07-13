@@ -231,3 +231,37 @@ func TestAssembleStopsAtTokenBudget(t *testing.T) {
 		t.Fatalf("count-window path must be unchanged, got %d", len(b2.Trusted))
 	}
 }
+
+// TestBundleNeverInjectsAnotherProjectsDecisions (or-gb1.6 done-when 5a): a
+// TrustProof decision written under project A does not appear in a bundle
+// assembled for a project-B task — the PRD's project-scoped LTM made real.
+func TestBundleNeverInjectsAnotherProjectsDecisions(t *testing.T) {
+	ctx := context.Background()
+	mem, err := memory.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = mem.Close() }()
+
+	mem.ForProject("projA")
+	if _, err := mem.Write(ctx, memory.Item{
+		Tier: memory.MTM, Kind: memory.KindDecision, TrustTier: memory.TrustProof, Heat: 1.0,
+		Content: "Decided constraints from proven task X: module orion-generated/a-svc; routes /a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	mem.ForProject("projB")
+	b, err := New(nil, mem).Assemble(ctx, "", "decided constraints module routes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range b.Trusted {
+		if strings.Contains(it.Content, "a-svc") {
+			t.Fatalf("project A's decision leaked into project B's bundle: %+v", it)
+		}
+	}
+	if b.HasConstraint("a-svc") {
+		t.Fatal("project A's decision must not become a project-B constraint")
+	}
+}

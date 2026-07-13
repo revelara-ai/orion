@@ -14,7 +14,10 @@ CREATE TABLE IF NOT EXISTS memory_items (
     created_at       TEXT NOT NULL,
     last_accessed_at TEXT NOT NULL,
     promotion_id     TEXT NOT NULL DEFAULT '',
-    candidate        INTEGER NOT NULL DEFAULT 0
+    candidate        INTEGER NOT NULL DEFAULT 0,
+    -- or-gb1.6: project scoping. '' = legacy/global (explicitly generalized);
+    -- scoped reads return project-local + '' items, never another project's.
+    project_id       TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_memory_tier ON memory_items(tier, pinned, heat);
 

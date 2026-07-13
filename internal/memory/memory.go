@@ -15,9 +15,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"errors"
 	_ "embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -55,8 +55,8 @@ const (
 	KindSummary   = "summary"
 	KindPattern   = "pattern"
 	KindProcedure = "procedure"
-	KindFailure   = "failure" // why a task failed (proof facts) / agent narrative (quarantined)
-	KindRule      = "rule"    // distilled transferable rule (or-gb1.4; generation-tier candidate until verified)
+	KindFailure   = "failure"       // why a task failed (proof facts) / agent narrative (quarantined)
+	KindRule      = "rule"          // distilled transferable rule (or-gb1.4; generation-tier candidate until verified)
 	KindVerified  = "verified-rule" // stage-3: a rule whose deterministic check passed under the sandbox (or-gb1.4)
 )
 
@@ -74,6 +74,9 @@ type Item struct {
 	VisitCount       int       // times retrieved-as-relevant (frequency signal)
 	LastAccessed     time.Time // recency signal
 	Candidate        bool      // self-evolution proposal (active=false): excluded from active recall (or-ykz.8)
+	// ProjectID (or-gb1.6): the owning project. '' = explicitly generalized
+	// (legacy/global) — visible to every project; scoped items never travel.
+	ProjectID string
 }
 
 // Heat model (or-hd3.3): effective heat = base importance decayed by recency since last
@@ -124,9 +127,10 @@ var schemaSQL string
 
 // Store is the memory store, backed by its own SQLite DB.
 type Store struct {
-	db   *sql.DB
-	emb  embed.Embedder // active embedder for semantic recall (nil = keyword+heat only)
-	vidx VectorIndex    // vector persistence + search (swap point: brute-force → sqlite-vec/ANN)
+	db        *sql.DB
+	emb       embed.Embedder // active embedder for semantic recall (nil = keyword+heat only)
+	vidx      VectorIndex    // vector persistence + search (swap point: brute-force → sqlite-vec/ANN)
+	projectID string         // or-gb1.6: read/write scope ('' = unscoped)
 
 	// query-vector cache (or-f45): the context engine issues two same-query Retrieves per
 	// assembly; cache the last query embedding so the query is embedded once, not twice.
@@ -172,6 +176,23 @@ func (s *Store) queryVector(ctx context.Context, query string) ([]float32, bool)
 	return qv[0], true
 }
 
+// ForProject scopes the store to a project (or-gb1.6): writes stamp it and
+// reads return project-local + explicitly-generalized (”) items — never
+// another project's. Unscoped (” — e.g. admin views) sees everything.
+func (s *Store) ForProject(projectID string) *Store {
+	s.projectID = projectID
+	return s
+}
+
+// scopeWhere returns the read-filter clause + args for the current scope
+// (prefixed with AND; empty when unscoped).
+func (s *Store) scopeWhere() (string, []any) {
+	if s.projectID == "" {
+		return "", nil
+	}
+	return " AND (project_id = ? OR project_id = '')", []any{s.projectID}
+}
+
 // Open opens (creating if needed) the memory store under dir/memory.db.
 func Open(dir string) (*Store, error) {
 	path := filepath.Join(dir, "memory.db")
@@ -213,6 +234,7 @@ func Open(dir string) (*Store, error) {
 		{"visit_count", `ALTER TABLE memory_items ADD COLUMN visit_count INTEGER NOT NULL DEFAULT 0`},
 		{"security_relevant", `ALTER TABLE memory_items ADD COLUMN security_relevant INTEGER NOT NULL DEFAULT 0`},
 		{"promotion_id", `ALTER TABLE memory_items ADD COLUMN promotion_id TEXT NOT NULL DEFAULT ''`},
+		{"project_id", `ALTER TABLE memory_items ADD COLUMN project_id TEXT NOT NULL DEFAULT ''`},
 		{"candidate", `ALTER TABLE memory_items ADD COLUMN candidate INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, m := range migrations {
@@ -232,8 +254,14 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // Write inserts (or replaces by content hash within a tier) a memory item.
 func (s *Store) Write(ctx context.Context, it Item) (string, error) {
+	if it.ProjectID == "" {
+		it.ProjectID = s.projectID // stamp the active scope (or-gb1.6)
+	}
 	if it.Hash == "" {
-		sum := sha256.Sum256([]byte(it.Content))
+		// or-gb1.6: the content hash is SALTED by project so identical content
+		// in two projects yields two rows — a cross-project id collision would
+		// otherwise let project B's write refresh project A's row.
+		sum := sha256.Sum256([]byte(it.ProjectID + "\x00" + it.Content))
 		it.Hash = hex.EncodeToString(sum[:])
 	}
 	if it.TrustTier == "" {
@@ -273,10 +301,10 @@ func (s *Store) Write(ctx context.Context, it Item) (string, error) {
 	// anti-erosion status — that would be a poisoning vector at the trust wall. Intentional
 	// pinning uses Pin(); first-writer-wins for classification.
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO memory_items (id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, created_at, last_accessed_at, candidate)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+		`INSERT INTO memory_items (id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, created_at, last_accessed_at, candidate, project_id)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET heat=excluded.heat, last_accessed_at=excluded.last_accessed_at`,
-		id, string(it.Tier), it.Kind, it.Content, it.Hash, pinned, secRel, it.TrustTier, it.Heat, now, now, cand)
+		id, string(it.Tier), it.Kind, it.Content, it.Hash, pinned, secRel, it.TrustTier, it.Heat, now, now, cand, it.ProjectID)
 	if err != nil {
 		return "", fmt.Errorf("memory write: %w", err)
 	}
@@ -309,9 +337,11 @@ func (s *Store) Retrieve(ctx context.Context, query string, tiers ...Tier) ([]It
 		placeholders[i] = "?"
 		args[i] = string(t)
 	}
+	scopeClause, scopeArgs := s.scopeWhere()
+	args = append(args, scopeArgs...)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, visit_count, last_accessed_at
-		 FROM memory_items WHERE candidate=0 AND tier IN (`+strings.Join(placeholders, ",")+`)`, args...)
+		 FROM memory_items WHERE candidate=0 AND tier IN (`+strings.Join(placeholders, ",")+`)`+scopeClause, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -454,9 +484,10 @@ func (s *Store) summarizeForEviction(ctx context.Context, tier Tier, keep int) (
 	if keep < 0 {
 		keep = 0
 	}
+	evScope, evArgs := s.scopeWhere()
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, kind, content, content_hash, trust_tier, heat, visit_count, last_accessed_at, created_at
-		 FROM memory_items WHERE tier=? AND pinned=0 AND security_relevant=0`, string(tier))
+		 FROM memory_items WHERE tier=? AND pinned=0 AND security_relevant=0`+evScope, append([]any{string(tier)}, evArgs...)...)
 	if err != nil {
 		return nil, fmt.Errorf("memory summarize scan: %w", err)
 	}
@@ -589,8 +620,9 @@ const (
 func (s *Store) Promote(ctx context.Context) (string, int, error) {
 	// Pinned items are anti-erosion anchors held in their tier on purpose — they are not
 	// promotion candidates (moving them between tiers is needless churn).
+	prScope, prArgs := s.scopeWhere()
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, heat, visit_count, last_accessed_at FROM memory_items WHERE tier=? AND pinned=0`, string(MTM))
+		`SELECT id, heat, visit_count, last_accessed_at FROM memory_items WHERE tier=? AND pinned=0`+prScope, append([]any{string(MTM)}, prArgs...)...)
 	if err != nil {
 		return "", 0, fmt.Errorf("memory promote scan: %w", err)
 	}
@@ -651,12 +683,12 @@ func (s *Store) ReversePromotion(ctx context.Context, promotionID string) error 
 // source hypothesis and asserts the original row's classification is intact).
 func (s *Store) Get(ctx context.Context, id string) (Item, bool, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, visit_count, last_accessed_at, candidate
+		`SELECT id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, visit_count, last_accessed_at, candidate, project_id
 		 FROM memory_items WHERE id=?`, id)
 	var it Item
 	var pinned, secRel, cand int
 	var la string
-	if err := row.Scan(&it.ID, &it.Tier, &it.Kind, &it.Content, &it.Hash, &pinned, &secRel, &it.TrustTier, &it.Heat, &it.VisitCount, &la, &cand); err != nil {
+	if err := row.Scan(&it.ID, &it.Tier, &it.Kind, &it.Content, &it.Hash, &pinned, &secRel, &it.TrustTier, &it.Heat, &it.VisitCount, &la, &cand, &it.ProjectID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Item{}, false, nil
 		}
@@ -673,9 +705,10 @@ func (s *Store) Get(ctx context.Context, id string) (Item, bool, error) {
 // lookup the SkillEval gate uses to find a candidate's eval evidence
 // (or-gb1.5). Not heat-ranked; not recall.
 func (s *Store) ListByKind(ctx context.Context, kind string) ([]Item, error) {
+	lkScope, lkArgs := s.scopeWhere()
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, visit_count, last_accessed_at, candidate
-		 FROM memory_items WHERE kind=?`, kind)
+		 FROM memory_items WHERE kind=?`+lkScope, append([]any{kind}, lkArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -718,9 +751,10 @@ func (s *Store) ListCandidates(ctx context.Context, tiers ...Tier) ([]Item, erro
 		placeholders[i] = "?"
 		args[i] = string(t)
 	}
+	lcScope, lcArgs := s.scopeWhere()
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, visit_count, last_accessed_at
-		 FROM memory_items WHERE candidate=1 AND tier IN (`+strings.Join(placeholders, ",")+`)`, args...)
+		 FROM memory_items WHERE candidate=1 AND tier IN (`+strings.Join(placeholders, ",")+`)`+lcScope, append(args, lcArgs...)...)
 	if err != nil {
 		return nil, fmt.Errorf("memory candidates: %w", err)
 	}
