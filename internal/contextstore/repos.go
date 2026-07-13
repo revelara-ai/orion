@@ -3,6 +3,7 @@ package contextstore
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -1208,4 +1209,52 @@ func (t *Tx) ResolveEscalationGold(ctx context.Context, escalationID, resolution
 	}
 	_, err := t.GoldLabels().Create(ctx, projectID, "escalation", "resolved", "", escalationID, modelID, producerVersion)
 	return err
+}
+
+// ── RatifiedUCARepo (or-06lr) ────────────────────────────────────────────────
+
+// RatifiedUCARepo persists the developer-confirmed STAMP baseline.
+type RatifiedUCARepo struct{ tx *sql.Tx }
+
+// RatifiedUCA is one confirmed unsafe-control-action row.
+type RatifiedUCA struct {
+	ID, ProjectID, UCAID, Hazard, Disposition string
+	CodeTokens                                []string
+	CreatedAt                                 string
+}
+
+// Upsert records (or re-confirms) one UCA for the project.
+func (r *RatifiedUCARepo) Upsert(ctx context.Context, projectID, ucaID, hazard, disposition string, tokens []string) error {
+	tj, err := json.Marshal(tokens)
+	if err != nil {
+		return err
+	}
+	_, err = r.tx.ExecContext(ctx,
+		`INSERT INTO ratified_ucas (id, project_id, uca_id, hazard, disposition, code_tokens, created_at)
+		 VALUES (?,?,?,?,?,?,?)
+		 ON CONFLICT(project_id, uca_id) DO UPDATE SET hazard=excluded.hazard, disposition=excluded.disposition, code_tokens=excluded.code_tokens`,
+		newID(), projectID, ucaID, hazard, disposition, string(tj), nowRFC3339())
+	return err
+}
+
+// ListForProject returns the project's ratified baseline.
+func (r *RatifiedUCARepo) ListForProject(ctx context.Context, projectID string) ([]RatifiedUCA, error) {
+	rows, err := r.tx.QueryContext(ctx,
+		`SELECT id, project_id, uca_id, hazard, disposition, code_tokens, created_at
+		 FROM ratified_ucas WHERE project_id=? ORDER BY uca_id`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []RatifiedUCA
+	for rows.Next() {
+		var u RatifiedUCA
+		var tokens string
+		if err := rows.Scan(&u.ID, &u.ProjectID, &u.UCAID, &u.Hazard, &u.Disposition, &tokens, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(tokens), &u.CodeTokens)
+		out = append(out, u)
+	}
+	return out, rows.Err()
 }
