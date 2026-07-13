@@ -114,8 +114,24 @@ func RegressionGateScoped(ctx context.Context, repoDir string, m RepoMap, skip [
 	if err != nil {
 		return RegressionResult{}, err
 	}
-	progress.emit("green-before", "running the scoped baseline (change stashed)")
-	before, berr := baselineScopedSkip(ctx, repoDir, pats, skip, progress, "green-before")
+	// or-u595: an unchanged HEAD tree's green baseline is memoized — same
+	// (tree, scope, skip, go version) key; GREEN only; dirty trees never hit.
+	memoKey, memoOK := baselineMemoKey(ctx, repoDir, pats, skip)
+	var before TestResult
+	var berr error
+	if memoOK {
+		if e, hit := loadBaselineMemo(ctx, repoDir, memoKey); hit {
+			progress.emit("green-before", "cached green baseline reused (same tree/scope/skip/go)")
+			before = cachedBaselineResult(e)
+		}
+	}
+	if !before.Passed {
+		progress.emit("green-before", "running the scoped baseline (change stashed)")
+		before, berr = baselineScopedSkip(ctx, repoDir, pats, skip, progress, "green-before")
+		if berr == nil && memoOK {
+			saveBaselineMemo(ctx, repoDir, memoKey, before)
+		}
+	}
 	if stashed {
 		if perr := gitStashPop(ctx, repoDir); perr != nil {
 			return RegressionResult{}, perr
