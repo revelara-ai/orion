@@ -88,8 +88,23 @@ func RegisteredProjectType(projectType string) bool {
 // checklist and the decomposer's per-type functional task template (or-3ba.1).
 func (a *Analyzer) ProjectType() string { return a.projectType }
 
-// projectTypeMatchers map a CLEAR intent signal to a non-default project type, in
-// priority order. The gate never guesses: only an explicit signal switches the type.
+// Unclassified is the project type of an intent with NO explicit type signal:
+// the conductor must propose a type and the developer confirm it before the
+// spec can ratify (or-045a.1). It is never silently built — the old behavior
+// (defaulting to http-service) sent a game intent down the http-ops checklist
+// (dogfood 413691a4).
+const Unclassified = "unclassified"
+
+// Scale classes for an intent (or-045a.1): explicit-signal-only, like the type.
+const (
+	ScaleLarge    = "large"    // a stated large/multi-team/whole-platform effort
+	ScaleStandard = "standard" // everything else
+)
+
+// projectTypeMatchers map a CLEAR intent signal to a project type, in priority
+// order. The gate never guesses: only an explicit signal selects a type — the
+// http matcher is LAST so cli/library/worker words outrank the generic
+// service/API vocabulary.
 var projectTypeMatchers = []struct {
 	re   *regexp.Regexp
 	kind string
@@ -97,19 +112,42 @@ var projectTypeMatchers = []struct {
 	{regexp.MustCompile(`(?i)\b(cli|command[- ]line|terminal (?:app|tool)|console (?:app|application))\b`), "cli"},
 	{regexp.MustCompile(`(?i)\b(library|package|sdk|reusable module)\b`), "library"},
 	{regexp.MustCompile(`(?i)\b(worker|background job|cron job|daemon|batch (?:job|process))\b`), "worker"},
+	{regexp.MustCompile(`(?i)\b(https?|rest(?:ful)?|api|service|endpoint|web ?server|webhook)\b`), "http-service"},
 }
 
-// InferProjectType deterministically chooses the project type from the intent. The
-// default is "http-service" (the V2.0 greenfield path); a clear CLI/library/worker
-// signal switches it. It never guesses on a bare idea — anything without an explicit
-// non-HTTP signal stays http-service (or-3ba.2).
+// InferProjectType deterministically chooses the project type from the intent.
+// A clear CLI/library/worker/HTTP signal selects the type; an intent with NO
+// explicit signal is Unclassified — the gate never guesses (or-045a.1,
+// superseding or-3ba.2's http-service default, which misclassified anything
+// vague as an HTTP service and asked it route/port/response_format).
 func InferProjectType(intent string) string {
 	for _, m := range projectTypeMatchers {
 		if m.re.MatchString(intent) {
 			return m.kind
 		}
 	}
-	return "http-service"
+	return Unclassified
+}
+
+// scaleMatchers are the explicit large-scale signals (same posture as the type
+// matchers: no guessing, a stated signal or nothing).
+var scaleMatchers = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\b(large|big|huge|massive|ambitious|major)[- ](project|effort|undertaking|build)\b`),
+	regexp.MustCompile(`(?i)\bmulti[- ]?(month|year|team|phase|quarter)\b`),
+	regexp.MustCompile(`(?i)\b(entire|full|complete|whole) (game|platform|product|system|application|suite)\b`),
+}
+
+// ClassifyScale deterministically classifies the intent's stated scale: an
+// explicit large-project signal yields ScaleLarge; everything else is
+// ScaleStandard. Downstream, a large intent gets the goals-first conversation
+// (or-045a.2) instead of jumping straight to the decision checklist.
+func ClassifyScale(intent string) string {
+	for _, re := range scaleMatchers {
+		if re.MatchString(intent) {
+			return ScaleLarge
+		}
+	}
+	return ScaleStandard
 }
 
 // Checklist returns a copy of the required-decisions checklist (deterministic).

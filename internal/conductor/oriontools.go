@@ -73,7 +73,8 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			if err != nil {
 				return "", err
 			}
-			out := asJSON(map[string]any{"message": conf.Message, "open_decisions": conf.OpenDecisions})
+			out := asJSON(map[string]any{"message": conf.Message, "open_decisions": conf.OpenDecisions,
+				"project_type": conf.ProjectType, "scale": conf.Scale})
 			// or-tcs.5: brownfield grilling is grounded AUTOMATICALLY — the
 			// repo digest rides the submit result (and the project record),
 			// so citing real packages never depends on the model remembering
@@ -297,6 +298,25 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				return "", err
 			}
 			return "recorded " + p.Key + "=" + p.Value, nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "set_project_type",
+		Description: "Resolve the project's software type after the DEVELOPER CONFIRMS it in conversation (or-045a.1). When submit_intent reports the type as unclassified, PROPOSE a type grounded in the intent (e.g. http-service, cli, game, pipeline, ml-service), ask the developer to confirm or correct it, THEN record the confirmed slug here — never call this on your own guess. The spec cannot ratify while the type is unresolved. An unregistered type is fine: it simply gets the universal reliability checklist instead of type-specific questions.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"project_type":{"type":"string","description":"the developer-confirmed lowercase slug (e.g. game, cli, http-service, pipeline)"}},"required":["project_type"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct {
+				ProjectType string `json:"project_type"`
+			}
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			if err := c.SetProjectType(ctx, p.ProjectType); err != nil {
+				return "", err
+			}
+			return "project type resolved: " + strings.ToLower(strings.TrimSpace(p.ProjectType)) + " — run check_completeness to see the decisions this type raises", nil
 		},
 	})
 
