@@ -3,9 +3,6 @@ package polaris
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -92,48 +89,19 @@ func walkAssertAbsent(t *testing.T, dir, secret string) {
 
 // TestLoginStatusFlow: login caches a token; status verifies it via /auth/me and
 // reports connected.
-func TestLoginStatusFlow(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/auth/login":
-			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": sentinelToken})
-		case "/api/v1/auth/me":
-			if r.Header.Get("Authorization") != "Bearer "+sentinelToken {
-				w.WriteHeader(http.StatusUnauthorized)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(Identity{Email: "dev@example.com", Org: "acme"})
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer srv.Close()
-
-	ctx := context.Background()
-	c := NewClient(srv.URL)
-	tok, err := c.Login(ctx, "dev", "pw")
-	if err != nil {
-		t.Fatalf("login: %v", err)
-	}
-	if tok.AccessToken != sentinelToken {
-		t.Fatalf("token = %q", tok.AccessToken)
-	}
-	id, err := c.Me(ctx, tok.AccessToken)
-	if err != nil || id.Email != "dev@example.com" {
-		t.Fatalf("me: id=%+v err=%v", id, err)
-	}
-
-	// Round-trip through the store.
+// TestTokenStoreRoundTrip: a saved token loads back byte-for-byte (the REST
+// login/me flow was retired in or-xe7.5; the store contract stands alone).
+func TestTokenStoreRoundTrip(t *testing.T) {
 	ts, _ := NewTokenStore(t.TempDir())
+	tok := Token{AccessToken: sentinelToken, BaseURL: "https://api.example.com", Org: "acme"}
 	if err := ts.Save(tok); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	got, ok, err := ts.Load()
-	if err != nil || !ok || got.AccessToken != sentinelToken {
+	if err != nil || !ok || got.AccessToken != sentinelToken || got.Org != "acme" {
 		t.Fatalf("load: got=%+v ok=%v err=%v", got, ok, err)
 	}
 }
-
 func buildCredProbe(t *testing.T) string {
 	t.Helper()
 	const src = `package main

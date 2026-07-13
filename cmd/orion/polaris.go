@@ -50,8 +50,6 @@ func polarisMCPURL(flagVal string) string {
 func cmdLogin(args []string) int {
 	fs := flag.NewFlagSet("login", flag.ContinueOnError)
 	url := fs.String("url", "", "revelara.ai base URL (or $ORION_POLARIS_URL)")
-	username := fs.String("username", "", "username (legacy password login)")
-	password := fs.String("password", "", "password (legacy password login)")
 	token := fs.String("token", "", "set a token directly (headless/short-lived)")
 	mcpURL := fs.String("mcp-url", "", "revelara.ai MCP endpoint (or $ORION_POLARIS_MCP_URL; default <base>/mcp)")
 	clientID := fs.String("client-id", "", "WorkOS OAuth client id (or $ORION_WORKOS_CLIENT_ID)")
@@ -76,14 +74,6 @@ func cmdLogin(args []string) int {
 	switch {
 	case *token != "":
 		tok = polaris.Token{AccessToken: *token, BaseURL: base, Org: *org}
-	case *username != "" && *password != "":
-		// Legacy password login (REST) — retired once the MCP path is the sole reliability source.
-		tok, err = polaris.NewClient(base).Login(context.Background(), *username, *password)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "orion login:", err)
-			return 1
-		}
-		tok.Org = *org
 	default:
 		// Default: WorkOS AuthKit browser OAuth against the revelara.ai MCP service (or-xe7.2). The
 		// client id is OPTIONAL — when unset, the flow registers dynamically (RFC 7591 DCR, or-xe7.8).
@@ -134,9 +124,8 @@ func cmdLogout(_ []string) int {
 		fmt.Fprintln(os.Stderr, "orion logout:", err)
 		return 1
 	}
-	if tok, ok, _ := store.Load(); ok {
-		_ = polaris.NewClient(tok.BaseURL).Logout(context.Background(), tok.AccessToken)
-	}
+	// or-xe7.5: clear the local credential only — an OAuth access token is
+	// stateless server-side; the retired REST Logout was a no-op round-trip.
 	if err := store.Clear(); err != nil {
 		fmt.Fprintln(os.Stderr, "orion logout:", err)
 		return 1
