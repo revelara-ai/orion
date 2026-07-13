@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/actuation"
@@ -45,6 +46,10 @@ type ChangeResult struct {
 	// gate's runs — reviewable proof of WHAT changed behaviorally, attached to
 	// the PR artifact on deliver.
 	Evidence brownfield.EvidenceDiff
+
+	// issueID is the worktree id of THIS attempt (unexported: the retry wrapper
+	// reclaims failed attempts' worktrees).
+	issueID string
 }
 
 // ChangeAndProve runs the brownfield change loop end-to-end: it creates a WORKTREE off
@@ -66,8 +71,80 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	ctx = withLLMGuards(ctx)
 	sink = syncSink(sink)
 	m := brownfield.ScanRepoMap(repoRoot)
-
 	mgr := worktree.New(repoRoot, store)
+
+	// Reliability floor (or-uvw.8): retrieve ONCE in the trusted control plane —
+	// fail-open, never blocks the change on corpus availability. Shared across
+	// self-correction attempts (the corpus answer doesn't change per attempt).
+	sigs := floorSignals(ctx, store, "", intent)
+
+	// Bounded self-correction (or-sk7u): when the regression gate or the
+	// new-behavior proof rejects, re-invoke the GENERATOR with the failure
+	// digest and re-prove in a fresh worktree. The oracle never changes between
+	// attempts — the generator iterates, the judge doesn't (self-correction must
+	// not become self-grading). Non-retryable outcomes (red button, introduced
+	// secrets, an empty change) escalate immediately.
+	attempts := changeAttempts()
+	var digests []string
+	var res, lastMeaningful ChangeResult
+	var retryable bool
+	var err error
+	feedback := ""
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if attempt > 1 {
+			sink.emit("self-correct", PhaseRunning, fmt.Sprintf("attempt %d/%d — feeding the failure digest back to the generator", attempt, attempts))
+		}
+		res, retryable, err = changeAttempt(ctx, repoRoot, store, provider, mgr, m, sigs, intent, feedback, cases, supersedes, sink)
+		if err != nil {
+			return res, err // infrastructure error — retrying won't change it
+		}
+		res.FloorSignals = sigs
+		if !res.Committed && attempt > 1 && len(res.FilesChanged) == 0 && lastMeaningful.Reason != "" {
+			// The generator GAVE UP on the retry (produced nothing): the previous
+			// attempt's evidence is the meaningful failure — report that, not the
+			// vacuous empty attempt.
+			res = lastMeaningful
+			break
+		}
+		if res.Committed || !retryable {
+			break
+		}
+		lastMeaningful = res
+		d := res.FailureDigest()
+		if d == "" {
+			d = res.Reason
+		}
+		digests = append(digests, fmt.Sprintf("attempt %d: %s\n%s", attempt, res.Reason, d))
+		if attempt < attempts {
+			// The failed attempt's worktree is uncommitted scratch — reclaim it
+			// best-effort so retries don't accumulate junk (or-kt5 tracks the
+			// general cleanup).
+			_ = mgr.Remove(ctx, res.issueID, worktree.RemoveOpts{Force: true})
+			feedback = "\n\nPREVIOUS ATTEMPT FAILED — fix and retry. Do not repeat the same mistake. Evidence:\n" + digests[len(digests)-1]
+		}
+	}
+	if !res.Committed && len(digests) > 0 {
+		// Budget spent (or last attempt still failing): the human sees the WHOLE
+		// trajectory, not just the final failure.
+		res.Reason = fmt.Sprintf("%d attempt(s) failed:\n%s", len(digests), strings.Join(digests, "\n---\n"))
+		res.Delivery = "escalate"
+	}
+	return finishChange(ctx, store, repoRoot, res, intent), nil
+}
+
+// changeAttempts is the self-correction budget: total generator attempts per
+// change (ORION_CHANGE_ATTEMPTS, default 3 = the initial try + 2 retries).
+func changeAttempts() int {
+	if v, err := strconv.Atoi(os.Getenv("ORION_CHANGE_ATTEMPTS")); err == nil && v >= 1 {
+		return v
+	}
+	return 3
+}
+
+// changeAttempt runs ONE generate→prove pass in a fresh worktree. retryable
+// reports whether a failed outcome is the generator's to fix (regression or
+// new-behavior fail) vs a hard stop (red button, secrets, empty change).
+func changeAttempt(ctx context.Context, repoRoot string, store *contextstore.Store, provider llm.Provider, mgr *worktree.Manager, m brownfield.RepoMap, sigs []reliabilityfloor.Signal, intent, feedback string, cases []newbehavior.Case, supersedes []string, sink PhaseSink) (ChangeResult, bool, error) {
 	// Fresh, non-colliding worktree per run (or-3p5.7): re-running the same intent must
 	// not collide on the slug's path/branch, and must never clobber a prior committed
 	// change branch. A fresh id (suffix -2/-3 on collision) replaces the old broken
@@ -77,15 +154,10 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	wt, err := mgr.Create(ctx, issueID, "HEAD")
 	if err != nil {
 		sink.emit("change worktree", PhaseFailed, err.Error())
-		return ChangeResult{}, fmt.Errorf("worktree for change: %w", err)
+		return ChangeResult{}, false, fmt.Errorf("worktree for change: %w", err)
 	}
 	sink.emit("change worktree", PhaseDone, wt.Branch)
-	res := ChangeResult{Branch: wt.Branch, Path: wt.Path}
-
-	// Reliability floor (or-uvw.8): retrieve ONCE in the trusted control plane —
-	// fail-open, never blocks the change on corpus availability.
-	sigs := floorSignals(ctx, store, "", intent)
-	res.FloorSignals = sigs
+	res := ChangeResult{Branch: wt.Branch, Path: wt.Path, issueID: issueID}
 
 	// Regression gate: green-before (worktree == HEAD) → the generator edits the
 	// worktree → green-after. The generator IS the change being applied. The DEFAULT is the
@@ -96,7 +168,9 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	// See or-3p5.5.
 	apply := func() error {
 		// Use TWICE, part 1: floor signals ride the repo digest as advisory generator context.
-		return DiffGenerator(ctx, provider, wt.Path, intent, m.Digest()+"\n"+reliabilityfloor.RenderContext(sigs), supersedes)
+		// Use TWICE, part 1 (floor) + self-correction evidence (or-sk7u): the
+		// failure digest from the prior attempt rides the same generator context.
+		return DiffGenerator(ctx, provider, wt.Path, intent, m.Digest()+"\n"+reliabilityfloor.RenderContext(sigs)+feedback, supersedes)
 	}
 	// The gate's Progress heartbeat rides the same sink as the phase events —
 	// per-package completions land in Detail, so a 10-minute suite is visibly
@@ -114,7 +188,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	}
 	if err != nil {
 		sink.emit("regression gate", PhaseFailed, err.Error())
-		return res, fmt.Errorf("regression gate: %w", err)
+		return res, false, fmt.Errorf("regression gate: %w", err)
 	}
 	res.Regression = reg
 	res.Evidence = brownfield.Diff(reg)
@@ -129,7 +203,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		sink.emit("regression gate", PhaseWarn, reg.Reason)
 		res.Reason = reg.Reason
 		res.Delivery = "escalate"
-		return finishChange(ctx, store, repoRoot, res, intent), nil // did not preserve existing behavior — not committed
+		return res, true, nil // the generator's to fix — retryable (or-sk7u)
 	}
 
 	// New-behavior proof (or-3p5.3): the regression gate proved do-no-harm; this proves
@@ -142,14 +216,14 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		mr, nbErr := newbehavior.ProveNewBehavior(ctx, wt.Path, cases)
 		if nbErr != nil {
 			sink.emit("new-behavior proof", PhaseFailed, nbErr.Error())
-			return res, fmt.Errorf("new-behavior proof: %w", nbErr)
+			return res, false, fmt.Errorf("new-behavior proof: %w", nbErr)
 		}
 		res.NewBehavior = &mr
 		if !mr.Pass {
 			sink.emit("new-behavior proof", PhaseWarn, "cases did not pass")
 			res.Reason = "regression held, but the new-behavior proof did not pass"
 			res.Delivery = "escalate"
-			return finishChange(ctx, store, repoRoot, res, intent), nil // did not prove the asked-for behavior — not committed
+			return res, true, nil // the generator's to fix — retryable (or-sk7u)
 		}
 	}
 
@@ -164,7 +238,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		sink.emit("security gate", PhaseWarn, "hardcoded secret(s) introduced")
 		res.Reason = "security gate: hardcoded secret(s) introduced by the change: " + strings.Join(findings, ", ")
 		res.Delivery = "escalate"
-		return finishChange(ctx, store, repoRoot, res, intent), nil
+		return res, false, nil // hard stop: never iterate toward hiding a secret better
 	}
 	rb := actuation.RedButton{}
 	if store != nil {
@@ -173,7 +247,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	if gerr := rb.Guard("commit change branch"); gerr != nil {
 		res.Reason = gerr.Error()
 		res.Delivery = "escalate"
-		return finishChange(ctx, store, repoRoot, res, intent), nil
+		return res, false, nil // hard stop: the red button is a human order, not a failure to fix
 	}
 
 	// Stage ONLY the intended change. res.FilesChanged was snapshotted right after the edit,
@@ -183,17 +257,17 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	if len(res.FilesChanged) == 0 {
 		res.Reason = "the generator produced no file changes"
 		res.Delivery = "escalate"
-		return finishChange(ctx, store, repoRoot, res, intent), nil
+		return res, false, nil // an empty change twice would be an empty change again
 	}
 	if _, err := gitIn(ctx, wt.Path, append([]string{"add", "-A", "--"}, res.FilesChanged...)...); err != nil {
-		return res, err
+		return res, false, err
 	}
 	sink.emit("commit", PhaseRunning, "committing to "+res.Branch)
 	if _, err := gitIn(ctx, wt.Path,
 		"-c", "user.name=Orion", "-c", "user.email=orion@revelara.ai", "-c", "commit.gpgsign=false",
 		"commit", "--no-verify", "-m", changeMessage(intent)); err != nil {
 		sink.emit("commit", PhaseFailed, err.Error())
-		return res, err
+		return res, false, err
 	}
 	res.Committed = true
 	sink.emit("commit", PhaseDone, res.Branch)
@@ -211,7 +285,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		}
 	}
 	res.Tier = string(reliabilitytier.Classify(reliabilityscan.DeriveDimensions(findings)))
-	return finishChange(ctx, store, repoRoot, res, intent), nil
+	return res, false, nil
 }
 
 // finishChange fires the out-of-band event for a SETTLED change outcome
