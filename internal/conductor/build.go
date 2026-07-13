@@ -217,7 +217,15 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	// existing repo so the build edits real code (or-any.8). The env flag mirrors
 	// ORION_GIT_DELIVERY; a first-class conductor/CLI target input lands with the
 	// assembled change-proof flow (or-3p5.4).
-	managed, rerr := repo.Resolve(ctx, store, brownfieldIntake(os.Getenv("ORION_BROWNFIELD_TARGET")))
+	intake := brownfieldIntake(os.Getenv("ORION_BROWNFIELD_TARGET"))
+	// or-045a.7: a ratified greenfield repo target (direction.repo_layout,
+	// persisted on the project row at ratification) is where THIS project's
+	// repo lives — worktrees and exports resolve against it. Brownfield keeps
+	// its clone source; no target keeps the default managed repo.
+	if !intake.Brownfield && proj.RepoTarget != "" {
+		intake.Target = proj.RepoTarget
+	}
+	managed, rerr := repo.Resolve(ctx, store, intake)
 	if rerr != nil {
 		return BuildResult{}, fmt.Errorf("resolve managed repo: %w", rerr)
 	}

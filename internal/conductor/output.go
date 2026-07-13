@@ -7,7 +7,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
+	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
 )
 
 // OutputRoot is the directory under which proven code is written into the
@@ -26,9 +28,14 @@ func OutputRoot() string {
 	return filepath.Join(cwd, "orion-build")
 }
 
-// serviceSlug is a stable, filesystem-safe leaf name for a spec's output dir,
-// derived from its route ("/time" → "time-service").
+// serviceSlug is a stable, filesystem-safe leaf name for a spec's output dir:
+// route-derived for HTTP specs ("/time" → "time-service"); for a non-HTTP
+// spec (no route) it derives from the INTENT instead — the route slug was
+// meaningless there (or-045a.7).
 func serviceSlug(es spec.ExecutableSpec) string {
+	if strings.TrimSpace(es.ResponseContract.Route) == "" && strings.TrimSpace(es.Intent) != "" {
+		return intentSlug(es.Intent)
+	}
 	r := strings.ToLower(strings.ReplaceAll(strings.Trim(es.ResponseContract.Route, "/"), "/", "-"))
 	var b strings.Builder
 	for _, c := range r {
@@ -140,4 +147,71 @@ func locateProvenCode(es spec.ExecutableSpec) (dir string, files []string, err e
 	}
 	sort.Strings(files)
 	return dir, files, nil
+}
+
+// intentSlug derives a stable filesystem-safe leaf from the intent's first
+// words (a non-HTTP project has no route to slug).
+func intentSlug(intent string) string {
+	words := strings.Fields(strings.ToLower(intent))
+	if len(words) > 4 {
+		words = words[:4]
+	}
+	var b strings.Builder
+	for i, w := range words {
+		if i > 0 {
+			b.WriteByte('-')
+		}
+		for _, c := range w {
+			if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+				b.WriteRune(c)
+			}
+		}
+	}
+	s := strings.Trim(b.String(), "-")
+	if s == "" {
+		return "project"
+	}
+	return s
+}
+
+// ExportProjectDocs writes the ratified project documents — the goals doc
+// (with its anchor hash as provenance) and the hazard model — into destDir's
+// docs/ folder (or-045a.7): the SUPPORTED surface for what the mech-game
+// dogfood free-wrote into the harness cwd. Returns the relative paths written.
+func ExportProjectDocs(destDir string, goals orchestrator.GoalsDoc, goalsHash string, model *stpa.Model) ([]string, error) {
+	if destDir == "" {
+		return nil, nil
+	}
+	docs := filepath.Join(destDir, "docs")
+	if err := os.MkdirAll(docs, 0o755); err != nil {
+		return nil, fmt.Errorf("export project docs: %w", err)
+	}
+	var written []string
+	var g strings.Builder
+	g.WriteString("# Project Goals\n\n")
+	g.WriteString(goals.Render())
+	fmt.Fprintf(&g, "\n\n---\nRatified in the Orion context store (anchor %s). Edit through Orion — this export is a provenance-stamped copy.\n", goalsHash)
+	if err := os.WriteFile(filepath.Join(docs, "goals.md"), []byte(g.String()), 0o644); err != nil {
+		return nil, err
+	}
+	written = append(written, "docs/goals.md")
+	if model != nil {
+		var h strings.Builder
+		h.WriteString("# Hazard Analysis (STPA)\n\n## Losses\n")
+		for _, l := range model.Losses {
+			fmt.Fprintf(&h, "- %s: %s\n", l.ID, l.Description)
+		}
+		if len(model.Scenarios) > 0 {
+			h.WriteString("\n## Loss scenarios\n")
+			for _, sc := range model.Scenarios {
+				fmt.Fprintf(&h, "- %s → %s: trigger %q, sustained by %q\n", sc.ID, sc.Loss, sc.Trigger, sc.SustainingCondition)
+			}
+		}
+		h.WriteString("\n---\nRatified in the Orion context store. Edit through Orion.\n")
+		if err := os.WriteFile(filepath.Join(docs, "hazards.md"), []byte(h.String()), 0o644); err != nil {
+			return nil, err
+		}
+		written = append(written, "docs/hazards.md")
+	}
+	return written, nil
 }
