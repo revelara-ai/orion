@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -183,5 +184,46 @@ func TestIdenticalContentAcrossProjectsGetsOwnRows(t *testing.T) {
 	}
 	if !own {
 		t.Fatal("project B must see its OWN row for the shared wording")
+	}
+}
+
+// TestRetrieveTokenizedTermOverlap (or-gb1.7 acceptance 1): a multi-word
+// intent sentence ranks an item sharing 2-3 TERMS above an unrelated but
+// hotter item — whole-query substring matching never fired here.
+func TestRetrieveTokenizedTermOverlap(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+
+	if _, err := s.Write(ctx, Item{Tier: MTM, Kind: KindPattern, TrustTier: TrustProof, Heat: 0.5,
+		Content: "Proven task handler (verdict Accept): timezone conversion for the time service"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Write(ctx, Item{Tier: MTM, Kind: KindPattern, TrustTier: TrustProof, Heat: 5.0,
+		Content: "completely unrelated database migration note"}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := s.Retrieve(ctx, "Build an HTTP time service that converts timezone on request", MTM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) < 2 {
+		t.Fatalf("want both items, got %d", len(items))
+	}
+	if !strings.Contains(items[0].Content, "timezone conversion") {
+		t.Fatalf("the term-overlapping item must outrank the hotter unrelated one, got first: %q", items[0].Content)
+	}
+
+	// Empty query: pure pin/heat order — the hotter unrelated item leads.
+	byHeat, err := s.Retrieve(ctx, "", MTM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(byHeat[0].Content, "unrelated database") {
+		t.Fatalf("an empty query must stay pure heat order, got first: %q", byHeat[0].Content)
 	}
 }
