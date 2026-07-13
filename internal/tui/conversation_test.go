@@ -76,7 +76,7 @@ func TestConversationPermissionGate(t *testing.T) {
 	reply := make(chan acp.PermissionResult, 1)
 	m = feed(m, permMsg{req: acp.PermissionRequest{Kind: "spec_ratify", Title: "Ratify the assembled spec?"}, reply: reply})
 
-	if m.pendingPerm == nil {
+	if !m.hasPerm() {
 		t.Fatal("permission request did not set a pending reply")
 	}
 	if !strings.Contains(m.View(), "ratify") {
@@ -94,7 +94,7 @@ func TestConversationPermissionGate(t *testing.T) {
 	default:
 		t.Fatal("gate reply channel never received the decision")
 	}
-	if m.pendingPerm != nil {
+	if m.hasPerm() {
 		t.Fatal("pending permission not cleared after answer")
 	}
 }
