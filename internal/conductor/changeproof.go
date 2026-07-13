@@ -151,6 +151,12 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		res.Delivery = "escalate"
 	}
 	final := finishChange(ctx, store, repoRoot, res, intent)
+	// or-kt5: a NOT-committed change reclaims its worktree AND branch now —
+	// the evidence is already persisted (or-67av), so the checkout is not the
+	// record. Committed changes keep both (the branch IS the deliverable).
+	if !final.Committed && final.issueID != "" {
+		_ = mgr.RemoveWithBranch(ctx, final.issueID, worktree.RemoveOpts{Force: true})
+	}
 	// or-3p5.13: WRITE the verdict back — an accepted change records its
 	// outcome + extracted decisions; a failed one records the causal analysis
 	// so a re-run consults instead of re-deriving. Best-effort.

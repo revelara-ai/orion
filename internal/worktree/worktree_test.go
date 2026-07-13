@@ -371,3 +371,36 @@ func TestReconcileReclaimsStaleViaLivenessHook(t *testing.T) {
 		t.Fatalf("live worktree should survive reconcile: %v", err)
 	}
 }
+
+// TestRemoveWithBranchOneStep (or-kt5): teardown removes the worktree FIRST,
+// then the branch — one step, no 'used by worktree' error; safety refusals
+// still apply; a missing branch is not an error.
+func TestRemoveWithBranchOneStep(t *testing.T) {
+	ctx := context.Background()
+	repo := newRepo(t)
+	m := New(repo, nil)
+	wt, err := m.Create(ctx, "orion-change-x", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Raw branch -D while the worktree exists fails — the friction this fixes.
+	if _, err := runGit(repo, "branch", "-D", "orion-change-x"); err == nil {
+		t.Fatal("precondition: raw branch -D should fail while the worktree holds the branch")
+	}
+
+	if err := m.RemoveWithBranch(ctx, "orion-change-x", RemoveOpts{Force: true}); err != nil {
+		t.Fatalf("one-step teardown: %v", err)
+	}
+	if _, err := os.Stat(wt.Path); err == nil {
+		t.Fatal("the worktree must be gone")
+	}
+	if out, _ := runGit(repo, "branch", "--list", "orion-change-x"); strings.TrimSpace(out) != "" {
+		t.Fatalf("the branch must be gone, got %q", out)
+	}
+	// Idempotence-ish: removing again errors on the unknown worktree (Remove's
+	// contract), never on the branch.
+	if err := m.RemoveWithBranch(ctx, "orion-change-x", RemoveOpts{Force: true}); err == nil || !strings.Contains(err.Error(), "unknown worktree") {
+		t.Fatalf("re-removal surfaces the worktree error: %v", err)
+	}
+}
