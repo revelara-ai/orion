@@ -37,7 +37,7 @@
 - [ ] **Step 1: Move the packages with git mv**
 
 ```bash
-cd /home/josebiro/go/src/github.com/revelara-ai/orion
+cd ~/go/src/github.com/revelara-ai/orion
 git mv internal/llmclient pkg/llmclient
 git mv internal/llm pkg/llm
 ```

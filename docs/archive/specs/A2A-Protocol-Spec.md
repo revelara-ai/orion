@@ -27,7 +27,7 @@ Defines the "who, when, and where" of the message.
 Defines the high-level goal and the parameters of the work.
 * `action`: (Enum) `ANALYZE`, `IMPLEMENT`, `VERIFY`, `DEPLOY`, `PROBE`.
 * `target_resource`: (string) The URI or file path the task centers on.
-_**Example:** `"/home/josebiro/project/src/main.go"`_
+_**Example:** `"~/project/src/main.go"`_
 * `context_ref`: (string) A link to the **Memory OS** (e.g., `memory://task-id-123`) providing necessary background information.
 * `constraints`: (Object)
     * `max_execution_time`: (duration) e.g., `"60s"`.

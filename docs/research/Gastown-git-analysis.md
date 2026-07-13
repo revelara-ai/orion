@@ -1,6 +1,6 @@
 # Gas Town — Git Worktree, Repo, and Workflow Analysis
 
-> **Source:** `/home/josebiro/src/gastown/` (module `github.com/steveyegge/gastown`)
+> **Source:** `~/src/gastown/` (module `github.com/steveyegge/gastown`)
 > **Analyzed at commit:** `51183512` (main)
 > **Method:** Understand-Anything knowledge graph (`.understand-anything/knowledge-graph.json`) + source inspection.
 > **Related:** [Gastown-Worktree-Handling.md](./Gastown-Worktree-Handling.md), [Gastown-Overview.md](./Gastown-Overview.md)

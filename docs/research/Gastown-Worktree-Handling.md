@@ -1,6 +1,6 @@
 How Gastown handles git worktrees
 
-source in: /home/josebiro/src/gastown/
+source in: ~/src/gastown/
 
 
 Gastown uses git worktrees as the isolation mechanism for polecats — its ephemeral per-task worker agents. They all share one bare object store and differ only by branch + directory. Two layers are involved:
