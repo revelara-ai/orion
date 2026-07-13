@@ -48,17 +48,51 @@ type Conn struct {
 	handler Handler
 	notify  Notifier
 
-	wmu     sync.Mutex // serializes writes
+	// One writer goroutine owns c.w and drains writeCh in FIFO order, so no
+	// caller ever holds a lock across a (possibly stalled) Write. done is
+	// closed exactly once on teardown, unblocking every enqueuer.
+	writeCh   chan []byte
+	done      chan struct{}
+	closeOnce sync.Once
+
 	mu      sync.Mutex
 	nextID  int
 	pending map[int]chan *Message
 	closed  bool
 }
 
+// writeQueueDepth bounds the outbound frame queue: a stalled peer applies
+// backpressure at this depth rather than blocking writers unboundedly.
+const writeQueueDepth = 64
+
 // NewConn builds a connection over the given reader/writer. handler answers
 // inbound requests; notify receives inbound notifications. Either may be nil.
 func NewConn(r io.Reader, w io.Writer, handler Handler, notify Notifier) *Conn {
-	return &Conn{r: r, w: w, handler: handler, notify: notify, pending: map[int]chan *Message{}}
+	c := &Conn{
+		r: r, w: w, handler: handler, notify: notify,
+		pending: map[int]chan *Message{},
+		writeCh: make(chan []byte, writeQueueDepth),
+		done:    make(chan struct{}),
+	}
+	go c.writeLoop()
+	return c
+}
+
+// writeLoop is the SOLE owner of c.w: it drains queued frames one at a time so
+// a stalled Write blocks only this goroutine (never a caller holding a lock).
+// A write error tears the connection down, which unblocks every pending caller.
+func (c *Conn) writeLoop() {
+	for {
+		select {
+		case b := <-c.writeCh:
+			if _, err := c.w.Write(b); err != nil {
+				c.teardown()
+				return
+			}
+		case <-c.done:
+			return
+		}
+	}
 }
 
 // Run reads and dispatches messages until the reader closes or ctx is done.
@@ -79,7 +113,7 @@ func (c *Conn) Run(ctx context.Context) error {
 		}
 		c.dispatch(ctx, &m)
 	}
-	c.failPending()
+	c.teardown()
 	return sc.Err()
 }
 
@@ -190,25 +224,47 @@ func (c *Conn) Notify(method string, params any) error {
 	return c.write(&Message{JSONRPC: "2.0", Method: method, Params: praw})
 }
 
+// write marshals m and hands the frame to the writer goroutine. It never
+// touches c.w directly, so a stalled peer applies backpressure (a full queue)
+// rather than serialize-blocking every writer — and once the connection tears
+// down, a queued-blocked write unblocks with an error instead of hanging.
 func (c *Conn) write(m *Message) error {
 	b, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}
-	c.wmu.Lock()
-	defer c.wmu.Unlock()
-	if _, err := c.w.Write(append(b, '\n')); err != nil {
-		return err
+	b = append(b, '\n')
+	select {
+	case <-c.done:
+		return fmt.Errorf("acp: connection closed")
+	default:
 	}
-	return nil
+	select {
+	case c.writeCh <- b:
+		return nil
+	case <-c.done:
+		return fmt.Errorf("acp: connection closed")
+	}
 }
 
-func (c *Conn) failPending() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.closed = true
-	for id, ch := range c.pending {
-		close(ch)
-		delete(c.pending, id)
-	}
+// Close tears the connection down and reclaims the writer goroutine. Safe to
+// call repeatedly, and safe whether or not Run was started: a caller that
+// builds a Conn but never Run()s it MUST Close it to avoid leaking the writer
+// goroutine (Run's read-loop exit closes it automatically otherwise).
+func (c *Conn) Close() { c.teardown() }
+
+// teardown closes the connection exactly once: it stops the writer goroutine
+// (via done) and fails every pending Call so no caller hangs. Idempotent, so
+// both the read loop's exit and a writer-goroutine error can call it.
+func (c *Conn) teardown() {
+	c.closeOnce.Do(func() {
+		close(c.done)
+		c.mu.Lock()
+		c.closed = true
+		for id, ch := range c.pending {
+			close(ch)
+			delete(c.pending, id)
+		}
+		c.mu.Unlock()
+	})
 }

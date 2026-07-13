@@ -116,6 +116,13 @@ type permMsg struct {                 // the agent requested a permission
 	reply chan acp.PermissionResult
 }
 
+// pendingPermission is one queued ACP permission awaiting the human's answer:
+// the request (to render its card) plus the gate goroutine's reply channel.
+type pendingPermission struct {
+	req   acp.PermissionRequest
+	reply chan acp.PermissionResult
+}
+
 // msg is one rendered turn in the conversation.
 type msg struct {
 	role string // "you" | "orion"
@@ -139,9 +146,13 @@ type Conversation struct {
 	width, height int
 	ready         bool
 	inFlight      bool
-	pendingPerm   chan acp.PermissionResult
-	permKind      string // the pending permission's kind ("" | spec_ratify | tool)
-	permExpanded  bool   // a tool-permission card's diff preview is expanded
+	// permQueue is the FIFO of in-flight permission requests (or-f06). Only the
+	// head is surfaced to the human; answering it pops the head and surfaces the
+	// next. A single slot would let a second concurrent request overwrite — and
+	// orphan — the first gate goroutine; the queue serializes them, and
+	// cancel/quit denies every entry so no gate goroutine is left blocked.
+	permQueue     []pendingPermission
+	permExpanded  bool // a tool-permission card's diff preview is expanded
 	quitting      bool
 	quitArmed     bool   // a Ctrl+C at an idle empty prompt arms quit; a second one exits
 	brain         string // active brain label (native · model / offline …)
@@ -277,23 +288,12 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case permMsg:
-		m.pendingPerm = t.reply
-		m.permKind = t.req.Kind
-		m.permExpanded = false
-		if t.req.Kind == "tool" {
-			// A mutating-tool approval: single-key y/a/n card with a diff/command preview.
-			m.msgs = append(m.msgs, msg{role: "orion", kind: "tool_permission", tool: t.req.Tool, text: t.req.Preview})
-			m.input.Placeholder = "y allow · a always · n deny"
-		} else {
-			m.msgs = append(m.msgs, msg{role: "orion", kind: "permission", text: t.req.Title})
-			m.input.Placeholder = "y to ratify · e to edit"
-		}
-		m.render()
-		// A permission request BLOCKS the conversation and asks the developer to act.
-		// Force the card into view even if they had scrolled up to read history —
-		// otherwise they're prompted to respond with no visible prompt.
-		if m.ready {
-			m.vp.GotoBottom()
+		// Enqueue; only surface the card when it becomes the head. A second
+		// concurrent request waits its turn instead of overwriting — and
+		// orphaning — the first gate goroutine (or-f06).
+		m.permQueue = append(m.permQueue, pendingPermission(t))
+		if len(m.permQueue) == 1 {
+			m.surfacePerm(m.permQueue[0])
 		}
 		return m, nil
 
@@ -364,7 +364,7 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// A pending TOOL-permission card is answered by single keys (y/a/n/e), never by
 		// typing into the input or recalling history.
-		if m.pendingPerm != nil && m.permKind == "tool" {
+		if m.hasPerm() && m.permKind() == "tool" {
 			switch {
 			case t.Type == tea.KeyEnter, isRuneKey(t, 'y'):
 				return m, m.answerToolPerm("allow_once")
@@ -489,21 +489,22 @@ func (m *Conversation) handleEnter() tea.Cmd {
 	// A turn is still processing (and no permission is awaiting an answer): keep
 	// the typed text in the box rather than resetting + silently dropping it. The
 	// spinner already signals "working"; the developer can re-send when it clears.
-	if m.pendingPerm == nil && m.inFlight {
+	if !m.hasPerm() && m.inFlight {
 		return nil
 	}
 	m.input.Reset()
 	m.relayout() // collapse the box back to one row now that it's cleared
 
-	if m.pendingPerm != nil {
+	if m.hasPerm() {
 		outcome := "denied"
 		if l := strings.ToLower(text); l == "y" || l == "yes" {
 			outcome = "granted"
 		}
 		m.msgs = append(m.msgs, msg{role: "you", text: text})
-		m.pendingPerm <- acp.PermissionResult{Outcome: outcome}
-		m.pendingPerm = nil
-		m.input.Placeholder = "your reply…"
+		m.resolveHeadPerm(outcome) // reply + pop + surface the next queued card, if any
+		if !m.hasPerm() {
+			m.input.Placeholder = "your reply…"
+		}
 		m.render()
 		return nil // the in-flight turn continues; updates arrive via Program.Send
 	}
@@ -536,24 +537,81 @@ func isRuneKey(t tea.KeyMsg, r rune) bool {
 	return t.Type == tea.KeyRunes && len(t.Runes) == 1 && t.Runes[0] == r && !t.Alt
 }
 
+// hasPerm reports whether a permission is awaiting the human's answer.
+func (m Conversation) hasPerm() bool { return len(m.permQueue) > 0 }
+
+// permKind is the kind of the permission currently awaiting an answer
+// ("" if none) — "spec_ratify" | "tool".
+func (m Conversation) permKind() string {
+	if len(m.permQueue) == 0 {
+		return ""
+	}
+	return m.permQueue[0].req.Kind
+}
+
+// surfacePerm renders p's approval card as the active prompt and scrolls it in.
+func (m *Conversation) surfacePerm(p pendingPermission) {
+	m.permExpanded = false
+	if p.req.Kind == "tool" {
+		m.msgs = append(m.msgs, msg{role: "orion", kind: "tool_permission", tool: p.req.Tool, text: p.req.Preview})
+		m.input.Placeholder = "y allow · a always · n deny"
+	} else {
+		m.msgs = append(m.msgs, msg{role: "orion", kind: "permission", text: p.req.Title})
+		m.input.Placeholder = "y to ratify · e to edit"
+	}
+	m.render()
+	// Force the card into view even if the developer scrolled up to read history.
+	if m.ready {
+		m.vp.GotoBottom()
+	}
+}
+
+// resolveHeadPerm replies to the head permission, pops it, and surfaces the
+// next queued card (if any). No-op on an empty queue.
+func (m *Conversation) resolveHeadPerm(outcome string) {
+	if len(m.permQueue) == 0 {
+		return
+	}
+	m.permQueue[0].reply <- acp.PermissionResult{Outcome: outcome}
+	m.permQueue = m.permQueue[1:]
+	if len(m.permQueue) > 0 {
+		m.surfacePerm(m.permQueue[0])
+	}
+}
+
+// denyAllPerms replies "denied" to every queued permission and clears the FIFO
+// (cancel/quit), so no gate goroutine is left blocked. Returns whether anything
+// was denied.
+func (m *Conversation) denyAllPerms() bool {
+	if len(m.permQueue) == 0 {
+		return false
+	}
+	for _, p := range m.permQueue {
+		p.reply <- acp.PermissionResult{Outcome: "denied"}
+	}
+	m.permQueue = nil
+	m.permExpanded = false
+	return true
+}
+
 // answerToolPerm resolves a pending tool-permission card with the given outcome
 // (allow_once | allow_always | deny), unblocks the waiting approver, and records the
 // decision in the transcript. The turn then continues (the tool runs, or is skipped).
 func (m *Conversation) answerToolPerm(outcome string) tea.Cmd {
-	if m.pendingPerm == nil {
+	if !m.hasPerm() {
 		return nil
 	}
-	m.pendingPerm <- acp.PermissionResult{Outcome: outcome}
-	m.pendingPerm = nil
-	m.permKind = ""
-	m.permExpanded = false
-	m.input.Placeholder = ""
 	decision := map[string]string{
 		"allow_once":   "✓ allowed once",
 		"allow_always": "✓ allowed — always this session",
 		"deny":         "⨯ denied",
 	}[outcome]
 	m.msgs = append(m.msgs, msg{role: "orion", text: decision})
+	m.resolveHeadPerm(outcome) // reply + pop + surface the next queued card, if any
+	if !m.hasPerm() {
+		m.permExpanded = false
+		m.input.Placeholder = ""
+	}
 	m.render()
 	return nil // the in-flight turn continues; updates arrive via Program.Send
 }
@@ -563,11 +621,7 @@ func (m *Conversation) answerToolPerm(outcome string) tea.Cmd {
 // event loop so a stalled write can never freeze the UI.
 func (m *Conversation) cancelInFlight() bool {
 	cancelled := false
-	if m.pendingPerm != nil { // unblock the waiting gate goroutine
-		m.pendingPerm <- acp.PermissionResult{Outcome: "denied"}
-		m.pendingPerm = nil
-		m.permKind = ""
-		m.permExpanded = false
+	if m.denyAllPerms() { // unblock EVERY waiting gate goroutine, not just the head
 		cancelled = true
 	}
 	if m.inFlight {
@@ -920,7 +974,7 @@ func (m Conversation) View() string {
 	// the live pane is suppressed rather than wedged between the approval card and the
 	// y/a/n prompt (the collision). inFlight stays true across the gate, so the pane
 	// returns as soon as the developer answers.
-	act := m.activity.render(paneW, m.inFlight && m.pendingPerm == nil)
+	act := m.activity.render(paneW, m.inFlight && !m.hasPerm())
 
 	// Shrink the viewport height for any chrome inserted between the transcript
 	// and the input (activity pane and/or palette). This must happen before
