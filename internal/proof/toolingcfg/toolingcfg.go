@@ -19,6 +19,11 @@ import (
 // CuratedConfigName is the Orion-controlled filename written inside the workdir.
 const CuratedConfigName = ".orion-golangci.yml"
 
+// AUDIT NOTE (or-tf8 M5): re-audit this deny-list whenever golangci-lint is
+// upgraded — new releases add plugin-loading / exec-capable config keys
+// (custom linters, go plugins, module plugins) that MUST land here before
+// the new version is adopted. Consider pinning the supported config version
+// range if the schema churns.
 // forbiddenKeys are golangci-lint config keys that load or execute external code (module plugins
 // / custom linters). Their presence anywhere in the config is rejected.
 var forbiddenKeys = map[string]bool{

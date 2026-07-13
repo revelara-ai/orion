@@ -96,3 +96,22 @@ func TestSecret(t *testing.T){
 		t.Fatalf("host secret leaked into code under proof:\n%s", out)
 	}
 }
+
+// TestGoArmFailsClosedWithoutSandbox (or-tf8 H1): generated code never runs
+// without a namespace sandbox unless the operator EXPLICITLY accepts it.
+func TestGoArmFailsClosedWithoutSandbox(t *testing.T) {
+	t.Setenv("ORION_SANDBOX_ISOLATION", "none")
+	t.Setenv("ORION_ALLOW_UNSAFE_GO_ARM", "")
+	dir := t.TempDir()
+	_, _, _, err := RunTool(context.Background(), dir, "go", "version")
+	if err == nil || !strings.Contains(err.Error(), "refusing to run generated code without a namespace sandbox") {
+		t.Fatalf("the none backend must fail closed for the go arm: %v", err)
+	}
+
+	// The explicit operator override runs (with the warning, not silently).
+	t.Setenv("ORION_ALLOW_UNSAFE_GO_ARM", "1")
+	out, _, code, err := RunTool(context.Background(), dir, "go", "version")
+	if err != nil || code != 0 || !strings.Contains(out, "go version") {
+		t.Fatalf("the explicit override must run: %v code=%d out=%q", err, code, out)
+	}
+}
