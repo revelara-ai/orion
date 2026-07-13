@@ -85,8 +85,17 @@ func TestChangeSelfCorrectsFromFailureDigest(t *testing.T) {
 	if !res.Committed || res.Delivery != "deliver" {
 		t.Fatalf("the self-corrected change must deliver, got committed=%v delivery=%q reason=%q", res.Committed, res.Delivery, res.Reason)
 	}
-	if len(gen.systems) != 2 {
-		t.Fatalf("expected exactly 2 generator attempts, got %d", len(gen.systems))
+	// Count GENERATION attempts only: the always-on post-commit alignment audit
+	// (or-3p5.4) is one more single-message Chat that seqGen records, but under
+	// the align role's system prompt — it is not a generator retry.
+	var genAttempts int
+	for _, sys := range gen.systems {
+		if sys != alignSystemPrompt {
+			genAttempts++
+		}
+	}
+	if genAttempts != 2 {
+		t.Fatalf("expected exactly 2 generator attempts, got %d (systems=%d)", genAttempts, len(gen.systems))
 	}
 	// The judge never changes; the GENERATOR gets the evidence: attempt 2's
 	// context must carry the failure digest from attempt 1.
