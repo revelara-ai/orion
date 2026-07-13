@@ -52,9 +52,8 @@ func (m *Conversation) handleCommand(text string) tea.Cmd {
 		m.input.Reset()
 		m.msgs = nil
 		m.permExpanded = false
-		m.newSession() // a fresh ACP session so the model's context is reset too
-		m.render()
-		return nil
+		m.render() // clear the transcript IMMEDIATELY for responsiveness…
+		return m.newSessionCmd() // …and reset the ACP session OFF the Update loop
 	case "exit", "quit":
 		return m.quit()
 	case "context", "cost":
