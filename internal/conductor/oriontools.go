@@ -337,6 +337,47 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	})
 
 	r.Register(tools.Tool{
+		Name:        "propose_losses",
+		Description: "Draft the GOAL-ALTITUDE loss analysis from the ratified goals document (or-045a.3): the losses the project must not cause and the loss scenarios that would cause them. Requires ratified goals (propose_goals → ratify_goals first). PROPOSED only — review the draft with the developer, then record their confirmation with ratify_losses. Required before a LARGE project's spec can ratify.",
+		Safety:      tools.Safety{ReadOnly: true},
+		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
+			if provider == nil {
+				return "drafting the loss analysis needs a model provider (offline) — gather losses from the developer and record them with ratify_losses directly.", nil
+			}
+			goals := c.GoalsSummary(ctx)
+			if goals == "" {
+				return "", fmt.Errorf("propose_losses: no ratified goals document — the losses are extrapolated from the goals; run propose_goals → ratify_goals first")
+			}
+			st := c.Status()
+			draft, err := AnalyzeGoalHazards(ctx, provider, st.Intent, goals)
+			if err != nil {
+				return "", err
+			}
+			return RenderGoalHazardDraft(draft), nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "ratify_losses",
+		Description: "Persist the developer's CONFIRMED goal-altitude loss analysis (or-045a.3): losses + loss scenarios, ratified through the STPA questionnaire and anchored for the build's hazard gate (which otherwise falls back to the domain-neutral skeleton). Call ONLY after the developer reviewed propose_losses' draft. Every scenario must reference a listed loss id.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{
+			"losses":{"type":"array","minItems":1,"items":{"type":"object","properties":{"id":{"type":"string"},"description":{"type":"string"}},"required":["id","description"]}},
+			"scenarios":{"type":"array","minItems":1,"items":{"type":"object","properties":{"id":{"type":"string"},"trigger":{"type":"string"},"sustaining_condition":{"type":"string"},"loss":{"type":"string"}},"required":["id","trigger","loss"]}}
+		},"required":["losses","scenarios"]}`),
+		Safety: tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p GoalHazardDraft
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			if err := c.RatifyGoalHazards(ctx, p.Losses, p.Scenarios); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("loss analysis ratified (%d loss(es), %d scenario(s)) — the build's hazard gate now proves against the project's OWN losses, not the skeleton", len(p.Losses), len(p.Scenarios)), nil
+		},
+	})
+
+	r.Register(tools.Tool{
 		Name:        "acknowledge_reduced_proof",
 		Description: "Record the developer's EXPLICIT acceptance that a ratified direction decision (e.g. direction.wire_protocol=grpc) exceeds what the proof harness can prove today, so the build proceeds with the provable subset of obligations (or-045a.5). Call ONLY after ratification was refused with a capability gap AND the developer chose 'reduced proof' over changing direction. Audited (gold-labeled).",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"keys":{"type":"array","minItems":1,"items":{"type":"string"},"description":"the direction keys the developer accepted reduced proof for"}},"required":["keys"]}`),
