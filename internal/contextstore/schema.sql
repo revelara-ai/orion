@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS epics (
 CREATE TABLE IF NOT EXISTS proofs (
     id                     TEXT PRIMARY KEY,
     task_id                TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    mode                   TEXT NOT NULL CHECK (mode IN ('behavioral','empirical','hazard','converged')),
+    mode                   TEXT NOT NULL CHECK (mode IN ('behavioral','empirical','hazard','converged','diagnostics','new_behavior')),
     verdict                TEXT NOT NULL CHECK (verdict IN ('Accept','Reject','Inconclusive')),
     mutation_score         REAL NOT NULL DEFAULT 0,
     empirical_pass_rate    REAL NOT NULL DEFAULT 0,
