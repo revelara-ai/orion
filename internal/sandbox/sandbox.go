@@ -31,6 +31,7 @@ type Spec struct {
 	Env      map[string]string // scrubbed environment (no ambient creds)
 	ROBinds  []string          // host paths to expose read-only (e.g. a static helper)
 	AllowNet bool              // default false → egress denied
+	NetAdmin bool              // grant CAP_NET_ADMIN over the jail's OWN netns (bring lo up); meaningless without !AllowNet isolation
 }
 
 // Result is the outcome of a sandboxed run.
@@ -99,6 +100,11 @@ func (bwrapBackend) Run(ctx context.Context, s Spec) (Result, error) {
 	}
 	if !s.AllowNet {
 		args = append(args, "--unshare-net") // default-deny egress
+	}
+	if s.NetAdmin {
+		// CAP_NET_ADMIN scoped to the jail's own user+net namespaces: enough to
+		// `ifup lo` inside, powerless over host interfaces (or-6lm).
+		args = append(args, "--cap-add", "CAP_NET_ADMIN")
 	}
 	// Scoped writable workdir; nothing else of the host FS is visible beyond the
 	// explicit read-only binds below.

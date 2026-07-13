@@ -112,26 +112,34 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truth
 	}
 
 	var addr string
+	var colocHTTP []ProbeResult // or-6lm: pre-computed sandboxed HTTP rounds
 	if hasHTTP {
 		port, err := freePort()
 		if err != nil {
 			return truthalign.ModeResult{}, ProbeResult{}, err
 		}
-		runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		defer cancel()
-		svc := exec.CommandContext(runCtx, bin)
-		svc.Env = []string{"PORT=" + fmt.Sprint(port), "PATH=/usr/bin:/bin"}
-		svc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		if err := svc.Start(); err != nil {
-			return failMode("service did not start: " + err.Error()), ProbeResult{Detail: "start failed"}, nil
-		}
-		defer func() {
-			if svc.Process != nil {
-				_ = syscall.Kill(-svc.Process.Pid, syscall.SIGKILL)
-				_, _ = svc.Process.Wait()
+		// or-6lm: prefer the CO-LOCATED sandboxed run — the untrusted binary
+		// and its probe share one bwrap netns (loopback up, egress denied).
+		// Any miss falls back to the bare host run below (staged isolation).
+		if prs, ok := colocProbe(ctx, binDir, bin, port, runCount(), c); ok {
+			colocHTTP = prs
+		} else {
+			runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+			svc := exec.CommandContext(runCtx, bin)
+			svc.Env = []string{"PORT=" + fmt.Sprint(port), "PATH=/usr/bin:/bin"}
+			svc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			if err := svc.Start(); err != nil {
+				return failMode("service did not start: " + err.Error()), ProbeResult{Detail: "start failed"}, nil
 			}
-		}()
-		addr = fmt.Sprintf("127.0.0.1:%d", port)
+			defer func() {
+				if svc.Process != nil {
+					_ = syscall.Kill(-svc.Process.Pid, syscall.SIGKILL)
+					_, _ = svc.Process.Wait()
+				}
+			}()
+			addr = fmt.Sprintf("127.0.0.1:%d", port)
+		}
 	}
 
 	// or-v9f.20: reality is sampled, not glimpsed — N rounds; a MIX is
@@ -144,7 +152,11 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truth
 	for i := 0; i < n; i++ {
 		var pr ProbeResult
 		if hasHTTP {
-			pr = probeContract(addr, c)
+			if colocHTTP != nil {
+				pr = colocHTTP[i%len(colocHTTP)] // the sandboxed rounds, in order
+			} else {
+				pr = probeContract(addr, c)
+			}
 		} else {
 			pr = ProbeResult{PortOpen: true, ResponseContractSatisfied: true, Detail: "ok"}
 		}

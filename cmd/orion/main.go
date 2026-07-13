@@ -20,6 +20,7 @@ import (
 	"github.com/revelara-ai/orion/internal/health"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/proc"
+	"github.com/revelara-ai/orion/internal/proof/empirical"
 	"github.com/revelara-ai/orion/internal/tui"
 	"github.com/revelara-ai/orion/internal/worktree"
 )
@@ -100,6 +101,10 @@ func run(args []string) int {
 			return cmdService(args[1:])
 		case "boot":
 			return cmdBoot(args[1:])
+		case "__empirical-probe":
+			// or-6lm: hidden co-located probe verb — runs INSIDE the proof
+			// sandbox netns (loopback up, service started, contract probed).
+			return empirical.ProbeVerbMain(os.Stdin, os.Stdout)
 		default:
 			// Unknown subcommand. The non-interactive loop-control surface is
 			// implemented by later tasks; until then an unknown command is a hard
