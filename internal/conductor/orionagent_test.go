@@ -126,6 +126,7 @@ func TestOrionAgentRatifiesThenBuildsInOneShot(t *testing.T) {
 	if testing.Short() {
 		t.Skip("build_service compiles + proves a service; skipped in -short")
 	}
+	t.Chdir(t.TempDir()) // greenfield cwd: or-3p5.10 routes brownfield workspaces to the change flow
 	oc := orchestrator.NewWithStore(openStore(t))
 	prov := &fakeLLM{resp: []*llm.ChatResponse{
 		tuResp("1", "submit_intent", `{"intent":"build a time service"}`),
@@ -148,17 +149,34 @@ func TestOrionAgentRatifiesThenBuildsInOneShot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prompt: %v", err)
 	}
-	if sv, _ := oc.SpecView(context.Background()); sv.Status != "accepted" {
-		t.Fatalf("spec not accepted: %q", sv.Status)
+	// (1) The spec genuinely reached accepted — ratify_spec really EXECUTED,
+	// not just streamed. A nil error here is the load-bearing proof: the
+	// resolver only returns a spec whose status is "accepted" with a matching
+	// anchor hash, and that status+hash pair is written solely by ApproveSpec
+	// (the ratify_spec handler) — a silently-failed ratify leaves it draft and
+	// errors here. The resolver is delivery-aware, so it holds whether the
+	// build left the project active or delivered it (or-v9f.1). VerifyAnchor is
+	// belt-and-suspenders. Build correctness on green code is
+	// TestBuildAndProveFixture's job (the fakeLLM here cannot emit code).
+	es, rerr := oc.RecallLastProvenSpec(context.Background())
+	if rerr != nil || !es.VerifyAnchor() {
+		t.Fatalf("ratify_spec must anchor an accepted spec recoverable after build: err=%v", rerr)
 	}
-	var sawBuild bool
-	for _, u := range updates {
-		if u.Kind == "tool_call" && strings.Contains(u.Text, "build_service") {
-			sawBuild = true
+	// (2) The agent chained the build AFTER ratify — the named one-shot guarantee.
+	ratifyAt, buildAt := -1, -1
+	for i, u := range updates {
+		if u.Kind != "tool_call" {
+			continue
+		}
+		if ratifyAt < 0 && strings.Contains(u.Text, "ratify_spec") {
+			ratifyAt = i
+		}
+		if buildAt < 0 && strings.Contains(u.Text, "build_service") {
+			buildAt = i
 		}
 	}
-	if !sawBuild {
-		t.Fatalf("agent did not chain build_service after ratify: %+v", updates)
+	if ratifyAt < 0 || buildAt < 0 || buildAt < ratifyAt {
+		t.Fatalf("one-shot flow must chain ratify_spec → build_service in order: ratifyAt=%d buildAt=%d", ratifyAt, buildAt)
 	}
 }
 
