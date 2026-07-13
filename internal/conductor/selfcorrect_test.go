@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/revelara-ai/orion/internal/memory"
+	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/pkg/llm"
 )
 
@@ -155,9 +158,9 @@ func TestNetNegativeRefinementTerminates(t *testing.T) {
 	git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "init")
 
 	gen := &seqGen{attempts: []map[string]string{
-		{"calc.go": "package dogfood2\n\nfunc Add(a, b int) int { return a - b }\n\nfunc Mul(a, b int) int { return a * b }\n"},                    // breaks TestAdd
-		{"calc.go": "package dogfood2\n\nfunc Add(a, b int) int { return a - b }\n\nfunc Mul(a, b int) int { return a + b }\n"},                    // breaks BOTH
-		{"note.go": "package dogfood2\n\nfunc Note() string { return \"never reached\" }\n"},                                                        // must NOT run
+		{"calc.go": "package dogfood2\n\nfunc Add(a, b int) int { return a - b }\n\nfunc Mul(a, b int) int { return a * b }\n"}, // breaks TestAdd
+		{"calc.go": "package dogfood2\n\nfunc Add(a, b int) int { return a - b }\n\nfunc Mul(a, b int) int { return a + b }\n"}, // breaks BOTH
+		{"note.go": "package dogfood2\n\nfunc Note() string { return \"never reached\" }\n"},                                    // must NOT run
 	}}
 	res, err := ChangeAndProve(context.Background(), repo, openStore(t), gen, "tweak the calculator", nil, nil, nil)
 	if err != nil {
@@ -171,5 +174,113 @@ func TestNetNegativeRefinementTerminates(t *testing.T) {
 	}
 	if !strings.Contains(res.Reason, "degraded the artifact") || !strings.Contains(res.Reason, "test regressions 1→2") {
 		t.Fatalf("the escalation must name the regression, got:\n%s", res.Reason)
+	}
+}
+
+// TestChangeConsultsAndWritesMemory (or-3p5.13 acceptance 1+2): a seeded
+// memory item rides the diff-generator prompt, and an ACCEPTED change writes
+// outcome + decision items back.
+func TestChangeConsultsAndWritesMemory(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs regression gates")
+	}
+	repo := initDogfoodRepo(t)
+	store := openStore(t)
+	memDir := filepath.Join(store.Dir(), "memory")
+	_ = os.MkdirAll(memDir, 0o700)
+	seed, err := memory.Open(memDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seed.Write(context.Background(), memory.Item{
+		Tier: memory.MTM, Kind: memory.KindFailure, TrustTier: memory.TrustProof, Heat: 1.0,
+		Content: "causal analysis (change: add a Note helper): the Note helper previously clobbered Add",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = seed.Close()
+
+	gen := &seqGen{attempts: []map[string]string{{"note.go": goodNote}}}
+	res, err := ChangeAndProve(context.Background(), repo, store, gen, "add a Note helper", nil, nil, nil)
+	if err != nil || !res.Committed {
+		t.Fatalf("change: %v committed=%v %s", err, res.Committed, res.Reason)
+	}
+	// (1) Consult: the recalled item rode the generator prompt.
+	if len(gen.systems) == 0 || !strings.Contains(gen.systems[0], "RECALLED MEMORY") || !strings.Contains(gen.systems[0], "previously clobbered Add") {
+		t.Fatalf("the seeded failure must ride the generator prompt:\n%.600s", gen.systems[0])
+	}
+	// (2) Write on Accept: outcome + decision items exist.
+	mem2, err := memory.Open(memDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = mem2.Close() }()
+	items, err := mem2.Retrieve(context.Background(), "proven change note helper decided constraints", memory.MTM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawOutcome, sawDecision bool
+	for _, it := range items {
+		if it.Kind == memory.KindPattern && strings.Contains(it.Content, `Proven change "add a Note helper"`) {
+			sawOutcome = true
+		}
+		if it.Kind == memory.KindDecision && strings.Contains(it.Content, "func Note") {
+			sawDecision = true
+		}
+	}
+	if !sawOutcome || !sawDecision {
+		t.Fatalf("an accepted change must write outcome+decision items (outcome=%v decision=%v)", sawOutcome, sawDecision)
+	}
+}
+
+// TestChangeFailureWritesThenSecondRunConsults (or-3p5.13 acceptance 3): a
+// failed change writes its causal analysis; a second run of the same intent
+// carries that analysis in its generator prompt — consult, not re-derive.
+func TestChangeFailureWritesThenSecondRunConsults(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs regression gates twice")
+	}
+	t.Setenv("ORION_CHANGE_ATTEMPTS", "1")
+	repo := initDogfoodRepo(t)
+	store := openStore(t)
+
+	gen1 := &seqGen{attempts: []map[string]string{{"broken.go": breakingNote}}}
+	res1, err := ChangeAndProve(context.Background(), repo, store, gen1, "add a Note helper", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res1.Committed {
+		t.Fatal("the breaking change must not commit")
+	}
+
+	gen2 := &seqGen{attempts: []map[string]string{{"note.go": goodNote}}}
+	if _, err := ChangeAndProve(context.Background(), repo, store, gen2, "add a Note helper", nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(gen2.systems) == 0 || !strings.Contains(gen2.systems[0], "RECALLED MEMORY") || !strings.Contains(gen2.systems[0], "regressed the existing tests") {
+		t.Fatalf("the second run must consult the first run's failure analysis:\n%.600s", gen2.systems[0])
+	}
+}
+
+// TestSessionMemoryBrief (or-3p5.13 acceptance 4): a non-empty store yields a
+// bounded brief; empty or missing memory starts clean.
+func TestSessionMemoryBrief(t *testing.T) {
+	store := openStore(t)
+	a := &OrionAgent{conductor: orchestrator.NewWithStore(store)}
+	if got := a.sessionMemoryBrief(context.Background()); got != "" {
+		t.Fatalf("an empty store must yield no brief, got %q", got)
+	}
+	_ = os.MkdirAll(filepath.Join(store.Dir(), "memory"), 0o700)
+	seed, err := memory.Open(filepath.Join(store.Dir(), "memory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seed.Write(context.Background(), memory.Item{Tier: memory.MTM, Kind: memory.KindPattern, TrustTier: memory.TrustProof, Heat: 1.0, Content: "Proven task T1: the time service serves /time"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = seed.Close()
+	got := a.sessionMemoryBrief(context.Background())
+	if !strings.Contains(got, "SESSION MEMORY BRIEF") || !strings.Contains(got, "the time service serves /time") {
+		t.Fatalf("a seeded store must yield the brief, got %q", got)
 	}
 }

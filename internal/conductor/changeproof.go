@@ -78,6 +78,15 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	// self-correction attempts (the corpus answer doesn't change per attempt).
 	sigs := floorSignals(ctx, store, "", intent)
 
+	// or-3p5.13: consult memory ONCE (project-scoped, best-effort) — prior
+	// failures/decisions ride every attempt's generator prompt, and the
+	// verdict below writes back so a re-run never re-derives.
+	mem := openChangeMemory(ctx, store)
+	if mem != nil {
+		defer func() { _ = mem.Close() }()
+	}
+	memBrief := changeMemoryBrief(ctx, store, mem, intent)
+
 	// Bounded self-correction (or-sk7u): when the regression gate or the
 	// new-behavior proof rejects, re-invoke the GENERATOR with the failure
 	// digest and re-prove in a fresh worktree. The oracle never changes between
@@ -95,7 +104,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		if attempt > 1 {
 			sink.emit("self-correct", PhaseRunning, fmt.Sprintf("attempt %d/%d — feeding the failure digest back to the generator", attempt, attempts))
 		}
-		res, retryable, err = changeAttempt(ctx, repoRoot, store, provider, mgr, m, sigs, intent, feedback, cases, supersedes, sink)
+		res, retryable, err = changeAttempt(ctx, repoRoot, store, provider, mgr, m, sigs, intent, memBrief+feedback, cases, supersedes, sink)
 		if err != nil {
 			return res, err // infrastructure error — retrying won't change it
 		}
@@ -141,7 +150,12 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		res.Reason = fmt.Sprintf("%d attempt(s) failed:\n%s", len(digests), strings.Join(digests, "\n---\n"))
 		res.Delivery = "escalate"
 	}
-	return finishChange(ctx, store, repoRoot, res, intent), nil
+	final := finishChange(ctx, store, repoRoot, res, intent)
+	// or-3p5.13: WRITE the verdict back — an accepted change records its
+	// outcome + extracted decisions; a failed one records the causal analysis
+	// so a re-run consults instead of re-deriving. Best-effort.
+	rememberChangeOutcome(ctx, mem, repoRoot, intent, final)
+	return final, nil
 }
 
 // changeAttempts is the self-correction budget: total generator attempts per

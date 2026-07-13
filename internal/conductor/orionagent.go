@@ -118,6 +118,14 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 
 	a.mu.Lock()
 	history := append([]llm.Message(nil), a.sessions[sessionID]...)
+	// or-3p5.13: session start (first turn) gets a bounded memory brief —
+	// what prior runs on this project proved/decided/failed. Best-effort;
+	// empty or missing memory starts clean.
+	if len(history) == 0 {
+		if brief := a.sessionMemoryBrief(ctx); brief != "" {
+			history = append(history, llm.TextMessage(llm.RoleUser, brief))
+		}
+	}
 	a.mu.Unlock()
 	userMsg := llm.TextMessage(llm.RoleUser, text)
 
