@@ -2,6 +2,7 @@ package conductor
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,5 +95,138 @@ func TestSubmitIntentNoGroundingInGreenfield(t *testing.T) {
 	}
 	if g := codebaseGrounding(context.Background(), oc); g != "" {
 		t.Fatalf("greenfield must yield no grounding: %q", g)
+	}
+}
+
+// groundTools builds a store-backed conductor + its spec-tool registry over a
+// FRESH store (no pre-submitted project), so submit_intent/read_codebase can be
+// exercised directly. Returns the conductor and a run(name,input) helper.
+func groundTools(t *testing.T) (*orchestrator.Conductor, func(name, input string) (string, error)) {
+	t.Helper()
+	c := orchestrator.NewWithStore(openStore(t))
+	r := specTools(c, nil, &changeSession{}, nil)
+	run := func(name, input string) (string, error) {
+		tool, ok := r.Get(name)
+		if !ok {
+			t.Fatalf("tool %s not registered", name)
+		}
+		return tool.Run(context.Background(), json.RawMessage(input))
+	}
+	return c, run
+}
+
+// TestForceGreenfieldSubmitNoGrounding (or-hn15.1 DONE-WHEN a): a force_greenfield
+// submit run from inside a brownfield cwd appends NO codebase grounding and
+// persists NO code_grounding row on the greenfield project — the cwd repo is
+// not the build target (the exact dogfood leak: the game intent got Orion's own
+// Go map with "cite these packages in the spec").
+func TestForceGreenfieldSubmitNoGrounding(t *testing.T) {
+	brownfieldFixtureRepo(t)
+	c, run := groundTools(t)
+
+	out, err := run("submit_intent", `{"intent":"Build a PvE game like Arc Raiders with RL-driven mechs.","force_greenfield":true}`)
+	if err != nil {
+		t.Fatalf("submit_intent: %v", err)
+	}
+	if strings.Contains(out, "CODEBASE GROUNDING") {
+		t.Fatalf("a force_greenfield submit must NOT inject the cwd repo's map:\n%s", out)
+	}
+	if strings.Contains(out, "widgetstore") || strings.Contains(out, "PutWidget") {
+		t.Fatalf("the cwd repo's packages leaked into the greenfield submit result:\n%s", out)
+	}
+	// And no code_grounding audit row on the greenfield project.
+	ctx := context.Background()
+	proj, _, err := c.Store().CurrentProjectSpec(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	if err := c.Store().WithTx(ctx, func(tx *contextstore.Tx) error {
+		_, ok, e := tx.PolarisContext().Get(ctx, proj.ID, codeGroundingKind)
+		found = ok
+		return e
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if found {
+		t.Fatal("a greenfield project must not record the harness cwd as its code_grounding")
+	}
+}
+
+// TestRoutedChangeKeepsGrounding (or-hn15.1 DONE-WHEN b): the brownfield ROUTED
+// redirect (the CHANGE flow) still carries the cwd grounding — that is exactly
+// where citing the real repo belongs.
+func TestRoutedChangeKeepsGrounding(t *testing.T) {
+	brownfieldFixtureRepo(t)
+	_, run := groundTools(t)
+
+	out, err := run("submit_intent", `{"intent":"Add a retry to the outbound HTTP client."}`)
+	if err != nil {
+		t.Fatalf("submit_intent: %v", err)
+	}
+	if !strings.Contains(out, "ROUTED") {
+		t.Fatalf("a non-forced brownfield submit must route to the change flow:\n%s", out)
+	}
+	if !strings.Contains(out, "CODEBASE GROUNDING") {
+		t.Fatalf("the change-flow redirect must keep its cwd grounding:\n%s", out)
+	}
+}
+
+// TestReadCodebaseGreenfieldNeutral (or-hn15.1 DONE-WHEN c): read_codebase on a
+// greenfield intake — even from inside a brownfield cwd — returns a neutral
+// "unrelated codebase" note instead of dumping the host repo's map. Before any
+// project it still surfaces the cwd map (the change flow wants it).
+func TestReadCodebaseGreenfieldNeutral(t *testing.T) {
+	brownfieldFixtureRepo(t)
+	_, run := groundTools(t)
+
+	pre, err := run("read_codebase", `{}`)
+	if err != nil {
+		t.Fatalf("read_codebase: %v", err)
+	}
+	if !strings.Contains(pre, "widgetstore") {
+		t.Fatalf("with no active project read_codebase must still show the cwd map:\n%s", pre)
+	}
+
+	if _, err := run("submit_intent", `{"intent":"Build a PvE game like Arc Raiders.","force_greenfield":true}`); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run("read_codebase", `{}`)
+	if err != nil {
+		t.Fatalf("read_codebase: %v", err)
+	}
+	if strings.Contains(out, "widgetstore") || strings.Contains(out, "PutWidget") {
+		t.Fatalf("read_codebase must NOT dump the unrelated cwd repo on a greenfield intake:\n%s", out)
+	}
+	if !strings.Contains(strings.ToUpper(out), "UNRELATED") {
+		t.Fatalf("read_codebase must return the neutral unrelated-codebase note, got:\n%s", out)
+	}
+}
+
+// TestForceGreenfieldWordingNeutral (or-hn15.1 DONE-WHEN d): the force_greenfield
+// surfaces describe a NEW standalone PROJECT (any type), not a "service".
+func TestForceGreenfieldWordingNeutral(t *testing.T) {
+	c := orchestrator.NewWithStore(openStore(t))
+	r := specTools(c, nil, &changeSession{}, nil)
+	tool, ok := r.Get("submit_intent")
+	if !ok {
+		t.Fatal("submit_intent not registered")
+	}
+	schema := string(tool.InputSchema)
+	if strings.Contains(schema, "standalone service") {
+		t.Fatalf("force_greenfield must not be described as a 'standalone service' (project-type bias): %s", schema)
+	}
+	if !strings.Contains(schema, "standalone project") {
+		t.Fatalf("force_greenfield should describe a NEW standalone project: %s", schema)
+	}
+
+	brownfieldFixtureRepo(t)
+	run := func(name, input string) (string, error) {
+		tl, _ := r.Get(name)
+		return tl.Run(context.Background(), json.RawMessage(input))
+	}
+	out, _ := run("submit_intent", `{"intent":"Add a retry to the outbound HTTP client."}`)
+	if strings.Contains(out, "standalone service") {
+		t.Fatalf("the ROUTED redirect must not say 'standalone service': %s", out)
 	}
 }

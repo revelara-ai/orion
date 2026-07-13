@@ -45,7 +45,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	r.Register(tools.Tool{
 		Name:        "submit_intent",
 		Description: "Submit the developer's build intent (call once, first). Returns the open spec decisions to resolve.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"intent":{"type":"string","description":"the developer's stated goal"},"force_greenfield":{"type":"boolean","description":"build a NEW standalone service even though this workspace has existing code"}},"required":["intent"]}`),
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"intent":{"type":"string","description":"the developer's stated goal"},"force_greenfield":{"type":"boolean","description":"build a NEW standalone project (game, CLI, pipeline, library, service, …) even though this workspace has existing code"}},"required":["intent"]}`),
 		Safety:      tools.Safety{Destructive: true},
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
 			var p struct {
@@ -59,7 +59,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			if !p.ForceGreenfield {
 				if dir, derr := os.Getwd(); derr == nil {
 					if brownfield.Classify(dir).Mode == brownfield.Brownfield {
-						out := "ROUTED: this workspace has existing code (brownfield) — the intent belongs to the CHANGE flow. Call submit_change_intent with the same intent (flow: propose_cases → ratify_cases → build_change). If the developer truly wants a NEW standalone service here, re-call submit_intent with force_greenfield=true."
+						out := "ROUTED: this workspace has existing code (brownfield) — the intent belongs to the CHANGE flow. Call submit_change_intent with the same intent (flow: propose_cases → ratify_cases → build_change). If the developer truly wants a NEW standalone project (game, CLI, pipeline, library, service, …) here, re-call submit_intent with force_greenfield=true."
 						// or-tcs.5 still holds under routing: the grounding
 						// rides the redirect (and its audit row persists).
 						if g := codebaseGrounding(ctx, c); g != "" {
@@ -79,8 +79,15 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			// repo digest rides the submit result (and the project record),
 			// so citing real packages never depends on the model remembering
 			// to call read_codebase.
-			if g := codebaseGrounding(ctx, c); g != "" {
-				out += "\n\nCODEBASE GROUNDING (read from the repo — cite these REAL packages/APIs in your questions and the spec; do not invent structure):\n" + g
+			// or-hn15.1: but a force_greenfield submit's cwd is an UNRELATED
+			// host repo, not the build target — reaching this success path with
+			// !ForceGreenfield means the cwd already classified greenfield
+			// (grounding is ""), so gating here suppresses exactly the leak
+			// where a NEW project inherits the harness repo's Go/HTTP map.
+			if !p.ForceGreenfield {
+				if g := codebaseGrounding(ctx, c); g != "" {
+					out += "\n\nCODEBASE GROUNDING (read from the repo — cite these REAL packages/APIs in your questions and the spec; do not invent structure):\n" + g
+				}
 			}
 			return out, nil
 		},
@@ -134,9 +141,9 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 
 	r.Register(tools.Tool{
 		Name:        "read_codebase",
-		Description: "Read the EXISTING codebase in the working directory: greenfield/brownfield mode, languages, key files, and (for Go) the package structure + exported API surface + internal dependency edges. Call this FIRST when the intent concerns an existing project, so your questions and the spec are grounded in the REAL code (which packages exist, what they expose, how they depend on each other) — not invented structure.",
+		Description: "Read the EXISTING codebase in the working directory (for a CHANGE to it): greenfield/brownfield mode, languages, key files, and (for Go) the package structure + exported API surface + internal dependency edges. Use it when the intent MODIFIES the code in this workspace, so your questions and the spec cite the REAL code — not invented structure. For a NEW standalone project (even if launched from inside another repo), do NOT ground in this workspace: its stack is not inherited; language is a direction decision.",
 		Safety:      tools.Safety{ReadOnly: true},
-		Run: func(_ context.Context, _ json.RawMessage) (string, error) {
+		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
 			dir, err := os.Getwd()
 			if err != nil {
 				return "", err
@@ -144,6 +151,13 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			m := brownfield.ScanRepoMap(dir)
 			if m.Profile.Mode == brownfield.Greenfield {
 				return "GREENFIELD workspace (" + dir + "): no existing source to integrate with — design new structure from the intent.", nil
+			}
+			// or-hn15.1: a greenfield build launched from inside an UNRELATED
+			// repo (the harness cwd) must not treat that repo as the target —
+			// its packages are not ours to cite, and inheriting its stack is
+			// exactly how Go leaked into the mech-game goals.
+			if greenfieldIntake(ctx, c) {
+				return "This workspace contains an UNRELATED codebase (" + dir + ") — it is NOT the build target for this greenfield project. Design fresh from the intent; language and stack are direction decisions, not inherited from this repo.", nil
 			}
 			return m.Digest(), nil
 		},
