@@ -1,10 +1,12 @@
 # Orion
 
-**A reliability-first, local-first Go multi-agent orchestration system (cobra + bubbletea) with a strongly opinionated view of proof and validation.**
+**A reliability-first, local-first agentic development harness with a strongly opinionated view of proof and validation.**
 
-Orion drives a fleet of specialist agents from a developer's intent to working software, and treats output as **done only when its correctness has been independently proven — never merely asserted.** It is the reliability layer of the agentic software development lifecycle.
+Orion drives coding agents from a developer's intent to working software, and treats output as **done only when its correctness has been independently proven — never merely asserted.** It is the reliability layer of the agentic software development lifecycle.
 
 > One sentence: *type what you want to build; Orion makes the intent unambiguous, coordinates agents to build it, and only calls it done when behavioral, empirical, and hazard proof converge — then hands you software you can actually operate at 3 a.m.*
+
+![Orion TUI](docs/screenshots/orion-tui.png)
 
 ## Why Orion exists
 
@@ -18,36 +20,75 @@ The credibility hinge — and Orion's central rule — is that **no agent grades
 
 ```
 intent ─▶ completeness gate ─▶ executable spec ─▶ decompose (Epic/Tasks)
-   ─▶ specialist agents build (sandboxed, one git worktree per task)
+   ─▶ agents build (sandboxed, one git worktree per task)
    ─▶ multi-modal proof: behavioral (tests + mutation) · empirical (run it, probe it) · hazard (STPA)
    ─▶ deployment bar ─▶ deliver (proof earns the right to ship)
-   ─▶ learn (Polaris reliability knowledge in, observed failure modes out)
+   ─▶ learn (reliability knowledge in, observed failure modes out)
 ```
 
 The developer converses with a single orchestrator — the **Conductor** — through a TUI. Behind it, Orion solves the hard problems: efficient agent coordination, context/memory management (countering erosion), durable task tracking, and independent multi-modal proof as the completion criterion.
+
+## Install
+
+```bash
+git clone https://github.com/revelara-ai/orion.git
+cd orion
+make build            # → bin/orion
+make install          # → ~/.local/bin/orion
+```
+
+Prerequisites:
+
+- **Go** — the version in [`go.mod`](go.mod).
+- **git ≥ 2.28** — the managed-repo foundation (`internal/repo`) uses `git init -b main` and clone default-branch behavior, both introduced in 2.28.
+- **bubblewrap (`bwrap`), Linux only** — the generation/proof sandbox (scoped workdir, no network, no host filesystem). Without it Orion falls back to an **unsandboxed** backend and says so; treat that mode as trusted-input-only. On Ubuntu 24.04+ you may need `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` (AppArmor blocks unprivileged user namespaces by default).
+
+## Quickstart
+
+```bash
+# 1. Give Orion a model (any one of these):
+export ANTHROPIC_API_KEY=...        # Anthropic (default provider)
+export GEMINI_API_KEY=...           # or Gemini — select with ORION_MODEL=gemini/<model>
+# or a local OpenAI-compatible server (Ollama / LM Studio) via ~/.orion/config.yaml
+
+# 2. Check the install — 'fail' breaks the exit code, 'warn' is advisory:
+orion doctor
+
+# 3a. Interactive: the TUI grills your intent to a ratified spec, then builds and proves.
+orion
+
+# 3b. Headless: submit an intent, then run the build+prove pipeline.
+echo "an HTTP service that returns the current time as JSON" | orion submit --non-interactive
+orion run
+
+# Brownfield: prove a change against an existing repo (worktree + regression gate).
+orion change "add a 5s timeout to the outbound HTTP call in fetchStatus"
+```
+
+The optional **revelara.ai** connection (reliability controls, incident knowledge, risk register) enriches specs and adds corpus-sourced reliability checks; without it `orion doctor` reports an advisory *warn* and the core loop runs fully offline.
 
 ## Start here
 
 | Document | What it is |
 |---|---|
 | [docs/MANIFESTO.md](docs/MANIFESTO.md) | The vision and the beliefs — the source of truth everything inherits from. |
-| [docs/PRD/orion-v2.md](docs/PRD/orion-v2.md) | The product requirements for Orion V2 (the buildable spec). |
+| [docs/PRD/orion-v3.md](docs/PRD/orion-v3.md) | The current product direction (the Anchored Module Pipeline). |
+| [docs/PRD/orion-v2.md](docs/PRD/orion-v2.md) | The V2 spec — the proven spine V3 evolves (kept as the migration oracle). |
 | [docs/INDEX.md](docs/INDEX.md) | Master index of all design docs. |
-| [docs/SPEC/](docs/SPEC/) | Component specs: Triad reconciliation, Polaris API contract, worktree/git handling. |
-| [docs/prompts/build-orion.md](docs/prompts/build-orion.md) | The provable-implementation loop that builds Orion against its own doctrine. |
+| [docs/SPEC/](docs/SPEC/) | Component specs: proof triad reconciliation, worktree/git handling, module proposer. |
 | [docs/research/](docs/research/) | Research feeding the design (harness-reliability, Google SRE practices, …). |
 
 ## Status
 
-Early, greenfield. **V2.0** is in active development — a Go-greenfield tracer bullet (*idea → proven, runnable, operable service*). Work is tracked in [beads](https://github.com/steveyegge/beads) under the **Orion V2** epic, sliced into proof-gated tasks. Polyglot (TS/Python), brownfield intake, earned autonomy, and self-evolution are phased for V2.1–V2.3.
-
-## Prerequisites
-
-- **git >= 2.28.** Orion's managed-repo foundation (`internal/repo`) initializes repositories with `git init -b main` (the `-b`/`--initial-branch` flag) and relies on the clone default-branch behavior — both introduced in git 2.28. Older git versions will fail to create or sync managed repositories.
+Early and moving fast. The **V2.0 spine is proven end-to-end** (idea → ratified spec → decomposed plan → sandboxed generation → 3-mode proof → delivery with runbook), and **V3** — semantic decomposition, per-module alignment gates, design-time formal verification — is landing incrementally ([docs/PRD/orion-v3.md](docs/PRD/orion-v3.md)). The North-Star acceptance harness (`test/acceptance`) encodes the full target as 56 executable predicates; some stay red by design until their surfaces are built. Brownfield changes (`orion change`) work today; polyglot generation and earned autonomy are phased next.
 
 ## Stack
 
-Go · [cobra](https://github.com/spf13/cobra) (CLI) + [bubbletea](https://github.com/charmbracelet/bubbletea) (TUI) · SQLite (Context Store) + sqlite-vec (memory) · gVisor-sandboxed agents · MCP tools + A2A between agents. Local-first; the one cloud dependency is the **Polaris** reliability platform (controls, knowledge, risk register, STPA primitives).
+Go · hand-rolled CLI + [bubbletea](https://github.com/charmbracelet/bubbletea) TUI · SQLite in WAL mode (the Context Store — durable source of truth with a DB-enforced done-gate) · pure-Go semantic memory (GoMLX + ONNX `bge-base` embeddings, brute-force cosine — no CGO, no external services) · [bubblewrap](https://github.com/containers/bubblewrap) namespace sandboxing (pluggable; a stronger backend like gVisor can slot in later) · [FizzBee](https://fizzbee.io) design-time model checking · Agent Client Protocol (ACP) for driving vendor coding agents. Local-first; the one optional cloud dependency is the **revelara.ai** reliability platform.
+
+## Contributing & security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) (including the proof-gated doctrine and the tracker policy) and [SECURITY.md](SECURITY.md) (the sandbox threat model, stated honestly).
 
 ## License
 
