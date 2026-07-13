@@ -83,6 +83,8 @@ func run(args []string) int {
 			return cmdLogout(args[1:])
 		case "status":
 			return cmdStatus(args[1:])
+		case "model":
+			return cmdModel(args[1:])
 		case "evals":
 			return cmdEvals(args[1:])
 		case "doctor":
