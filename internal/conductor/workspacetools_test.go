@@ -30,6 +30,9 @@ func TestWorkspaceTools(t *testing.T) {
 	registerWorkspaceTools(r, c)
 
 	dir := t.TempDir()
+	// or-1cv: writes are anchored by default — point the anchor at this
+	// test's workspace so its absolute paths stay legitimate.
+	t.Setenv("ORION_WORKSPACE_ROOT", dir)
 	fp := filepath.Join(dir, "sub", "f.txt")
 
 	wt, _ := r.Get("write_file")

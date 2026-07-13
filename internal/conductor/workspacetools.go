@@ -97,6 +97,11 @@ func registerWorkspaceTools(r *tools.Registry, c *orchestrator.Conductor) {
 			if gerr := storeRedButton(c).Guard("write_file"); gerr != nil {
 				return "", gerr
 			}
+			anchored, aerr := anchorWorkspacePath(p.Path)
+			if aerr != nil {
+				return "", aerr
+			}
+			p.Path = anchored
 			if dir := filepath.Dir(p.Path); dir != "" {
 				if err := os.MkdirAll(dir, 0o750); err != nil {
 					return "", err
@@ -126,6 +131,11 @@ func registerWorkspaceTools(r *tools.Registry, c *orchestrator.Conductor) {
 			if gerr := storeRedButton(c).Guard("edit_file"); gerr != nil {
 				return "", gerr
 			}
+			anchored, aerr := anchorWorkspacePath(p.Path)
+			if aerr != nil {
+				return "", aerr
+			}
+			p.Path = anchored
 			b, err := os.ReadFile(p.Path) // #nosec G304 G703 -- developer-facing tool reads the dev's own files by path
 			if err != nil {
 				return "", err
