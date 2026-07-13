@@ -43,12 +43,19 @@ func New() *Registry { return &Registry{skills: map[string]Skill{}} }
 // an error (just no skills there); per-skill parse failures are recorded as warnings.
 func (r *Registry) LoadDir(root string, trust Trust) (int, error) {
 	r.scopes = append(r.scopes, Scope{Root: root, Trust: trust})
-	return r.scan(root, trust)
+	return r.scan(root, trust, false)
+}
+
+// LoadDirIngested loads an external CROSS-HARNESS scope (or-ykz.10): its
+// skills are install-scanned and rejected if hostile.
+func (r *Registry) LoadDirIngested(root string, trust Trust) (int, error) {
+	r.scopes = append(r.scopes, Scope{Root: root, Trust: trust, Ingested: true})
+	return r.scan(root, trust, true)
 }
 
 // scan loads skills under root at the given trust WITHOUT recording the scope, so Reload can
 // re-run an already-recorded scope without duplicating it.
-func (r *Registry) scan(root string, trust Trust) (int, error) {
+func (r *Registry) scan(root string, trust Trust, ingested bool) (int, error) {
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() {
 		return 0, nil
@@ -89,7 +96,7 @@ func (r *Registry) scan(root string, trust Trust) (int, error) {
 		// content — scan its instructions + description with the same
 		// threat-pattern battery as a package install; a hostile skill is
 		// rejected, never registered. Proof-trust built-ins are curated.
-		if sk.Trust != TrustProof {
+		if ingested && sk.Trust != TrustProof {
 			if hits := promptguard.Detect(sk.Body+"\n"+sk.Description, promptguard.ScopeAll); len(hits) > 0 {
 				names := make([]string, 0, len(hits))
 				for _, h := range hits {
@@ -198,7 +205,7 @@ func (r *Registry) Reload() error {
 		if sc.Trust == TrustProof {
 			continue // proof scopes are immutable — never re-scanned
 		}
-		if _, err := r.scan(sc.Root, sc.Trust); err != nil {
+		if _, err := r.scan(sc.Root, sc.Trust, sc.Ingested); err != nil {
 			return err
 		}
 	}
