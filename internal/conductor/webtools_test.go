@@ -15,6 +15,7 @@ import (
 // TestWebFetch (or-5j1 slice 2): web_fetch GETs a URL and returns HTML stripped to readable text,
 // and refuses link-local / cloud-metadata addresses (the SSRF guard).
 func TestWebFetch(t *testing.T) {
+	t.Setenv("ORION_WEBFETCH_ALLOW_LOCAL", "1") // the fixture server IS loopback; the SSRF guard blocks it by default
 	ctx := context.Background()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

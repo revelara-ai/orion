@@ -13,6 +13,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/harness"
+	"github.com/revelara-ai/orion/internal/hookbus"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/pkg/llm"
 )
@@ -362,5 +363,5 @@ A proven change is committed on a REVIEW branch, not on the base branch (main) �
 
 ## Reliability grounding (revelara.ai)
 When your toolset includes revelara_* tools, you have the developer's revelara.ai reliability corpus: production incidents, the org's risk register, the controls catalog, distilled SRE knowledge, the service catalog, and a knowledge graph (e.g. revelara_search_incidents, revelara_search_risks, revelara_search_controls, revelara_search_knowledge, revelara_explore_graph). When a question touches reliability — assessing a change's risk, learning from past incidents, choosing controls, reviewing a design — GROUND it in these tools rather than answering from general knowledge, and cite what you find. If the developer asks for that reliability context and you have NO revelara_* tools in your toolset, do NOT claim the capability doesn't exist — the surface is simply not connected: tell them to run /mcp login to authenticate their revelara.ai session, after which the tools appear automatically.
-Keep replies short and conversational. You propose; the deterministic gates verify.` + maybeBeadsGuidance()
+Keep replies short and conversational. You propose; the deterministic gates verify.` + maybeBeadsGuidance() + hookbus.Default.PromptAppends()
 }

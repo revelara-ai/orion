@@ -14,6 +14,7 @@ import (
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/brownfield"
+	"github.com/revelara-ai/orion/internal/hookbus"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
@@ -29,6 +30,10 @@ import (
 // gates verify (no agent grades its own homework).
 func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSession, emit func(acp.Update)) *tools.Registry {
 	r := tools.NewRegistry()
+	// or-ykz.2: the generation-domain registry is the ONLY extensible tool
+	// surface — installed packages intercept/rewrite/block calls here. The
+	// proof domain never dispatches through an intercepted registry.
+	r.SetIntercept(hookbus.Default.BeforeToolCall)
 	registerChangeTools(r, cs, c, provider, emit)
 	registerBeadsTool(r, c)
 	registerMCPTools(r, c.Store())             // revelara.ai MCP tools, when authenticated (or-xe7.10)

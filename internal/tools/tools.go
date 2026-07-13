@@ -45,12 +45,21 @@ type Registry struct {
 	mu    sync.RWMutex
 	tools map[string]Tool
 	order []string
+	// Intercept (or-ykz.2): optional pre-dispatch hook — rewrite input or
+	// block with a reason. Set only on generation-domain registries.
+	Intercept func(name string, input json.RawMessage) (json.RawMessage, bool, string)
 }
 
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry { return &Registry{tools: map[string]Tool{}} }
 
 // Register adds (or replaces) a tool.
+// Intercept, when set, runs before every Dispatch: it may rewrite the input
+// or block the call (or-ykz.2 hook bus). Generation-domain registries only.
+func (r *Registry) SetIntercept(f func(name string, input json.RawMessage) (json.RawMessage, bool, string)) {
+	r.Intercept = f
+}
+
 func (r *Registry) Register(t Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -102,6 +111,15 @@ func (r *Registry) Dispatch(ctx context.Context, name string, input json.RawMess
 	t, ok := r.Get(name)
 	if !ok {
 		return fmt.Sprintf("unknown tool %q", name), true
+	}
+	// or-ykz.2: the extension interceptor (set ONLY on generation-domain
+	// registries) may rewrite the input or block the call with a reason.
+	if r.Intercept != nil {
+		rewritten, blocked, reason := r.Intercept(name, input)
+		if blocked {
+			return reason, true
+		}
+		input = rewritten
 	}
 	out, err := t.Run(ctx, input)
 	if err != nil {
