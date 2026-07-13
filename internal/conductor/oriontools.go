@@ -548,6 +548,11 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 		},
 	})
 
+	// PTC (or-ykz.14): collapse long deterministic tool sequences into one call —
+	// intermediates never enter the model's context. Registered LAST so the whole
+	// registry is chainable; approval-requiring tools are refused per step.
+	tools.RegisterChain(r)
+
 	return r
 }
 
