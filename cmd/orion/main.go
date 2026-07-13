@@ -87,6 +87,8 @@ func run(args []string) int {
 			return cmdModel(args[1:])
 		case "evals":
 			return cmdEvals(args[1:])
+		case "checkpoint":
+			return cmdCheckpoint(args[1:])
 		case "doctor":
 			return cmdDoctor(args[1:])
 		case "skills":
