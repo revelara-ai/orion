@@ -59,7 +59,7 @@ func ExpandDirectives(line string, runCmd func(ctx context.Context, cmd string) 
 	// replaced by a fenced block; an unreadable @token is left verbatim (it
 	// may be a literal @mention, never silently dropped).
 	if strings.Contains(line, "@") {
-		if expanded, any := expandFileRefs(line); any {
+		if expanded, replaced := expandFileRefs(line); replaced {
 			return ExpandResult{Text: expanded, Send: true}
 		}
 	}
@@ -70,7 +70,7 @@ func ExpandDirectives(line string, runCmd func(ctx context.Context, cmd string) 
 // (expanded, anyReplaced).
 func expandFileRefs(line string) (string, bool) {
 	fields := strings.Fields(line)
-	any := false
+	replaced := false
 	for i, f := range fields {
 		ref, ok := strings.CutPrefix(f, "@")
 		if !ok || ref == "" {
@@ -81,9 +81,9 @@ func expandFileRefs(line string) (string, bool) {
 			continue // not a readable file → leave the token as-is
 		}
 		fields[i] = fmt.Sprintf("\n--- %s ---\n```\n%s\n```\n", filepath.Base(ref), strings.TrimRight(string(b), "\n"))
-		any = true
+		replaced = true
 	}
-	if !any {
+	if !replaced {
 		return line, false
 	}
 	return strings.Join(fields, " "), true
