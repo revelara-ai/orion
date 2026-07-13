@@ -149,6 +149,7 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 		// work (gemini finished or-4gib's edits and hit the cap before
 		// ratifying — the budget went to legitimate full-file reads).
 		Supervisor: harness.Supervisor{MaxIterations: 40, Budget: a.conductor.Budget()},
+		Role:       "conductor",
 		Approve:    a.approver(sessionID, ask), // per-tool approval prompt for mutating tools
 	}
 	onEvent := func(e harness.Event) {

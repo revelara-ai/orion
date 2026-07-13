@@ -50,3 +50,38 @@ func TestRunEventsRoundTrip(t *testing.T) {
 		t.Fatal("a project with no runs has no latest run")
 	}
 }
+
+// TestSpendLedgerSurvivesReopen (or-v9f.28 DONE-WHEN c): cumulative spend
+// persists across a store reopen — a restart never resets the ceiling basis.
+func TestSpendLedgerSurvivesReopen(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendSpend(ctx, "p1", "run-1", "generator", "claude-opus-9", 5000, 1.25); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendSpend(ctx, "p1", "run-1", "conductor", "claude-haiku-4", 2000, 0.05); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+
+	s2, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s2.Close() }()
+	tok, dol, err := s2.SumSpend(ctx, "p1")
+	if err != nil || tok != 7000 || dol != 1.30 {
+		t.Fatalf("cumulative spend must survive reopen: %d tok $%.2f (%v)", tok, dol, err)
+	}
+	rows, err := s2.SpendByRole(ctx, "p1")
+	if err != nil || len(rows) != 2 || rows[0].Role != "generator" || rows[0].Dollars != 1.25 {
+		t.Fatalf("role/model breakdown must persist, biggest first: %+v (%v)", rows, err)
+	}
+	if tok, dol, _ := s2.SumSpend(ctx, "other"); tok != 0 || dol != 0 {
+		t.Fatal("spend is per project")
+	}
+}

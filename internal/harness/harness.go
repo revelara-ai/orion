@@ -99,7 +99,11 @@ type Loop struct {
 	System     string
 	Supervisor Supervisor
 	// CostPerToken optionally prices tokens for the budget (dollars). 0 = tokens only.
+	// Superseded by the pricing table (or-v9f.28); kept as an explicit override.
 	CostPerToken float64
+	// Role tags this loop's spend for attribution (conductor|generator|
+	// diffgen|subagent). Empty books as "untagged".
+	Role string
 	// Approve (may be nil) is consulted before dispatching a tool whose Safety
 	// RequiresApproval (acts in the developer's environment). On DecisionDeny the tool is
 	// NOT run and a denial message is fed back to the model so it adapts. Other tools —
@@ -277,8 +281,25 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 			return convo, nil, fmt.Errorf("%w: %w", ErrProvider, err)
 		}
 		if l.Supervisor.Budget != nil {
-			tok := resp.Usage.InputTokens + resp.Usage.OutputTokens
-			l.Supervisor.Budget.Record(tok, float64(tok)*l.CostPerToken)
+			// or-v9f.28: REAL dollars — the pricing table prices all four token
+			// classes per provider/model; unknown models book UNPRICED (tokens
+			// only, flagged) rather than a silent $0. CostPerToken remains an
+			// explicit flat override.
+			u := resp.Usage
+			tok := u.InputTokens + u.OutputTokens
+			price, priced := llm.PriceFor(l.Provider.Name(), resp.Model)
+			dollars := 0.0
+			switch {
+			case l.CostPerToken > 0:
+				dollars, priced = float64(tok)*l.CostPerToken, true
+			case priced:
+				dollars = llm.CostOf(u, price)
+			}
+			role := l.Role
+			if role == "" {
+				role = "untagged"
+			}
+			l.Supervisor.Budget.RecordSpend(role, resp.Model, tok, dollars, priced)
 		}
 		// Record the assistant turn (full content, including any tool_use blocks).
 		// Skip a degenerate empty turn — an empty content array can't be re-sent to

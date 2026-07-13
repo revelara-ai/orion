@@ -62,6 +62,7 @@ func DiffGenerator(ctx context.Context, provider llm.Provider, repoDir, intent, 
 		Provider: provider,
 		Tools:    reg,
 		System:   diffGenRole(intent, repoContext, supersedes),
+		Role:     "diffgen",
 		Supervisor: harness.Supervisor{
 			MaxIterations: 40,
 			// This conversation is discarded with the worktree on failure —
