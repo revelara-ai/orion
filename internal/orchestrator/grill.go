@@ -29,7 +29,24 @@ type GrillAgent func(ctx context.Context, intent string, resolved map[string]str
 // leave nil — the checklist drives, exactly as before.
 func (c *Conductor) SetGrillAgent(g GrillAgent) { c.grill = g }
 
-func grillDrives() bool { return os.Getenv("ORION_ELICITATION") == "grill" }
+// grillDrives decides the elicitation driver: the env override always wins
+// (staged V3 swap), and a LARGE-scale intent gets the grill BY DEFAULT
+// (or-045a.2 — the mech-game dogfood entered checklist mode and was asked
+// http-ops questions; a large greenfield needs goal-altitude listening, not a
+// port number). Fail-safe: no store or no scale reads as standard.
+func (c *Conductor) grillDrives(ctx context.Context) bool {
+	if os.Getenv("ORION_ELICITATION") == "grill" {
+		return true
+	}
+	if c.store == nil {
+		return false
+	}
+	proj, _, err := c.store.CurrentProjectSpec(ctx)
+	if err != nil {
+		return false
+	}
+	return proj.Scale == completeness.ScaleLarge
+}
 
 // openDecisions is THE elicitation driver seam: it returns the questions the
 // developer sees. Checklist mode (default): the deterministic floor alone.
@@ -37,7 +54,7 @@ func grillDrives() bool { return os.Getenv("ORION_ELICITATION") == "grill" }
 // dimension still unresolved — demoted, never dropped.
 func (c *Conductor) openDecisions(ctx context.Context, intent string, answers map[string]string) (out []completeness.OpenDecision) {
 	floor := c.gate.Analyze(intent, answers)
-	if !grillDrives() || c.grill == nil {
+	if !c.grillDrives(ctx) || c.grill == nil {
 		return floor
 	}
 	defer func() {
