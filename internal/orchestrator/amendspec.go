@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/revelara-ai/orion/internal/contextstore"
@@ -27,12 +28,29 @@ func (c *Conductor) AmendSpec(ctx context.Context) (AmendView, error) {
 	if c.store == nil {
 		return AmendView{}, errNoStore
 	}
-	proj, sp, err := c.currentProjectSpec(ctx)
+	// Refactor-after-delivery is the primary amend flow: a delivered project has
+	// left the active slot (or-v9f.1), so resolve active-or-last-delivered and
+	// RE-ACTIVATE a delivered one — the developer is resuming work on it. The
+	// single-active invariant holds: an already-active DIFFERENT project refuses.
+	proj, sp, err := c.store.CurrentOrLastDeliveredProjectSpec(ctx)
 	if err != nil {
 		return AmendView{}, fmt.Errorf("no current spec to amend: %w", err)
 	}
 	if sp.Status != "accepted" {
 		return AmendView{}, fmt.Errorf("the current spec (v%d) is still a draft — keep editing it (add_requirement / record_answer / approve_spec); amendment starts from a RATIFIED spec", sp.Version)
+	}
+	if proj.Status == "delivered" {
+		if err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+			if active, e := tx.Projects().Active(ctx); e == nil && active.ID != proj.ID {
+				return fmt.Errorf("project %q is active — deliver or abandon it before amending %q", active.Name, proj.Name)
+			} else if e != nil && !errors.Is(e, contextstore.ErrNotFound) {
+				return e
+			}
+			return tx.Projects().SetStatus(ctx, proj.ID, "active")
+		}); err != nil {
+			return AmendView{}, err
+		}
+		c.log.InfoContext(ctx, "delivered project re-activated for amendment", "project", proj.Name)
 	}
 	av := AmendView{ParentSpecID: sp.ID, Version: sp.Version + 1}
 	av.RequirementsCarried = len(loadRequirements(sp.Requirements))
