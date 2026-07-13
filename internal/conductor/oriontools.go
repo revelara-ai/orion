@@ -291,13 +291,48 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			if err := json.Unmarshal(in, &p); err != nil {
 				return "", err
 			}
-			if !c.DecisionKeys()[p.Key] {
+			// grill.* keys are the open-ended elicitation's answers (or-045a.2):
+			// first-class decisions in the spec lineage, not checklist entries —
+			// the old allowlist rejected every grill answer ("not a spec decision
+			// key"), so grill-driven intake could never record what it elicited.
+			if !c.DecisionKeys()[p.Key] && !strings.HasPrefix(p.Key, "grill.") {
 				return "", fmt.Errorf("%q is not a spec decision key", p.Key)
 			}
 			if err := c.RecordAnswer(ctx, p.Key, p.Value); err != nil {
 				return "", err
 			}
 			return "recorded " + p.Key + "=" + p.Value, nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "propose_goals",
+		Description: "Draft the project's GOALS DOCUMENT from the conversation — goals (what this is for), non-goals (explicitly out of scope), success criteria (how success is judged) — and persist it as a DRAFT for the developer to review (or-045a.2). Use it EARLY on a large/vague intent, BEFORE spec decisions: present the draft, incorporate corrections by re-proposing, then record the developer's confirmation with ratify_goals. The ratified goals steer the grill and the loss-scenario analysis.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"goals":{"type":"array","items":{"type":"string"}},"non_goals":{"type":"array","items":{"type":"string"}},"success_criteria":{"type":"array","items":{"type":"string"}}},"required":["goals"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var doc orchestrator.GoalsDoc
+			if err := json.Unmarshal(in, &doc); err != nil {
+				return "", err
+			}
+			if err := c.ProposeGoals(ctx, doc); err != nil {
+				return "", err
+			}
+			return "GOALS DRAFT (review with the developer; re-propose to revise, ratify_goals once confirmed):\n\n" + doc.Render(), nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "ratify_goals",
+		Description: "Anchor the proposed goals document with a content hash after the DEVELOPER CONFIRMS it (or-045a.2). Call only once they have reviewed propose_goals' draft. The ratified goals persist in the context store and steer subsequent elicitation.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
+			hash, err := c.RatifyGoals(ctx)
+			if err != nil {
+				return "", err
+			}
+			return "goals ratified (hash " + hash[:12] + "…) — they now steer the grill and the loss-scenario analysis", nil
 		},
 	})
 
@@ -483,7 +518,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				SetGenerationWindow(contextwindow.WindowOf(genProv, contextwindow.DefaultWindow))
 				// or-794 (V3 Step 5): the open-ended grill drives elicitation
 				// behind ORION_ELICITATION=grill; the checklist floor never drops.
-				c.SetGrillAgent(NativeGrillAgent(RoleProvider("grill", provider)))
+				c.SetGrillAgent(NativeGrillAgent(RoleProvider("grill", provider), c.GoalsSummary))
 				// or-zn8: the adversarial issue-set reviewer rides the same brain;
 				// the deterministic gate (advisory→ORION_ISSUE_REVIEW=block) decides.
 				c.SetIssueReviewer(NativeIssueReviewer(RoleProvider("review", provider)))

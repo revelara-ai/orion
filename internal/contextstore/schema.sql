@@ -13,6 +13,19 @@ CREATE TABLE IF NOT EXISTS projects (
     updated_at   TEXT NOT NULL
 );
 
+-- Ratified project goals (or-045a.2): the goal-altitude artifact a large
+-- greenfield intake ratifies BEFORE the spec — goals/non-goals/success
+-- criteria as canonical JSON, content-hashed like a ratified spec. One row
+-- per project (the latest proposal; ratification anchors it).
+CREATE TABLE IF NOT EXISTS goals (
+    project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    content    TEXT NOT NULL,
+    hash       TEXT NOT NULL DEFAULT '',
+    status     TEXT NOT NULL CHECK (status IN ('drafting','ratified')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS specs (
     id             TEXT PRIMARY KEY,
     project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
