@@ -755,6 +755,11 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 			// Record the EFFECTIVE severity (post-corroboration), not the raw draw.
 			alignment = AlignmentRecord{Ran: true, Aligned: v.Aligned, Severity: sev, Concern: v.Concern}
 			switch {
+			case v.Inconclusive:
+				// or-mvr.15: a refused/verdict-less audit is UNAUDITED — surfaced
+				// loudly, never a clean bill (Aligned=true) and never a spurious
+				// block or drift count (the drift monitor skips "inconclusive").
+				onPhase.emit("Align", PhaseWarn, "audit inconclusive (refusal/no verdict): "+v.Concern)
 			case blockGate && !v.Aligned && sev == "high":
 				// Remove the green light: Accept → Inconclusive with an alignment
 				// dissent. The done-gate then refuses to close and the !Accept

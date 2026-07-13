@@ -38,6 +38,11 @@ func (m *driftMonitor) RecordAlignment(a AlignmentRecord) {
 	if !a.Ran || a.Aligned {
 		return
 	}
+	// or-mvr.15: an INCONCLUSIVE audit (refusal / no verdict) is not evidence
+	// of drift — counting it would let a flaky safety classifier halt a run.
+	if a.Severity == "inconclusive" {
+		return
+	}
 	m.mu.Lock()
 	m.concerns++
 	m.mu.Unlock()

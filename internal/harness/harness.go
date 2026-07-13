@@ -261,6 +261,14 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 			}
 		}
 		if err != nil {
+			// or-mvr.15: a policy-BLOCKED prompt is a refusal, not a dead
+			// dependency — no breaker count, and no checkpoint (resuming would
+			// replay the exact blocked prompt).
+			if errors.Is(err, llm.ErrRefused) {
+				re := &RefusalError{StopDetail: err.Error()}
+				emit(Event{Kind: EventRefusal, Text: re.StopDetail, Error: true})
+				return convo, nil, re
+			}
 			// or-mvr.8: persist the half-generated turn BEFORE surfacing the
 			// outage — the next attempt resumes instead of re-deriving.
 			l.checkpointOnProviderFailure(ctx, convo)
@@ -280,6 +288,15 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 		}
 
 		if resp.StopReason != llm.StopToolUse {
+			// or-mvr.15: a policy REFUSAL is neither an empty turn (re-sending
+			// the identical conversation to a model that just policy-blocked it
+			// is futile) nor a normal final answer (a refusal recorded as a
+			// result is a silent quality hole). Name it, carry the text, stop.
+			if resp.StopReason == llm.StopRefusal {
+				re := refusalFromResponse(resp)
+				emit(Event{Kind: EventRefusal, Text: re.Text, Error: true})
+				return convo, resp, re
+			}
 			// Empty-turn guard (or-mvr adjunct): no content AND no tool calls is
 			// never a legitimate answer — a reasoning model can burn its whole
 			// output budget thinking (excluded from content by design) or hit
