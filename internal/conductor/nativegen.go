@@ -242,7 +242,7 @@ func GenerationPrompt(gs sandbox.GenSpec, writeHint string) string {
 		b.WriteString("\n" + s + "\n")
 	}
 	// or-kzf.2: reviewable extra rules ride every generation prompt.
-	if rules := harnessconfig.Rules(); rules != "" {
+	if rules := harnessconfig.Rules(module); rules != "" {
 		b.WriteString("\nAdditional rules (from the reviewed harness config):\n" + rules + "\n")
 	}
 	b.WriteString("\n" + writeHint)

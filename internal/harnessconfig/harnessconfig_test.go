@@ -47,7 +47,7 @@ func TestGenerationPreambleOverride(t *testing.T) {
 // and key/question requirements hold; a valid file loads.
 func TestChecklistsParseAndValidate(t *testing.T) {
 	t.Setenv("ORION_HARNESS_DIR", t.TempDir())
-	if _, ok := LoadChecklists(); ok {
+	if _, ok := LoadChecklists("k"); ok {
 		t.Fatal("absent checklists must fall back")
 	}
 	writeCfg(t, "checklists.yaml", `
@@ -57,7 +57,7 @@ functional:
 universal:
   - {key: slo, dimension: slo, question: "What SLO?", fallback: "tier default"}
 `)
-	c, ok := LoadChecklists()
+	c, ok := LoadChecklists("k")
 	if !ok || len(c.Functional["http-service"]) != 1 || len(c.Universal) != 1 {
 		t.Fatalf("valid checklists must load: ok=%v %+v", ok, c)
 	}
@@ -65,7 +65,7 @@ universal:
 universal:
   - {key: x, dimension: made-up, question: "?"}
 `)
-	if _, ok := LoadChecklists(); ok {
+	if _, ok := LoadChecklists("k"); ok {
 		t.Fatal("an unknown dimension must reject the file")
 	}
 	if errs := Validate(); len(errs) != 1 || !strings.Contains(errs[0].Error(), "made-up") {
@@ -75,7 +75,7 @@ universal:
 universal:
   - {dimension: slo, question: "?"}
 `)
-	if _, ok := LoadChecklists(); ok {
+	if _, ok := LoadChecklists("k"); ok {
 		t.Fatal("a keyless decision must reject the file")
 	}
 }
@@ -83,11 +83,11 @@ universal:
 // TestRules: present file returns trimmed text; absent returns "".
 func TestRules(t *testing.T) {
 	t.Setenv("ORION_HARNESS_DIR", t.TempDir())
-	if Rules() != "" {
+	if Rules("k") != "" {
 		t.Fatal("absent rules → empty")
 	}
 	writeCfg(t, "rules.md", "  - never log secrets\n")
-	if got := Rules(); got != "- never log secrets" {
+	if got := Rules("k"); got != "- never log secrets" {
 		t.Fatalf("rules must load trimmed, got %q", got)
 	}
 }
