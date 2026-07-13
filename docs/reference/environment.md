@@ -63,6 +63,7 @@ Everything is optional; unset means the documented default. Variables marked
 | `ORION_CHECKPOINT_EVERY` / `ORION_CHECKPOINT_INTERVAL` | N/4 clusters / off | Milestone-checkpoint cadence: every k completed clusters and/or a wall-clock interval; each emits a trajectory digest (coverage-so-far vs schedule, concerns, escalations) as a Checkpoint phase + notify kind=checkpoint. |
 | `ORION_CHECKPOINT_MODE` | advisory | `pause-for-ack` files an inbox escalation at each checkpoint and refuses further dispatch until it is answered. |
 | `ORION_BUDGET_MAX_DOLLARS` | off | Now REAL (or-v9f.28): turns are priced per provider/model (all four token classes) into a persistent per-project ledger; the ceiling evaluates cumulative project spend across restarts. Unknown/local models book tokens-only, flagged unpriced. |
+| `ORION_ANTHROPIC_CONTEXT_EDITS` | off | `1` opts the Anthropic path into server-side context-management edits (beta header + clear_tool_uses edit). Provider-agnostic core behavior is unchanged; verify live before relying on it. |
 | `ORION_HARNESS_DIR` | `~/.orion/harness` | Externalized, reviewable harness config: `generation_preamble.tmpl`, `checklists.yaml`, `rules.md` — edits change behavior without a rebuild; invalid files warn + fall back (see `orion doctor`). |
 | `ORION_MEMORY_DISTILL` | off | `1` enables the LLM distillation pass: transferable rules from refinement trajectories, written as generation-tier candidates (opt-in). |
 | `ORION_MEMORY_EMBEDDER` | off | `gomlx` enables pure-Go semantic recall (opt-in). |
