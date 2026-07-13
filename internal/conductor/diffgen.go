@@ -19,12 +19,14 @@ func readFileTool(root string) tools.Tool {
 	clean := filepath.Clean(root)
 	return tools.Tool{
 		Name:        "read_file",
-		Description: "Read an existing file (path relative to the repo root) to understand it before editing.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`),
+		Description: "Read an existing file (path relative to the repo root) to understand it before editing. PREFER a line range (start_line, line_count) — full reads burn the attempt's tool-turn budget.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer","description":"1-based first line of the range"},"line_count":{"type":"integer","description":"lines to return from start_line"}},"required":["path"]}`),
 		Safety:      tools.Safety{ReadOnly: true},
 		Run: func(_ context.Context, in json.RawMessage) (string, error) {
 			var p struct {
-				Path string `json:"path"`
+				Path      string `json:"path"`
+				StartLine int    `json:"start_line"`
+				LineCount int    `json:"line_count"`
 			}
 			if err := json.Unmarshal(in, &p); err != nil {
 				return "", err
@@ -37,10 +39,11 @@ func readFileTool(root string) tools.Tool {
 			if err != nil {
 				return "", err
 			}
-			if len(data) > 60000 {
-				return string(data[:60000]) + "\n… (truncated)", nil
+			out := sliceLines(string(data), p.StartLine, p.LineCount)
+			if len(out) > 60000 {
+				return out[:60000] + "\n… (truncated — use start_line/line_count to read a range)", nil
 			}
-			return string(data), nil
+			return out, nil
 		},
 	}
 }

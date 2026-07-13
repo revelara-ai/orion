@@ -435,3 +435,32 @@ func TestSupervisorHaltsOnBudget(t *testing.T) {
 		t.Fatal("provider should not be called once the budget is halted")
 	}
 }
+
+// TestMaxIterationsErrorSummarizesToolCalls (or-mvr.14): the cap is a pause,
+// not a failure — the error must say where the budget went (tool tally) and
+// how to resume, not a bare "max iterations exceeded".
+func TestMaxIterationsErrorSummarizesToolCalls(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(tools.Tool{
+		Name:        "probe",
+		Description: "test probe",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+		Safety:      tools.Safety{ReadOnly: true},
+		Run:         func(context.Context, json.RawMessage) (string, error) { return "ok", nil },
+	})
+	n := 0
+	p := &scriptedProvider{next: func() *llm.ChatResponse {
+		n++ // varying input so neither the stall nor the error-streak guard fires first
+		return toolUseResp(fmt.Sprintf("id%d", n), "probe", fmt.Sprintf(`{"n":%d}`, n))
+	}}
+	l := &Loop{Provider: p, Tools: reg, System: "t", Supervisor: Supervisor{MaxIterations: 3}}
+	_, _, err := l.Run(context.Background(), []llm.Message{llm.TextMessage(llm.RoleUser, "go")}, nil)
+	if !errors.Is(err, ErrMaxIterations) {
+		t.Fatalf("expected the iteration cap, got %v", err)
+	}
+	for _, want := range []string{"probe×3", "continue"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the cap error must carry %q (progress + resume path), got: %v", want, err)
+		}
+	}
+}

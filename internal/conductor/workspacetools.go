@@ -61,12 +61,14 @@ func registerWorkspaceTools(r *tools.Registry, c *orchestrator.Conductor) {
 
 	r.Register(tools.Tool{
 		Name:        "read_file",
-		Description: "Read a file from the developer's working directory and return its contents (large files are truncated). Read-only.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`),
+		Description: "Read a file from the developer's working directory. PREFER a line range (start_line, line_count) for anything but small files — full reads burn context and tool-turn budget. Read-only.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer","description":"1-based first line of the range"},"line_count":{"type":"integer","description":"lines to return from start_line"}},"required":["path"]}`),
 		Safety:      tools.Safety{ReadOnly: true, ParallelSafe: true},
 		Run: func(_ context.Context, in json.RawMessage) (string, error) {
 			var p struct {
-				Path string `json:"path"`
+				Path      string `json:"path"`
+				StartLine int    `json:"start_line"`
+				LineCount int    `json:"line_count"`
 			}
 			if err := json.Unmarshal(in, &p); err != nil {
 				return "", err
@@ -75,7 +77,7 @@ func registerWorkspaceTools(r *tools.Registry, c *orchestrator.Conductor) {
 			if err != nil {
 				return "", err
 			}
-			return boundOutput(string(b)), nil
+			return boundOutput(sliceLines(string(b), p.StartLine, p.LineCount)), nil
 		},
 	})
 
