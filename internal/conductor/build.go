@@ -25,6 +25,7 @@ import (
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/internal/proof"
 	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
+	"github.com/revelara-ai/orion/internal/proof/osvaudit"
 	"github.com/revelara-ai/orion/internal/proof/proofexec"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
@@ -432,6 +433,15 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		ReducedReliabilityContext: relctx.Reduced,
 	}
 	securityOK := proof.SecurityClean(buildDir)
+	// or-ykz.16: supply-chain audit — screen the artifact's dependencies
+	// against OSV. Findings block delivery (after the bar); an offline/skipped
+	// audit is SURFACED, never a silent pass and never a block.
+	osv := osvaudit.Audit(ctx, buildDir)
+	osvStatus := PhaseDone
+	if len(osv.Findings) > 0 || osv.Skipped != "" {
+		osvStatus = PhaseWarn
+	}
+	onPhase.emit("SupplyChain", osvStatus, osv.Summary())
 	// or-v9f.13: the bar is told which modes actually RAN — the assembled proof
 	// when the integrator re-proved, else the representative task's — so
 	// RequireAllModes is a real gate, not a hardcoded formality.
@@ -448,6 +458,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		runbook, missingOps = delivery.VerifyRunbook(runbook, string(b))
 	}
 	res := delivery.EvaluateBar(outcome.barVerdict, barProof.PresentModes(), reliabilitytier.PolicyFor(tier), env, securityOK, missingOps)
+	res = delivery.ApplySupplyChain(res, osv.Summary(), len(osv.Findings))
 	// Red Button (or-utm): while engaged, autonomy is revoked — never auto-deliver.
 	if res.Decision == delivery.Deliver && rb.AutonomyRevoked() {
 		res = delivery.Result{Decision: delivery.Escalate, Reason: "red button engaged: autonomy revoked, human delivery required"}

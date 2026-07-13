@@ -70,6 +70,18 @@ func EvaluateBar(verdict truthalign.Verdict, presentModes []string, policy relia
 	return Result{Decision: Deliver, HumanMergeable: true, Envelope: &env, Reason: "bar met; human-mergeable (V2.0 no auto-deploy)"}
 }
 
+// ApplySupplyChain (or-ykz.16): a bar-cleared delivery is still blocked by
+// known-vulnerable dependencies — OSV findings escalate a Deliver decision.
+// Only POSITIVE findings block; an already-escalated result keeps its first
+// (more fundamental) reason, and a skipped/offline audit changes nothing here
+// (the caller surfaces the skip visibly instead).
+func ApplySupplyChain(res Result, findingSummary string, findings int) Result {
+	if res.Decision != Deliver || findings == 0 {
+		return res
+	}
+	return Result{Decision: Escalate, Reason: "supply-chain gate failed: " + findingSummary}
+}
+
 func hasAllModes(modes []string) bool {
 	present := map[string]bool{}
 	for _, m := range modes {
