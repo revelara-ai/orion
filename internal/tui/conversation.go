@@ -508,6 +508,21 @@ func (m *Conversation) handleEnter() tea.Cmd {
 		return nil // the in-flight turn continues; updates arrive via Program.Send
 	}
 	m.recordHistory(text)
+	// or-ykz.6: expand input directives (@file inline, !cmd run+send, !!cmd
+	// run-only) before dispatch. A !!cmd is a LOCAL action — its output shows
+	// in the transcript and NO prompt is sent.
+	if strings.HasPrefix(text, "!") || strings.Contains(text, "@") {
+		exp := ExpandDirectives(text, nil)
+		if !exp.Send {
+			m.msgs = append(m.msgs, msg{role: "you", text: text})
+			if exp.Local != "" {
+				m.msgs = append(m.msgs, msg{role: "orion", kind: "command", text: exp.Local})
+			}
+			m.render()
+			return nil // local action — the model is never prompted
+		}
+		text = exp.Text
+	}
 	m.msgs = append(m.msgs, msg{role: "you", text: text})
 	m.inFlight = true
 	m.activity.reset()
