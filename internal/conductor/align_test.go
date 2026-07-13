@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
@@ -175,5 +176,52 @@ func TestAlignmentGateIsLogOnly(t *testing.T) {
 	}
 	if !res.Alignment.Ran || res.Alignment.Aligned {
 		t.Fatalf("misalignment was not recorded: %+v", res.Alignment)
+	}
+}
+
+// TestAlignerNoVerdictIsInconclusive (or-mvr.15 v): a refused or verdict-less
+// audit must NEVER read as Aligned=true — it is inconclusive, severity set,
+// with the auditor's text carried as the concern.
+func TestAlignerNoVerdictIsInconclusive(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc handleTime() {}\n"), 0o644)
+
+	prov := &fakeLLM{resp: []*llm.ChatResponse{{
+		StopReason: llm.StopRefusal,
+		Content:    []llm.ContentBlock{{Type: llm.BlockText, Text: "I cannot audit this content."}},
+	}}}
+	v, err := NativeAligner(prov)(context.Background(), "return the current time", dir, nil)
+	if err != nil {
+		t.Fatalf("align: %v", err)
+	}
+	if v.Aligned {
+		t.Fatalf("a verdict-less audit must never be Aligned=true: %+v", v)
+	}
+	if !v.Inconclusive || v.Severity != "inconclusive" {
+		t.Fatalf("must be the distinct inconclusive state: %+v", v)
+	}
+	if !strings.Contains(v.Concern, "I cannot audit this content") {
+		t.Fatalf("the refusal text must ride the concern: %q", v.Concern)
+	}
+}
+
+// TestDriftMonitorSkipsInconclusive (or-mvr.15): an inconclusive audit is not
+// drift evidence — a flaky safety classifier must not halt a long run.
+func TestDriftMonitorSkipsInconclusive(t *testing.T) {
+	m := &driftMonitor{threshold: 2}
+	m.RecordAlignment(AlignmentRecord{Ran: true, Aligned: false, Severity: "inconclusive", Concern: "refused"})
+	m.RecordAlignment(AlignmentRecord{Ran: true, Aligned: false, Severity: "inconclusive", Concern: "refused"})
+	m.mu.Lock()
+	n := m.concerns
+	m.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("inconclusive audits must not count as drift, got %d", n)
+	}
+	m.RecordAlignment(AlignmentRecord{Ran: true, Aligned: false, Severity: "high", Concern: "real drift"})
+	m.mu.Lock()
+	n = m.concerns
+	m.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("a real misalignment must still count, got %d", n)
 	}
 }

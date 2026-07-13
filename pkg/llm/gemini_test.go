@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -360,5 +361,28 @@ func TestGeminiMaxOutputDefaults(t *testing.T) {
 		if got := g.MaxOutputTokens(); got != c.want {
 			t.Errorf("MaxOutputTokens(%s, cfg=%d) = %d, want %d", c.model, c.cfg, got, c.want)
 		}
+	}
+}
+
+// TestGeminiBlockedPromptIsRefusal (or-mvr.15 iii): a blocked prompt carries
+// its stated reason as a typed refusal — not an opaque "no candidates" error.
+func TestGeminiBlockedPromptIsRefusal(t *testing.T) {
+	srv := geminiTestServer(t, `{"promptFeedback":{"blockReason":"SAFETY"},"candidates":[]}`, nil)
+	defer srv.Close()
+	g := NewGemini(GeminiConfig{APIKey: "k", BaseURL: srv.URL, Model: "gemini-2.5-pro"})
+	_, err := g.Chat(context.Background(), ChatRequest{Messages: []Message{TextMessage(RoleUser, "hi")}})
+	if !errors.Is(err, ErrRefused) {
+		t.Fatalf("a blocked prompt must classify as ErrRefused, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "SAFETY") {
+		t.Fatalf("the block reason must be stated: %v", err)
+	}
+	// And a genuinely empty response stays the generic error, NOT a refusal.
+	srv2 := geminiTestServer(t, `{"candidates":[]}`, nil)
+	defer srv2.Close()
+	g2 := NewGemini(GeminiConfig{APIKey: "k", BaseURL: srv2.URL, Model: "gemini-2.5-pro"})
+	_, err2 := g2.Chat(context.Background(), ChatRequest{Messages: []Message{TextMessage(RoleUser, "hi")}})
+	if err2 == nil || errors.Is(err2, ErrRefused) {
+		t.Fatalf("no-candidates without a block reason is not a refusal: %v", err2)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/revelara-ai/orion/internal/acp"
+	"github.com/revelara-ai/orion/internal/harness"
 )
 
 // GenRequest describes what to build, derived from the executable spec /
@@ -81,15 +82,21 @@ func (g AgentGenerator) Generate(ctx context.Context, req GenRequest, dir string
 	// Accumulate the agent's streamed text (its self-report) as the narrative — previously
 	// discarded with an empty callback (or-7mr).
 	var narrative strings.Builder
-	if _, err := sess.Prompt(ctx, sid, RenderPrompt(req), func(u acp.Update) {
+	promptRes, err := sess.Prompt(ctx, sid, RenderPrompt(req), func(u acp.Update) {
 		if t := strings.TrimSpace(u.Text); t != "" {
 			if narrative.Len() > 0 {
 				narrative.WriteByte('\n')
 			}
 			narrative.WriteString(t)
 		}
-	}); err != nil {
+	})
+	if err != nil {
 		return Artifact{}, fmt.Errorf("generator: prompt: %w", err)
+	}
+	// or-mvr.15: a vendor-agent REFUSAL used to surface only as "agent
+	// produced no files" — classify the stopReason so the caller routes it.
+	if IsRefusalStop(promptRes.StopReason) {
+		return Artifact{}, &harness.RefusalError{Text: narrative.String(), StopDetail: "vendor agent stopReason=" + promptRes.StopReason}
 	}
 
 	files, err := listFiles(dir)
@@ -161,4 +168,14 @@ func listFiles(dir string) ([]string, error) {
 		return nil
 	})
 	return out, err
+}
+
+// IsRefusalStop classifies vendor-agent stop reasons that mean a policy
+// refusal (ACP "refusal" plus common vendor spellings).
+func IsRefusalStop(stop string) bool {
+	switch strings.ToLower(strings.TrimSpace(stop)) {
+	case "refusal", "refused", "content_filter", "safety":
+		return true
+	}
+	return false
 }

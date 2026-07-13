@@ -151,6 +151,9 @@ type gemResponse struct {
 		Content      gemContent `json:"content"`
 		FinishReason string     `json:"finishReason"`
 	} `json:"candidates"`
+	PromptFeedback struct {
+		BlockReason string `json:"blockReason"`
+	} `json:"promptFeedback"`
 	UsageMetadata struct {
 		PromptTokenCount        int `json:"promptTokenCount"`
 		CandidatesTokenCount    int `json:"candidatesTokenCount"`
@@ -315,6 +318,11 @@ func (g *Gemini) do(ctx context.Context, path string, body []byte) (*ChatRespons
 		return nil, fmt.Errorf("%s: decode response: %w", g.cfg.Name, err)
 	}
 	if len(wr.Candidates) == 0 {
+		// or-mvr.15: a blocked PROMPT is a refusal with a stated reason, not
+		// an opaque decode problem.
+		if wr.PromptFeedback.BlockReason != "" {
+			return nil, fmt.Errorf("%s: prompt blocked (%s): %w", g.cfg.Name, wr.PromptFeedback.BlockReason, ErrRefused)
+		}
 		return nil, fmt.Errorf("%s: response has no candidates", g.cfg.Name)
 	}
 	return g.fromCandidate(wr), nil

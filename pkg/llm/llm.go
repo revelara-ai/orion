@@ -158,6 +158,11 @@ type Provider interface {
 // hard-failing when a provider lacks a feature.
 var ErrNotSupported = errors.New("llm: capability not supported by provider")
 
+// ErrRefused marks content refused by provider policy BEFORE any candidate
+// was generated (e.g. a blocked prompt). Distinct from a dependency failure:
+// retrying the identical content is futile (or-mvr.15).
+var ErrRefused = errors.New("llm: content refused by provider policy")
+
 // TextMessage is a convenience constructor for a plain user/assistant turn.
 func TextMessage(role Role, text string) Message {
 	return Message{Role: role, Content: []ContentBlock{{Type: BlockText, Text: text}}}

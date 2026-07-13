@@ -19,8 +19,12 @@ import (
 // confers Accept. proof.Accept remains the sole right-to-ship.
 type AlignVerdict struct {
 	Aligned  bool   // false = a real intent violation was found
-	Severity string // none | low | medium | high
+	Severity string // none | low | medium | high | inconclusive
 	Concern  string // the specific misalignment, or why it aligns
+	// Inconclusive (or-mvr.15): the audit did not produce a verdict (refusal,
+	// no structured output). NEVER recorded as Aligned=true — an unaudited
+	// artifact is unaudited, not aligned — and never counted as drift either.
+	Inconclusive bool
 }
 
 // Aligner judges a built artifact against the intent. Injected into BuildAndProve
@@ -70,9 +74,14 @@ func NativeAligner(provider llm.Provider) Aligner {
 				return AlignVerdict{Aligned: v.Aligned, Severity: v.Severity, Concern: v.Concern}, nil
 			}
 		}
-		// No structured verdict — inconclusive, but the gate is advisory/log-only,
-		// so surface it without blocking.
-		return AlignVerdict{Aligned: true, Severity: "none", Concern: "no alignment verdict returned"}, nil
+		// or-mvr.15: no structured verdict (a refusal or an empty audit) is
+		// INCONCLUSIVE — never Aligned=true (a policy-blocked audit must not
+		// read as a clean bill), never a spurious block either.
+		concern := "no alignment verdict returned"
+		if t := strings.TrimSpace(resp.Text()); t != "" {
+			concern = "no alignment verdict returned; auditor said: " + t
+		}
+		return AlignVerdict{Aligned: false, Inconclusive: true, Severity: "inconclusive", Concern: concern}, nil
 	}
 }
 

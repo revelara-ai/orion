@@ -31,6 +31,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/revelara-ai/orion/internal/acp"
+	"github.com/revelara-ai/orion/internal/agentruntime"
 	"github.com/revelara-ai/orion/internal/conductor"
 	"github.com/revelara-ai/orion/internal/health"
 	"github.com/revelara-ai/orion/internal/llmsetup"
@@ -636,11 +637,16 @@ func (m Conversation) controlCmd(op, arg string) tea.Cmd {
 func (m Conversation) promptCmd(text string) tea.Cmd {
 	client, sid, prog := m.client, m.sid, m.gate.program()
 	return func() tea.Msg {
-		_, err := client.PromptWithUpdates(context.Background(), sid, text, func(u acp.Update) {
+		res, err := client.PromptWithUpdates(context.Background(), sid, text, func(u acp.Update) {
 			if prog != nil {
 				prog.Send(streamMsg{u: u})
 			}
 		})
+		// or-mvr.15: a refusal stopReason is a CLASSIFIED outcome, not a
+		// silent partial success — tell the developer what happened.
+		if err == nil && agentruntime.IsRefusalStop(res.StopReason) {
+			err = fmt.Errorf("the agent refused this request (stopReason=%s) — rephrase, or escalate if the refusal looks wrong", res.StopReason)
+		}
 		return turnDoneMsg{err: err}
 	}
 }
