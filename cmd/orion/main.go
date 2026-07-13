@@ -94,6 +94,8 @@ func run(args []string) int {
 			return cmdDesign(args[1:])
 		case "harness":
 			return cmdHarness(args[1:])
+		case "trace":
+			return cmdTrace(args[1:])
 		default:
 			// Unknown subcommand. The non-interactive loop-control surface is
 			// implemented by later tasks; until then an unknown command is a hard
