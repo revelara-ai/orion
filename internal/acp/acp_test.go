@@ -207,3 +207,58 @@ func mustJSON(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
 }
+
+// TestPromptSinkSurvivesStaleTurnTeardown (or-5g2q): when two prompt turns
+// overlap (cancel-then-resubmit), the OLDER turn returning must not clear the
+// NEWER turn's update sink. Forces the interleaving deterministically: A sets
+// its sink, B sets its sink, A tears down, THEN a live update is delivered — it
+// must reach B, not be dropped.
+func TestPromptSinkSurvivesStaleTurnTeardown(t *testing.T) {
+	ready := make(chan *fakeAgent, 1)
+	promptIDs := make(chan json.RawMessage, 4)
+	agentLoop := func(f *fakeAgent, in *Message) {
+		switch in.Method {
+		case "session/new":
+			f.reply(in.ID, map[string]string{"sessionId": "s1"})
+		case "session/prompt":
+			select {
+			case ready <- f: // publish the agent handle once
+			default:
+			}
+			promptIDs <- in.ID // hold the turn open (no reply yet)
+		}
+	}
+	c := startClient(t, nil, nil, agentLoop)
+	ctx := context.Background()
+	if _, err := c.SessionNew(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	aGot := make(chan string, 8)
+	aDone := make(chan struct{})
+	go func() { _, _ = c.Prompt(ctx, "s1", "A", func(u Update) { aGot <- u.Text }); close(aDone) }()
+	idA := <-promptIDs
+	f := <-ready
+
+	bGot := make(chan string, 8)
+	go func() { _, _ = c.Prompt(ctx, "s1", "B", func(u Update) { bGot <- u.Text }) }()
+	idB := <-promptIDs // B has now installed its sink (the request is on the wire)
+
+	// Turn A returns; wait until its deferred teardown has actually run.
+	f.reply(idA, PromptResult{StopReason: "end_turn"})
+	<-aDone
+
+	// A live update for turn B — must reach B's sink, not be dropped by A's teardown.
+	f.send(Message{Method: "session/update", Params: mustJSON(Update{SessionID: "s1", Kind: "agent_message", Text: "FOR_B"})})
+	select {
+	case got := <-bGot:
+		if got != "FOR_B" {
+			t.Fatalf("update routed wrong: %q", got)
+		}
+	case <-aGot:
+		t.Fatal("update reached the stale turn A's sink")
+	case <-time.After(2 * time.Second):
+		t.Fatal("turn B's sink was clobbered by turn A's teardown — the live update was dropped (the bug)")
+	}
+	f.reply(idB, PromptResult{StopReason: "end_turn"}) // let B finish
+}

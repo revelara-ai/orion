@@ -103,14 +103,28 @@ var (
 
 // ── async message types ──────────────────────────────────────────────────────
 
-type activityTickMsg time.Time
-
-func activityTick() tea.Cmd {
-	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return activityTickMsg(t) })
+// activityTickMsg / streamMsg / turnDoneMsg all carry gen — the turn generation
+// they belong to (or-5g2q). A cancel-then-resubmit overlaps two turns; the
+// Update loop drops any message whose gen != the live turnGen so a stale turn's
+// late stream, completion, or tick can't corrupt the live turn. gen 0 is the
+// resting generation (tests that inject messages directly match it).
+type activityTickMsg struct {
+	t   time.Time
+	gen int
 }
 
-type streamMsg struct{ u acp.Update } // a streamed session/update
-type turnDoneMsg struct{ err error }  // a prompt turn completed
+func activityTick(gen int) tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return activityTickMsg{t: t, gen: gen} })
+}
+
+type streamMsg struct {
+	u   acp.Update
+	gen int
+} // a streamed session/update
+type turnDoneMsg struct {
+	err error
+	gen int
+} // a prompt turn completed
 type permMsg struct {                 // the agent requested a permission
 	req   acp.PermissionRequest
 	reply chan acp.PermissionResult
@@ -146,6 +160,7 @@ type Conversation struct {
 	width, height int
 	ready         bool
 	inFlight      bool
+	turnGen       int // monotonic prompt-turn id; stale-gen async msgs are dropped (or-5g2q)
 	// permQueue is the FIFO of in-flight permission requests (or-f06). Only the
 	// head is surfaced to the human; answering it pops the head and surfaces the
 	// next. A single slot would let a second concurrent request overwrite — and
@@ -262,6 +277,9 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case streamMsg:
+		if t.gen != m.turnGen {
+			return m, nil // a superseded (cancelled) turn's late update — drop it
+		}
 		// Activity updates fold into the activity model only — they NEVER become
 		// transcript bubbles. Return early before the agent_message accumulation.
 		if t.u.Kind == acp.ActivityKind {
@@ -298,6 +316,9 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case turnDoneMsg:
+		if t.gen != m.turnGen {
+			return m, nil // a superseded turn completing — must not reset the live turn
+		}
 		m.inFlight = false
 		m.activity.finish()
 		if t.err != nil {
@@ -338,13 +359,13 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case activityTickMsg:
-		if !m.inFlight {
-			return m, nil
+		if t.gen != m.turnGen || !m.inFlight {
+			return m, nil // stale turn's ticker (or turn ended) — let it die, don't re-arm
 		}
-		if m.activity.bus.Tick(time.Time(t)) {
+		if m.activity.bus.Tick(t.t) {
 			m.render() // a heartbeat was emitted → refresh the panel
 		}
-		return m, activityTick()
+		return m, activityTick(t.gen)
 
 	case tea.KeyMsg:
 		wasArmed := m.quitArmed
@@ -555,10 +576,11 @@ func (m *Conversation) handleEnter() tea.Cmd {
 		text = exp.Text
 	}
 	m.msgs = append(m.msgs, msg{role: "you", text: text})
+	m.turnGen++ // a new turn: its async messages carry this gen; a stale turn's do not
 	m.inFlight = true
 	m.activity.reset()
 	m.render()
-	return tea.Batch(m.promptCmd(text), m.sp.Tick, activityTick())
+	return tea.Batch(m.promptCmd(text, m.turnGen), m.sp.Tick, activityTick(m.turnGen))
 }
 
 // isRuneKey reports whether a key message is a single bare rune r (a tool-permission
@@ -656,6 +678,11 @@ func (m *Conversation) cancelInFlight() bool {
 	}
 	if m.inFlight {
 		m.inFlight = false
+		// Advance the turn generation so the cancelled turn's still-alive
+		// goroutine (its Call is uncancellable today) cannot append its tail to
+		// the transcript after "cancelled" — its late gen-stamped messages no
+		// longer match turnGen and are dropped (or-5g2q).
+		m.turnGen++
 		cancelled = true
 	}
 	if cancelled {
@@ -733,12 +760,12 @@ func (m Conversation) controlCmd(op, arg string) tea.Cmd {
 
 // promptCmd runs one prompt turn in its own goroutine (the Update loop stays
 // free); streamed updates are pushed back via Program.Send.
-func (m Conversation) promptCmd(text string) tea.Cmd {
+func (m Conversation) promptCmd(text string, gen int) tea.Cmd {
 	client, sid, prog := m.client, m.sid, m.gate.program()
 	return func() tea.Msg {
 		res, err := client.PromptWithUpdates(context.Background(), sid, text, func(u acp.Update) {
 			if prog != nil {
-				prog.Send(streamMsg{u: u})
+				prog.Send(streamMsg{u: u, gen: gen})
 			}
 		})
 		// or-mvr.15: a refusal stopReason is a CLASSIFIED outcome, not a
@@ -746,7 +773,7 @@ func (m Conversation) promptCmd(text string) tea.Cmd {
 		if err == nil && agentruntime.IsRefusalStop(res.StopReason) {
 			err = fmt.Errorf("the agent refused this request (stopReason=%s) — rephrase, or escalate if the refusal looks wrong", res.StopReason)
 		}
-		return turnDoneMsg{err: err}
+		return turnDoneMsg{err: err, gen: gen}
 	}
 }
 

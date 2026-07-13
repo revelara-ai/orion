@@ -77,6 +77,7 @@ type Client struct {
 
 	mu    sync.Mutex
 	onUpd func(Update) // active prompt's update sink
+	gen   uint64       // monotonic turn id — teardown compare-and-clears against it
 }
 
 // NewClient builds a client over the agent's stdout (r) and stdin (w).
@@ -182,11 +183,19 @@ func (c *Client) SessionNew(ctx context.Context) (string, error) {
 // until the turn completes (the session/prompt response).
 func (c *Client) Prompt(ctx context.Context, sessionID, text string, onUpdate func(Update)) (PromptResult, error) {
 	c.mu.Lock()
+	c.gen++
+	my := c.gen
 	c.onUpd = onUpdate
 	c.mu.Unlock()
+	// Compare-and-clear: only tear down the sink if no NEWER turn has installed
+	// its own. Without this, a turn that returns late (e.g. after a cancel) would
+	// nil the sink of the turn that superseded it, silently dropping every
+	// session/update for the live turn (or-5g2q).
 	defer func() {
 		c.mu.Lock()
-		c.onUpd = nil
+		if c.gen == my {
+			c.onUpd = nil
+		}
 		c.mu.Unlock()
 	}()
 
