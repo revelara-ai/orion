@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 )
 
@@ -38,6 +39,30 @@ func TestBaselineGreenAndRed(t *testing.T) {
 	red := writeRepo(t, "package target\nimport \"testing\"\nfunc TestAdd(t *testing.T){ if Add(2,2)!=5 { t.Fatal(\"expected failure\") } }\n")
 	if r, err := Baseline(context.Background(), red); err != nil || !r.Detected || r.Passed {
 		t.Fatalf("red repo should yield a failing baseline: res=%+v err=%v", r, err)
+	}
+}
+
+// TestBaselineProgressStreamsPerPackage (or-rbc): BaselineProgress emits a
+// per-package completion event as the suite runs (the CLI spinner / TUI
+// heartbeat), and its captured output feeds Summarize — the end-to-end wireup
+// behind the baseline UX, not just the unit parser.
+func TestBaselineProgressStreamsPerPackage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go test on a temp module")
+	}
+	dir := writeRepo(t, "package target\nimport \"testing\"\nfunc TestAdd(t *testing.T){ if Add(2,2)!=4 { t.Fatal(\"math\") } }\n")
+
+	var events atomic.Int32
+	prog := Progress(func(_, _ string) { events.Add(1) })
+	res, err := BaselineProgress(context.Background(), dir, prog)
+	if err != nil || !res.Passed {
+		t.Fatalf("green baseline: res=%+v err=%v", res, err)
+	}
+	if events.Load() == 0 {
+		t.Fatal("BaselineProgress must stream at least one package-completion event (the spinner would show nothing)")
+	}
+	if s := Summarize(res.Output); len(s.Green) == 0 {
+		t.Fatalf("Summarize must count the green package from the real run, got %+v", s)
 	}
 }
 

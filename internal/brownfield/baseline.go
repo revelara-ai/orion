@@ -59,6 +59,14 @@ func Baseline(ctx context.Context, repoDir string) (TestResult, error) {
 	return baselineSkip(ctx, repoDir, nil, nil, "")
 }
 
+// BaselineProgress is Baseline with a live progress sink: runTests streams one
+// event per package completion to progress, so a caller (the CLI spinner, the
+// TUI activity panel) can show that a minutes-long suite is alive rather than
+// hung (or-rbc, or-m45w). progress may be nil (== Baseline).
+func BaselineProgress(ctx context.Context, repoDir string, progress Progress) (TestResult, error) {
+	return baselineSkip(ctx, repoDir, nil, progress, "baseline")
+}
+
 // baselineSkip runs the full suite while SKIPPING the named tests — the regression-reconciliation
 // hook: a change that intentionally supersedes a behavior excludes that behavior's test from the
 // do-no-harm requirement, while every OTHER test must still pass. skip entries are go test name
