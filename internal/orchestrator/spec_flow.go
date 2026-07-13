@@ -477,6 +477,15 @@ func (c *Conductor) ApproveSpec(ctx context.Context) (spec.ExecutableSpec, error
 			"cannot ratify: %d assumption(s) lack the developer's explicit approval: %s — surface each to the developer, then record the confirmation with approve_assumptions",
 			len(fallbacks), strings.Join(keys, ", "))
 	}
+	// Goal-altitude hazard gate (or-045a.3): a LARGE-scale project must have a
+	// developer-ratified loss analysis before its spec anchors — the losses are
+	// extrapolated from the ratified goals, so the build's hazard gate proves
+	// against what the PROJECT must not cause instead of the domain-neutral
+	// skeleton. Standard-scale projects keep the frictionless fast path.
+	if proj.Scale == completeness.ScaleLarge && !c.goalHazardsRatified(ctx, proj.ID) {
+		return spec.ExecutableSpec{}, fmt.Errorf(
+			"cannot ratify: a large project needs its loss analysis ratified first — draft losses and loss scenarios from the ratified goals with propose_losses, review them with the developer, then record the confirmation with ratify_losses")
+	}
 	rcJSON, err := json.Marshal(es.ResponseContract)
 	if err != nil {
 		return spec.ExecutableSpec{}, fmt.Errorf("marshal response contract: %w", err)
