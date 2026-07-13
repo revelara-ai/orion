@@ -54,6 +54,23 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	})
 
 	r.Register(tools.Tool{
+		Name: "amend_spec",
+		Description: "Start a REFACTOR of an already-ratified spec: opens a new draft version SEEDED with the prior " +
+			"spec's requirements and decisions (lineage recorded), so the developer edits instead of re-eliciting. " +
+			"Use when the developer wants to change/extend what was already ratified. Edit with add_requirement/" +
+			"remove_requirement/record_answer, then re-ratify with preview_spec → approve_assumptions → ratify_spec.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
+			av, err := c.AmendSpec(ctx)
+			if err != nil {
+				return "", err
+			}
+			return asJSON(av), nil
+		},
+	})
+
+	r.Register(tools.Tool{
 		Name:        "check_completeness",
 		Description: "List the spec decisions still open. Those with no fallback are BLOCKING — they must be answered before ratifying.",
 		Safety:      tools.Safety{ReadOnly: true},
