@@ -262,3 +262,118 @@ func TestPromptSinkSurvivesStaleTurnTeardown(t *testing.T) {
 	}
 	f.reply(idB, PromptResult{StopReason: "end_turn"}) // let B finish
 }
+
+// TestSessionCancelReachesAllOverlappingTurns (or-or3j): the agent keys cancel
+// funcs per TURN, not per session-slot — with two overlapping prompts on one
+// session (a foreign client may overlap; Orion's TUI serializes), a
+// session/cancel stops BOTH, and one turn finishing must not orphan the
+// other's cancel (the old single-slot map let prompt 1's deferred delete
+// remove prompt 2's cancel func, making prompt 2 uncancellable).
+func TestSessionCancelReachesAllOverlappingTurns(t *testing.T) {
+	blockA, blockB := make(chan struct{}), make(chan struct{})
+	doneA, doneB := make(chan error, 1), make(chan error, 1)
+	prompt := func(ctx context.Context, _, text string, _ func(Update), _ AskFunc) (PromptResult, error) {
+		gate := blockA
+		if text == "B" {
+			gate = blockB
+		}
+		select {
+		case <-ctx.Done():
+			return PromptResult{StopReason: "cancelled"}, ctx.Err()
+		case <-gate:
+			return PromptResult{StopReason: "end_turn"}, nil
+		}
+	}
+	a := &Agent{prompt: prompt, cancels: map[string]map[int64]context.CancelFunc{}}
+
+	run := func(text string, done chan error) {
+		_, err := a.handle(context.Background(), "session/prompt",
+			json.RawMessage(`{"sessionId":"s1","text":"`+text+`"}`))
+		done <- err
+	}
+	go run("A", doneA)
+	go run("B", doneB)
+	// Wait until both turns are registered (both gates parked).
+	for i := 0; ; i++ {
+		a.mu.Lock()
+		n := len(a.cancels["s1"])
+		a.mu.Unlock()
+		if n == 2 {
+			break
+		}
+		if i > 200 {
+			t.Fatalf("both overlapping turns should register a cancel, have %d", n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Turn A finishes normally — its cleanup must NOT orphan turn B's cancel.
+	close(blockA)
+	if err := <-doneA; err != nil {
+		t.Fatalf("turn A: %v", err)
+	}
+
+	// session/cancel must still stop the (still-running) turn B.
+	a.onNotify("session/cancel", json.RawMessage(`{"sessionId":"s1"}`))
+	select {
+	case err := <-doneB:
+		if err == nil {
+			t.Fatal("turn B finished without cancellation — the cancel was orphaned")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("turn B never saw the cancel — the single-slot map orphaned it (the bug)")
+	}
+
+	// Negative: the registry drains — no leaked cancel entries after both end.
+	a.mu.Lock()
+	left := len(a.cancels["s1"])
+	a.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("cancel registry must be empty after both turns end, has %d", left)
+	}
+}
+
+// With BOTH turns still live, one session/cancel stops them all — not just an
+// arbitrary one (the "cancel the newest" regression).
+func TestSessionCancelStopsBothLiveTurns(t *testing.T) {
+	never := make(chan struct{}) // neither turn finishes on its own
+	done := make(chan error, 2)
+	prompt := func(ctx context.Context, _, _ string, _ func(Update), _ AskFunc) (PromptResult, error) {
+		select {
+		case <-ctx.Done():
+			return PromptResult{StopReason: "cancelled"}, ctx.Err()
+		case <-never:
+			return PromptResult{}, nil
+		}
+	}
+	a := &Agent{prompt: prompt, cancels: map[string]map[int64]context.CancelFunc{}}
+	for i := 0; i < 2; i++ {
+		go func() {
+			_, err := a.handle(context.Background(), "session/prompt", json.RawMessage(`{"sessionId":"s1","text":"x"}`))
+			done <- err
+		}()
+	}
+	for i := 0; ; i++ {
+		a.mu.Lock()
+		n := len(a.cancels["s1"])
+		a.mu.Unlock()
+		if n == 2 {
+			break
+		}
+		if i > 200 {
+			t.Fatal("both turns should register")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	a.onNotify("session/cancel", json.RawMessage(`{"sessionId":"s1"}`))
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Fatal("a live turn finished uncancelled")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("turn %d never saw the session/cancel — cancel must reach ALL live turns", i+1)
+		}
+	}
+}
