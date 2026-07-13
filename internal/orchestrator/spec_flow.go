@@ -686,6 +686,13 @@ func (c *Conductor) ensurePlan(ctx context.Context, proj contextstore.Project, s
 		}
 	}
 
+	// IssueReviewGate (or-zn8, V3 Step 4): adversarial review over the FINAL
+	// issue set (whichever source produced it), before anything persists —
+	// "blocks until patched" in blocking mode, advisory-by-default otherwise.
+	if err := c.reviewPlanGate(ctx, proj.ID, es, epic); err != nil {
+		return "", err
+	}
+
 	var epicID string
 	err = c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
 		// Re-check inside the write tx to avoid a double-decompose race.

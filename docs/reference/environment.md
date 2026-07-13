@@ -32,6 +32,8 @@ Everything is optional; unset means the documented default. Variables marked
 | `ORION_ALIGN_GATE` | log-only | `block`: severity-tiered AlignmentGate — a corroborated high-severity intent violation removes the green light (never adds one). |
 | `ORION_MODULE_PROPOSER` | off | `shadow`: semantic ModuleProposer runs alongside the oracle (measured, never drives). `live`: proposer drives through the deterministic trust wall, oracle fallback. |
 | `ORION_DESIGN_PROOF` | advisory | `block`: every control-plane design-proof model failure fails the lane (per-model rollout otherwise). |
+| `ORION_ISSUE_REVIEW` | advisory | `block`: a corroborated high-severity issue-set finding (e.g. a cross-issue contradiction) blocks the plan until the spec is patched. |
+| `ORION_CHANGE_ATTEMPTS` | 3 | Self-correction budget for `orion change`: total generator attempts (digest-fed retries; the oracle never changes). |
 | `ORION_RUN_ACCEPTANCE` | true | `false` skips the North-Star acceptance harness (red-by-design tracker, not a merge gate). |
 | `ORION_PROOF_RUN_COUNT` *(advanced)* | 1 | Empirical probe repetitions (min 1). |
 | `ORION_PROOF_TIME_SCALE` *(advanced)* | 1.0 | Scales proof deadlines for slow machines (calibration never re-anchors a spec). |
