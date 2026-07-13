@@ -12,6 +12,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/harness"
+	"github.com/revelara-ai/orion/internal/harnessconfig"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/internal/sandbox"
 	"github.com/revelara-ai/orion/internal/tools"
@@ -211,20 +212,20 @@ func GenerationPrompt(gs sandbox.GenSpec, writeHint string) string {
 		module = "orion-generated/svc"
 	}
 	var b strings.Builder
-	b.WriteString("You are Orion's code generator. Write COMPLETE, COMPILABLE, RELIABLE Go that satisfies the behavioral contract below — build exactly what the contract requires, nothing more.\n\n")
-	b.WriteString("Hard requirements:\n")
-	b.WriteString("- A go.mod with `module " + module + "` and a recent `go` line (e.g. go 1.25).\n")
-	if gs.ProgramFamily == "library" {
-		b.WriteString("- This is a LIBRARY build: create the named packages with the EXPORTED functions/types the cases call (a thin package main { func main() {} } at the root keeps the module buildable). Unit cases call the exported surface directly — signatures must match the case expressions exactly.\n")
-	} else if gs.ProgramFamily == "cli" {
-		fmt.Fprintf(&b, "- Expose the behavioral entry point as a top-level func `%s(args []string, stdin io.Reader, stdout, stderr io.Writer, env map[string]string) int` — the proof harness calls this symbol directly, and main() MUST be a thin wrapper: `func main() { os.Exit(%s(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, envMap())) }` so the shipped process and the entry behave identically.\n", gs.Entry(), gs.Entry())
+	// or-kzf.2: the drift-prone preamble is externalizable to a reviewable
+	// template (~/.orion/harness/generation_preamble.tmpl); the compiled text
+	// below is the zero-config default. The case contract, entry-symbol
+	// protocol, and recalled context are STRUCTURAL and stay in Go.
+	if pre, ok := harnessconfig.GenerationPreamble(harnessconfig.PreambleData{
+		Module: module, Entry: gs.Entry(), Family: gs.ProgramFamily,
+		Route: gs.Route, Port: gs.Port, Format: gs.Format,
+	}); ok {
+		b.WriteString(pre)
+		if !strings.HasSuffix(pre, "\n") {
+			b.WriteString("\n")
+		}
 	} else {
-		fmt.Fprintf(&b, "- Expose the behavioral entry point as a top-level func `%s(w http.ResponseWriter, r *http.Request)` — the proof harness calls this symbol directly.\n", gs.Entry())
-	}
-	b.WriteString("- Real logic, not hardcoded responses: the proof runs the LIVE program and mutation-tests it; for any input a case specifies (including invalid input) return EXACTLY the status + body that case requires, never crashing.\n")
-	b.WriteString("- RELIABILITY (Orion eats its own dog food): server timeouts + graceful shutdown, validated inputs, and errors handled without panicking.\n")
-	if gs.Route != "" || gs.Port != 0 {
-		fmt.Fprintf(&b, "- A main() that mounts %s and listens on $PORT (default %d), serving route %s as %s.\n", gs.Entry(), portOr(gs.Port), gs.Route, fmtOr(gs.Format, "json"))
+		writeDefaultPreamble(&b, gs, module)
 	}
 	b.WriteString("\nThe program MUST satisfy these behavioral cases (request → expected response) — these ARE the contract:\n")
 	cases := append([]spec.BehavioralCase(nil), gs.Cases...)
@@ -240,8 +241,31 @@ func GenerationPrompt(gs sandbox.GenSpec, writeHint string) string {
 	if s := strings.TrimSpace(gs.Context); s != "" {
 		b.WriteString("\n" + s + "\n")
 	}
+	// or-kzf.2: reviewable extra rules ride every generation prompt.
+	if rules := harnessconfig.Rules(); rules != "" {
+		b.WriteString("\nAdditional rules (from the reviewed harness config):\n" + rules + "\n")
+	}
 	b.WriteString("\n" + writeHint)
 	return b.String()
+}
+
+// writeDefaultPreamble is the compiled zero-config generation preamble.
+func writeDefaultPreamble(b *strings.Builder, gs sandbox.GenSpec, module string) {
+	b.WriteString("You are Orion's code generator. Write COMPLETE, COMPILABLE, RELIABLE Go that satisfies the behavioral contract below — build exactly what the contract requires, nothing more.\n\n")
+	b.WriteString("Hard requirements:\n")
+	b.WriteString("- A go.mod with `module " + module + "` and a recent `go` line (e.g. go 1.25).\n")
+	if gs.ProgramFamily == "library" {
+		b.WriteString("- This is a LIBRARY build: create the named packages with the EXPORTED functions/types the cases call (a thin package main { func main() {} } at the root keeps the module buildable). Unit cases call the exported surface directly — signatures must match the case expressions exactly.\n")
+	} else if gs.ProgramFamily == "cli" {
+		fmt.Fprintf(b, "- Expose the behavioral entry point as a top-level func `%s(args []string, stdin io.Reader, stdout, stderr io.Writer, env map[string]string) int` — the proof harness calls this symbol directly, and main() MUST be a thin wrapper: `func main() { os.Exit(%s(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, envMap())) }` so the shipped process and the entry behave identically.\n", gs.Entry(), gs.Entry())
+	} else {
+		fmt.Fprintf(b, "- Expose the behavioral entry point as a top-level func `%s(w http.ResponseWriter, r *http.Request)` — the proof harness calls this symbol directly.\n", gs.Entry())
+	}
+	b.WriteString("- Real logic, not hardcoded responses: the proof runs the LIVE program and mutation-tests it; for any input a case specifies (including invalid input) return EXACTLY the status + body that case requires, never crashing.\n")
+	b.WriteString("- RELIABILITY (Orion eats its own dog food): server timeouts + graceful shutdown, validated inputs, and errors handled without panicking.\n")
+	if gs.Route != "" || gs.Port != 0 {
+		fmt.Fprintf(b, "- A main() that mounts %s and listens on $PORT (default %d), serving route %s as %s.\n", gs.Entry(), portOr(gs.Port), gs.Route, fmtOr(gs.Format, "json"))
+	}
 }
 
 // generationRole is the native (in-process LLM) generator's system prompt.
