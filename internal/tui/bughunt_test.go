@@ -6,10 +6,89 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/revelara-ai/orion/internal/acp"
 )
+
+// TestViewportShowsNewestLinesWithActivityPane (or-gony bug 2/5): while an
+// activity pane shrinks the transcript viewport, the NEWEST transcript lines
+// must stay visible — render() pins the tail at the full height, and View()
+// must re-pin after subtracting the pane, or the freshest output is clipped.
+func TestViewportShowsNewestLinesWithActivityPane(t *testing.T) {
+	m := newTestConvo(t)
+	m = feed(m, tea.WindowSizeMsg{Width: 40, Height: 20})
+	m.inFlight = true
+	m = feed(m, streamMsg{u: acp.Activity("Orion", "build_service", 0, "running")}) // activity pane has content
+	for i := 0; i < 40; i++ {
+		m = feed(m, streamMsg{u: acp.Update{Kind: "agent_message", Text: fmt.Sprintf("LINE_%02d\n", i)}})
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "LINE_39") {
+		t.Fatalf("the newest transcript line was clipped by the activity-pane shrink:\n%s", view)
+	}
+	// Negative: an OLD line that cannot fit the shrunk window is NOT shown (proves
+	// the viewport really is bounded — the assertion above isn't trivially true).
+	if strings.Contains(view, "LINE_00") {
+		t.Fatalf("the shrunk viewport should not show the oldest line too (window unbounded?):\n%s", view)
+	}
+}
+
+// TestShortTerminalDropsActivityPaneNoOverflow (or-gony bug 3): on a terminal too
+// short to hold the transcript + activity pane + input, the activity pane is
+// dropped so the rendered View never exceeds the terminal height.
+func TestShortTerminalDropsActivityPaneNoOverflow(t *testing.T) {
+	m := newTestConvo(t)
+	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 10}) // short (wide enough that the status line is 1 row — isolates the activity-pane overflow)
+	m.inFlight = true
+	m = feed(m, streamMsg{u: acp.Activity("Orion", "build_service", 0, "running")})
+	for i := 0; i < 20; i++ {
+		m = feed(m, streamMsg{u: acp.Update{Kind: "agent_message", Text: fmt.Sprintf("L%02d\n", i)}})
+	}
+	if h := lipgloss.Height(m.View()); h > 10 {
+		t.Fatalf("View overflowed a height-10 terminal: %d rows", h)
+	}
+	// Negative: a ROOMY terminal keeps the activity pane (the drop is scoped to
+	// genuinely-short terminals, not a blanket removal).
+	m2 := newTestConvo(t)
+	m2 = feed(m2, tea.WindowSizeMsg{Width: 60, Height: 40})
+	m2.inFlight = true
+	m2 = feed(m2, streamMsg{u: acp.Activity("Orion", "build_service", 0, "running")})
+	if !strings.Contains(ansi.Strip(m2.View()), "build_service") {
+		t.Fatal("a roomy terminal must still render the activity pane")
+	}
+}
+
+// TestClearResetsSessionAsync (or-gony bug 4): /clear clears the transcript
+// immediately (never blocking the loop on SessionNew) and adopts the fresh
+// session id only when the off-loop reset lands via sessionResetMsg.
+func TestClearResetsSessionAsync(t *testing.T) {
+	m := newTestConvo(t)
+	m.msgs = []msg{{role: "you", text: "old line"}}
+	m.sid = "s1"
+
+	_ = m.handleCommand("/clear")
+	if len(m.msgs) != 0 {
+		t.Fatalf("/clear must clear the transcript immediately, got %d msgs", len(m.msgs))
+	}
+	if m.sid != "s1" {
+		t.Fatalf("/clear must not change the session id inline — that lands async, got %q", m.sid)
+	}
+	// The async reset lands: adopt the fresh id.
+	m = feed(m, sessionResetMsg{sid: "s2"})
+	if m.sid != "s2" {
+		t.Fatalf("sessionResetMsg must adopt the fresh session id, got %q", m.sid)
+	}
+	// Negative: a failed reset keeps the old id and surfaces a note.
+	m = feed(m, sessionResetMsg{err: fmt.Errorf("boom")})
+	if m.sid != "s2" {
+		t.Fatalf("a failed reset must keep the last good id, got %q", m.sid)
+	}
+	if !strings.Contains(transcript(m), "context reset failed") {
+		t.Fatalf("a failed reset must surface a note:\n%s", transcript(m))
+	}
+}
 
 // TestCancelResubmitDropsStaleTurnMessages (or-5g2q): cancelling a turn and
 // resubmitting starts a new turn generation; the superseded turn's late stream,

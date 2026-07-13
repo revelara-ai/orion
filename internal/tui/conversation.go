@@ -125,6 +125,13 @@ type turnDoneMsg struct {
 	err error
 	gen int
 } // a prompt turn completed
+
+// sessionResetMsg carries the outcome of an OFF-loop /clear session reset — the
+// SessionNew round-trip must never block the Update loop (or-gony).
+type sessionResetMsg struct {
+	sid string
+	err error
+}
 type permMsg struct {                 // the agent requested a permission
 	req   acp.PermissionRequest
 	reply chan acp.PermissionResult
@@ -325,6 +332,18 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.msgs = append(m.msgs, msg{role: "orion", text: "error: " + t.err.Error()})
 		}
 		m.render()
+		return m, nil
+
+	case sessionResetMsg:
+		// The off-loop /clear reset landed. On success adopt the fresh session id
+		// (subsequent prompts get a clean context); on failure keep the old id but
+		// tell the developer the context wasn't actually reset.
+		if t.err == nil && t.sid != "" {
+			m.sid = t.sid
+		} else if t.err != nil {
+			m.msgs = append(m.msgs, msg{role: "orion", kind: "command", text: "context reset failed: " + t.err.Error()})
+			m.render()
+		}
 		return m, nil
 
 	case CommandResultMsg:
@@ -1033,10 +1052,22 @@ func (m Conversation) View() string {
 	// returns as soon as the developer answers.
 	act := m.activity.render(paneW, m.inFlight && !m.hasPerm())
 
+	// On a terminal too short to keep the transcript >= 3 rows beside the
+	// activity pane + palette, drop the (passive) activity pane rather than
+	// overflow the alt-screen — the transcript + input are essential (or-gony).
+	paletteChrome := 0
+	if palette != "" {
+		paletteChrome = lipgloss.Height(palette)
+	}
+	if act != "" && m.vp.Height-lipgloss.Height(act)-paletteChrome < 3 {
+		act = ""
+	}
+
 	// Shrink the viewport height for any chrome inserted between the transcript
 	// and the input (activity pane and/or palette). This must happen before
 	// m.vp.View() so the bordered transcript pane renders the right number of rows
 	// in ALL states (empty, active, in-flight) — the layout is always height-exact.
+	atBottom := m.vp.AtBottom()
 	if act != "" || palette != "" {
 		vpH := m.vp.Height
 		if act != "" {
@@ -1046,6 +1077,12 @@ func (m Conversation) View() string {
 			vpH -= lipgloss.Height(palette)
 		}
 		m.vp.Height = max(3, vpH)
+		// Re-pin the tail after shrinking: render()'s GotoBottom scrolled to the
+		// tail at the FULL height, which is now below this reduced window — so the
+		// newest lines would be clipped during a turn without this (or-gony).
+		if atBottom {
+			m.vp.GotoBottom()
+		}
 	}
 
 	body := m.vp.View()
@@ -1228,17 +1265,21 @@ func humanTokens(n int) string {
 	return fmt.Sprintf("%.1fk", float64(n)/1000)
 }
 
-// newSession resets the conversation context by opening a fresh ACP session — the model's
-// per-session history is keyed by the session id, so a new id starts a clean context.
-// Best-effort + time-bounded so a busy agent can't stall /clear.
-func (m *Conversation) newSession() {
-	if m.client == nil {
-		return
+// newSessionCmd opens a fresh ACP session OFF the Update loop and posts a
+// sessionResetMsg with the result. The model's per-session history is keyed by
+// the session id, so a new id starts a clean context. SessionNew is a blocking
+// round-trip (up to 2s), so /clear must dispatch it as a tea.Cmd rather than
+// call it inline — the Update loop never blocks on the Conductor (or-gony).
+func (m *Conversation) newSessionCmd() tea.Cmd {
+	client := m.client
+	if client == nil {
+		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if sid, err := m.client.SessionNew(ctx); err == nil && sid != "" {
-		m.sid = sid
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		sid, err := client.SessionNew(ctx)
+		return sessionResetMsg{sid: sid, err: err}
 	}
 }
 
