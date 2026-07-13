@@ -134,8 +134,8 @@ func DefaultAgentScopes(projectDir string) []Scope {
 	var scopes []Scope
 	add := func(base string) []Scope {
 		return []Scope{
-			{filepath.Join(base, ".agents", "agents"), TrustGeneration},
-			{filepath.Join(base, ".claude", "agents"), TrustGeneration},
+			{Root: filepath.Join(base, ".agents", "agents"), Trust: TrustGeneration},
+			{Root: filepath.Join(base, ".claude", "agents"), Trust: TrustGeneration},
 		}
 	}
 	if home, err := os.UserHomeDir(); err == nil {

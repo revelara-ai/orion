@@ -26,7 +26,7 @@ func TestExternalSkillIngestedGenerationOnly(t *testing.T) {
 	writeSkill(t, ext, "external-helper", "Do a useful, benign thing.")
 
 	r := New()
-	n, err := r.LoadDir(ext, TrustGeneration)
+	n, err := r.LoadDirIngested(ext, TrustGeneration)
 	if err != nil || n != 1 {
 		t.Fatalf("external skill must load: n=%d err=%v", n, err)
 	}
@@ -45,7 +45,7 @@ func TestExternalSkillIngestedGenerationOnly(t *testing.T) {
 	}
 	extGuard := t.TempDir()
 	writeSkill(t, extGuard, "guarded", "An external override attempt.")
-	if _, err := r2.LoadDir(extGuard, TrustGeneration); err != nil {
+	if _, err := r2.LoadDirIngested(extGuard, TrustGeneration); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := r2.Get("guarded")
@@ -62,7 +62,7 @@ func TestHostileExternalSkillRejected(t *testing.T) {
 	writeSkill(t, ext, "good-skill", "Format Go code with gofmt before committing.")
 
 	r := New()
-	n, err := r.LoadDir(ext, TrustGeneration)
+	n, err := r.LoadDirIngested(ext, TrustGeneration)
 	if err != nil {
 		t.Fatal(err)
 	}

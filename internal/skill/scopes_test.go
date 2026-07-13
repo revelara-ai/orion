@@ -14,13 +14,13 @@ func TestDefaultScopesOrder(t *testing.T) {
 	proj := t.TempDir()
 
 	scopes := DefaultScopes(proj)
-	if len(scopes) != 6 {
-		t.Fatalf("expected 3 user + 3 project scopes, got %d", len(scopes))
+	if len(scopes) != 8 {
+		t.Fatalf("expected 4 user + 4 project scopes (.agents/.claude/.codex/.orion), got %d", len(scopes))
 	}
-	// First three are under home, last three under project.
+	// First four are under home, last four under project.
 	for i, s := range scopes {
 		wantBase := home
-		if i >= 3 {
+		if i >= 4 {
 			wantBase = proj
 		}
 		if !strings.HasPrefix(s.Root, wantBase) {
@@ -44,7 +44,7 @@ func TestLoadScopes(t *testing.T) {
 	writeSkillDir(t, userRoot, "only-user", md("only-user", "just user"))
 
 	r := New()
-	if err := r.LoadScopes([]Scope{{userRoot, TrustGeneration}, {projRoot, TrustGeneration}}); err != nil {
+	if err := r.LoadScopes([]Scope{{Root: userRoot, Trust: TrustGeneration}, {Root: projRoot, Trust: TrustGeneration}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.List()) != 2 {

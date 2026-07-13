@@ -11,6 +11,11 @@ import (
 type Scope struct {
 	Root  string
 	Trust Trust
+	// Ingested marks a CROSS-HARNESS external scope (or-ykz.10): its skills
+	// are untrusted third-party content, install-scanned at load. Native
+	// scopes (.orion, the store's self-evolved skills — already scanned at
+	// promotion) are not ingested.
+	Ingested bool
 }
 
 // DefaultScopes returns the conventional agentskills.io discovery scopes in PRECEDENCE ORDER —
@@ -26,10 +31,10 @@ func DefaultScopes(projectDir string) []Scope {
 	var scopes []Scope
 	add := func(base string) []Scope {
 		return []Scope{
-			{filepath.Join(base, ".agents", "skills"), TrustGeneration},
-			{filepath.Join(base, ".claude", "skills"), TrustGeneration},
-			{filepath.Join(base, ".codex", "skills"), TrustGeneration}, // or-ykz.10: cross-harness (Codex)
-			{filepath.Join(base, ".orion", "skills"), TrustGeneration},
+			{Root: filepath.Join(base, ".agents", "skills"), Trust: TrustGeneration, Ingested: true},
+			{Root: filepath.Join(base, ".claude", "skills"), Trust: TrustGeneration, Ingested: true},
+			{Root: filepath.Join(base, ".codex", "skills"), Trust: TrustGeneration, Ingested: true}, // or-ykz.10: cross-harness (Codex)
+			{Root: filepath.Join(base, ".orion", "skills"), Trust: TrustGeneration},                 // native, not ingested
 		}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
@@ -42,7 +47,7 @@ func DefaultScopes(projectDir string) []Scope {
 	// joined) load as ingested generation-domain skills too.
 	for _, p := range filepath.SplitList(os.Getenv("ORION_SKILL_DIRS")) {
 		if p = filepath.Clean(strings.TrimSpace(p)); p != "" && p != "." {
-			scopes = append(scopes, Scope{Root: p, Trust: TrustGeneration})
+			scopes = append(scopes, Scope{Root: p, Trust: TrustGeneration, Ingested: true})
 		}
 	}
 	return scopes
@@ -52,7 +57,8 @@ func DefaultScopes(projectDir string) []Scope {
 // scope directory is a no-op, so the conventional set can be passed wholesale.
 func (r *Registry) LoadScopes(scopes []Scope) error {
 	for _, s := range scopes {
-		if _, err := r.LoadDir(s.Root, s.Trust); err != nil {
+		r.scopes = append(r.scopes, s)
+		if _, err := r.scan(s.Root, s.Trust, s.Ingested); err != nil {
 			return err
 		}
 	}
