@@ -825,6 +825,38 @@ func (r *FailureModeRepo) Record(ctx context.Context, projectID, category, compo
 	return existing, nil
 }
 
+// FailureMode is a recorded, deduped failure class (Story 30: never silently
+// repeat a known failure).
+type FailureMode struct {
+	ID            string
+	Category      string
+	ComponentType string
+	SymptomClass  string
+	CreatedAt     string
+}
+
+// ListForProject returns the project's recorded failure modes, newest first —
+// the CONSULT half of "never repeat a known failure" (or-gb1.3): the
+// generation context reads these at task start.
+func (r *FailureModeRepo) ListForProject(ctx context.Context, projectID string) ([]FailureMode, error) {
+	rows, err := r.tx.QueryContext(ctx,
+		`SELECT id, category, component_type, symptom_class, created_at
+		 FROM failure_modes WHERE project_id=? ORDER BY created_at DESC, id DESC`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FailureMode
+	for rows.Next() {
+		var f FailureMode
+		if err := rows.Scan(&f.ID, &f.Category, &f.ComponentType, &f.SymptomClass, &f.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // ── DeliveryRepo ─────────────────────────────────────────────────────────────
 
 // Delivery is a recorded delivery with its operating envelope.
