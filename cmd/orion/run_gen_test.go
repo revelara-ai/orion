@@ -37,3 +37,23 @@ func TestResolveAgentSelection(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveAgentChain (or-ykz.13): ORION_AGENT accepts an ordered
+// comma-separated failover chain; unknown/off-PATH entries are skipped; a
+// single name behaves exactly as before; empty/fixture resolves to none.
+func TestResolveAgentChain(t *testing.T) {
+	onPath := func(string) (string, error) { return "/usr/bin/x", nil }
+	chain, ok := resolveAgentChain("claude,nonexistent-agent,gemini", onPath)
+	if !ok || len(chain) != 2 || chain[0].Name != "claude" || chain[1].Name != "gemini" {
+		t.Fatalf("chain must keep order and skip unknowns: %+v ok=%v", chain, ok)
+	}
+	if single, ok := resolveAgentChain("claude", onPath); !ok || len(single) != 1 {
+		t.Fatalf("a single name must resolve as a one-entry chain: %+v", single)
+	}
+	if _, ok := resolveAgentChain("", onPath); ok {
+		t.Fatal("empty must resolve to none (fixture path)")
+	}
+	if _, ok := resolveAgentChain("fixture", onPath); ok {
+		t.Fatal("fixture must resolve to none")
+	}
+}

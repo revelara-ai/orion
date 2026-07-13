@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -109,11 +110,24 @@ func cmdProof(args []string) int {
 // PATH) it spawns the developer's own vendor coding-agent to WRITE the code over
 // ACP — the real "Orion writes new code" dogfood path (or-s10).
 func generateService(ctx context.Context, gs sandbox.GenSpec, buildDir, feedback string) (sandbox.GeneratedArtifact, error) {
-	preset, ok := configuredAgent()
+	presets, ok := configuredAgentChain()
 	if !ok {
 		return sandbox.GenerateTimeServiceFixture(buildDir, gs)
 	}
-	gen := agentruntime.AgentGenerator{Driver: agentruntime.SpawnDriver(preset, generationRole(gs), nil)}
+	// or-ykz.13: an ordered FAILOVER CHAIN — each entry gets one deadline-
+	// bounded turn; rate-limit/overload/quota/hang/refusal advances to the
+	// next vendor with a visible notice. One preset degenerates to today.
+	chain := make([]agentruntime.NamedGenerator, 0, len(presets))
+	for _, p := range presets {
+		chain = append(chain, agentruntime.NamedGenerator{
+			Name: p.Name,
+			Gen:  agentruntime.AgentGenerator{Driver: agentruntime.SpawnDriver(p, generationRole(gs), nil)},
+		})
+	}
+	gen := agentruntime.FailoverGenerator{Chain: chain, OnFailover: func(from, to, reason string) {
+		fmt.Printf("run: agent %s failed over to %s (%s)\n", from, to, reason)
+		slog.Warn("vendor-agent failover", "from", from, "to", to, "reason", reason)
+	}}
 	desc := "implement the ratified service"
 	if feedback != "" { // refinement attempt — give the agent the proof's causal analysis
 		desc = "fix the prior implementation; the independent proof rejected it.\n\n" + feedback
@@ -135,11 +149,26 @@ func generateService(ctx context.Context, gs sandbox.GenSpec, buildDir, feedback
 	return art, nil
 }
 
-// configuredAgent returns the opt-in vendor agent preset (ORION_AGENT=<name>) when
-// it is set, known, and on PATH; otherwise generation uses the deterministic
-// fixture. Opt-in so `orion run` never silently spawns an agent or uses quota.
-func configuredAgent() (agentruntime.Preset, bool) {
-	return resolveAgent(os.Getenv("ORION_AGENT"), exec.LookPath)
+// configuredAgentChain returns the opt-in vendor-agent FAILOVER CHAIN
+// (ORION_AGENT="claude,gemini,codex" — or a single name, exactly as before).
+// Unknown/off-PATH entries are skipped with a warning; an empty resolved
+// chain falls back to the fixture. Opt-in so `orion run` never silently
+// spawns an agent or uses quota.
+func configuredAgentChain() ([]agentruntime.Preset, bool) {
+	return resolveAgentChain(os.Getenv("ORION_AGENT"), exec.LookPath)
+}
+
+// resolveAgentChain is configuredAgentChain with an injectable PATH lookup.
+func resolveAgentChain(names string, lookPath func(string) (string, error)) ([]agentruntime.Preset, bool) {
+	var out []agentruntime.Preset
+	for _, name := range strings.Split(names, ",") {
+		if p, ok := resolveAgent(name, lookPath); ok {
+			out = append(out, p)
+		} else if n := strings.TrimSpace(name); n != "" && !strings.EqualFold(n, "none") && !strings.EqualFold(n, "fixture") {
+			fmt.Fprintf(os.Stderr, "orion run: agent %q unknown or not on PATH — skipped in the failover chain\n", n)
+		}
+	}
+	return out, len(out) > 0
 }
 
 // resolveAgent is configuredAgent with an injectable PATH lookup (for tests).
