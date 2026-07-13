@@ -40,6 +40,25 @@ func EnsureFreshToken(ctx context.Context, ts *TokenStore, endpoint string, now 
 	if !tok.Expired(now) {
 		return tok, false, nil // still valid — no network
 	}
+
+	// or-xe7.9: refresh is SINGLE-FLIGHT across processes. WorkOS refresh
+	// tokens are single-use — two orion processes refreshing concurrently
+	// race: the loser burns an already-rotated token (invalid_grant) and can
+	// clobber the winner's persisted rotation with a stale Save (observed as
+	// intermittent empty reliability context). Serialize on a lock file next
+	// to the credential, then RE-LOAD: if another process refreshed while we
+	// waited, its fresh token is ours too — no second grant.
+	release, lerr := acquireRefreshLock(ctx, ts)
+	if lerr != nil {
+		return tok, false, fmt.Errorf("revelara.ai token refresh: %w", lerr)
+	}
+	defer release()
+	if cur, curOK, cerr := ts.Load(); cerr == nil && curOK && !cur.Expired(now) {
+		return cur, true, nil // refreshed by the process that held the lock first
+	} else if cerr == nil && curOK {
+		tok = cur // always refresh from the NEWEST persisted credential
+	}
+
 	if tok.RefreshToken == "" || tok.ClientID == "" {
 		return tok, false, fmt.Errorf("revelara.ai session expired and cannot be refreshed automatically — run /mcp login")
 	}
