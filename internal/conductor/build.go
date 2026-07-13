@@ -1002,7 +1002,14 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 					return fe
 				}
 				reason := fmt.Sprintf("task failed proof after %d attempt(s)", attempts)
-				if faultStep == "spec" {
+				switch {
+				// or-7et.1(3): an alignment BLOCK is not a proof failure — the
+				// code proved, but the intent audit removed the green light.
+				// Label it so the human triages an alignment concern, not a
+				// phantom proof defect. (The detail already carries the concern.)
+				case strings.HasPrefix(failureAnalysis, "alignment(high):"):
+					reason = "alignment concern blocked delivery (corroborated high) — the code proved but does not serve the intent; review the concern below"
+				case faultStep == "spec":
 					reason = fmt.Sprintf("spec defect suspected (step-5): zero obligation progress across %d attempt(s) — re-coding is not converging on the contract", attempts)
 					if reopenedSpecID != "" {
 						reason += "; spec RE-OPENED as amendment draft " + reopenedSpecID + " — amend (record_answer / remove_requirement + add_requirement), re-ratify, re-run"

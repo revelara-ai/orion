@@ -38,6 +38,24 @@ func assertOpenEscalationContains(t *testing.T, ctx context.Context, oc *orchest
 	}
 }
 
+// assertOpenReasonExcludes fails if any open escalation's REASON contains sub
+// (the negative half — a mislabel regression must die here).
+func assertOpenReasonExcludes(t *testing.T, ctx context.Context, oc *orchestrator.Conductor, sub string) {
+	t.Helper()
+	_ = oc.Store().WithTx(ctx, func(tx *contextstore.Tx) error {
+		open, e := tx.Escalations().ListOpen(ctx)
+		if e != nil {
+			return e
+		}
+		for _, esc := range open {
+			if strings.Contains(esc.Reason, sub) {
+				t.Fatalf("escalation reason must NOT contain %q, got: %s", sub, esc.Reason)
+			}
+		}
+		return nil
+	})
+}
+
 // TestAlignGateBlocksCorroboratedHigh (or-809): with ORION_ALIGN_GATE=block, a
 // proof-passing but corroborated-HIGH-misaligned module must NOT close — the
 // green light is removed (Accept→Inconclusive) and it does not deliver.
@@ -64,6 +82,10 @@ func TestAlignGateBlocksCorroboratedHigh(t *testing.T) {
 	// concern is in the inbox (a regression that blocks the verdict but drops the
 	// escalation must fail here).
 	assertOpenEscalationContains(t, ctx, oc, "alignment(high)")
+	// or-7et.1(3): the escalation REASON must be alignment-framed, not the
+	// phantom "task failed proof" — and NOT the generic proof-failure label.
+	assertOpenEscalationContains(t, ctx, oc, "alignment concern blocked delivery")
+	assertOpenReasonExcludes(t, ctx, oc, "task failed proof")
 }
 
 // TestAlignGateDowngradesUncorroboratedHigh (or-809 G5): a high verdict the
