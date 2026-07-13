@@ -25,6 +25,7 @@ import (
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/internal/proof"
 	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
+	"github.com/revelara-ai/orion/internal/proof/proofexec"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 	"github.com/revelara-ai/orion/internal/reliabilityscan"
@@ -520,6 +521,29 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		deliverDetail = "escalate: " + res.Reason
 	}
 	onPhase.emit("Deliver", deliverStatus, deliverDetail)
+
+	// or-nkcf: a DELIVERED service ships its generated investigation analyzer
+	// (DrP pattern) — the contract's cases as executable triage, next to the
+	// prose runbook. Additive + fail-open: it rides its own compile gate, and
+	// a miss warns without touching the delivery verdict.
+	if res.Decision == delivery.Deliver {
+		src := delivery.GenerateAnalyzer(es, model, runbook)
+		anDir := filepath.Join(buildDir, "cmd", "analyze")
+		if aerr := os.MkdirAll(anDir, 0o755); aerr == nil {
+			aerr = os.WriteFile(filepath.Join(anDir, "main.go"), []byte(src), 0o644)
+			if aerr == nil {
+				if out, code, gerr := proofexec.GoToolchain(ctx, buildDir, "build", "-o", os.DevNull, "./cmd/analyze"); gerr != nil || code != 0 {
+					aerr = fmt.Errorf("analyzer compile gate: exit %d %v %s", code, gerr, firstLine(out))
+				}
+			}
+			if aerr != nil {
+				_ = os.RemoveAll(filepath.Join(buildDir, "cmd"))
+				onPhase.emit("Deliver", PhaseWarn, "investigation analyzer skipped: "+aerr.Error())
+			} else {
+				onPhase.emit("Deliver", PhaseDone, "investigation analyzer generated (cmd/analyze — go run ./cmd/analyze)")
+			}
+		}
+	}
 
 	// Export: when the Epic is ACCEPTED (proven), write the code into the developer's
 	// working repo so they can see + use it — not just leave it in the store's build
@@ -1233,4 +1257,14 @@ func assumptions(m stpa.Model) []string {
 		}
 	}
 	return out
+}
+
+// firstLine trims a tool output to its first non-empty line (phase-log sized).
+func firstLine(s string) string {
+	for _, ln := range strings.Split(s, "\n") {
+		if ln = strings.TrimSpace(ln); ln != "" {
+			return ln
+		}
+	}
+	return ""
 }

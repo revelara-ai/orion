@@ -91,6 +91,18 @@ func ExportProvenCode(srcDir, destDir string, es spec.ExecutableSpec) ([]string,
 	if len(written) == 0 {
 		return nil, fmt.Errorf("no source files in build dir %s", srcDir)
 	}
+	// or-nkcf: the generated investigation analyzer is the ONE subtree that
+	// ships — the flat skip above deliberately excludes proof scratch dirs.
+	if data, aerr := os.ReadFile(filepath.Join(srcDir, "cmd", "analyze", "main.go")); aerr == nil {
+		anDest := filepath.Join(destDir, "cmd", "analyze")
+		if err := os.MkdirAll(anDest, 0o755); err != nil {
+			return nil, fmt.Errorf("create analyzer dir: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(anDest, "main.go"), data, 0o644); err != nil {
+			return nil, fmt.Errorf("write analyzer: %w", err)
+		}
+		written = append(written, "cmd/analyze/main.go")
+	}
 	if err := os.WriteFile(filepath.Join(destDir, "ORION.md"), []byte(provenanceNote(es)), 0o644); err != nil {
 		return nil, fmt.Errorf("write provenance: %w", err)
 	}
