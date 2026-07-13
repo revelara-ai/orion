@@ -89,6 +89,12 @@ func (c *Conductor) RatifyGoals(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ratify_goals: no active project: %w", err)
 	}
+	// Open-question gate (or-045a.6): a blocking goals-phase ambiguity must be
+	// answered or explicitly assumed before the goals anchor — deferring a
+	// question must never let it vanish into a ratified document.
+	if qs := c.blockingOpenQuestions(ctx, proj.ID, "goals"); len(qs) > 0 {
+		return "", fmt.Errorf("cannot ratify goals: %d blocking open question(s) — answer or explicitly assume each (resolve_open_question):%s", len(qs), renderOpenQuestions(qs))
+	}
 	var hash string
 	if err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
 		g, e := tx.Goals().Get(ctx, proj.ID)

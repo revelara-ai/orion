@@ -26,6 +26,25 @@ CREATE TABLE IF NOT EXISTS goals (
     updated_at TEXT NOT NULL
 );
 
+-- Open-question ledger (or-045a.6): unresolved ambiguities at ANY intake
+-- altitude (goals/stpa/direction/spec) persist as first-class questions —
+-- deferring one no longer lets it vanish. Resolution is only ever an explicit
+-- answer or an approved assumption; blocking questions gate ratification.
+CREATE TABLE IF NOT EXISTS open_questions (
+    id         TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    phase      TEXT NOT NULL CHECK (phase IN ('goals','stpa','direction','spec')),
+    origin     TEXT NOT NULL,
+    key        TEXT NOT NULL DEFAULT '',
+    question   TEXT NOT NULL,
+    severity   TEXT NOT NULL CHECK (severity IN ('blocking','advisory')),
+    status     TEXT NOT NULL CHECK (status IN ('open','answered','assumed')),
+    resolution TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_open_questions_project ON open_questions(project_id, status);
+
 CREATE TABLE IF NOT EXISTS specs (
     id             TEXT PRIMARY KEY,
     project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

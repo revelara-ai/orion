@@ -456,6 +456,13 @@ func (c *Conductor) ApproveSpec(ctx context.Context) (spec.ExecutableSpec, error
 				len(open), strings.Join(open, "; "))
 		}
 	}
+	// Open-question gate (or-045a.6): a blocking ambiguity at ANY intake
+	// altitude (goals/stpa/direction/spec) refuses ratification by name —
+	// the ledger is how a deferred question stays visible instead of being
+	// silently resolved by prose.
+	if qs := c.blockingOpenQuestions(ctx, proj.ID, ""); len(qs) > 0 {
+		return spec.ExecutableSpec{}, fmt.Errorf("cannot ratify: %d blocking open question(s) — answer or explicitly assume each (resolve_open_question):%s", len(qs), renderOpenQuestions(qs))
+	}
 	// Zero-case hard fail (or-8ti.1, the or-y9d false-pass class): a spec with
 	// nothing to execute would "prove" vacuously green. Ratification is where
 	// that stops — intermediate compiles (preview, decomposer) may pass through
