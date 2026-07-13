@@ -371,7 +371,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			var aligner Aligner
 			if provider != nil {
 				gen = NativeGenerator(provider, c.Budget(), st)
-				aligner = NativeAligner(provider)
+				aligner = NativeAligner(AlignJudgeProvider(provider)) // or-kzf.1: independent judge model when configured
 				// or-809: give the plan path a semantic ModuleProposer (runs in
 				// SHADOW behind ORION_MODULE_PROPOSER; the oracle still drives).
 				c.SetModuleProposer(NativeModuleProposer(provider))

@@ -225,3 +225,50 @@ func TestDriftMonitorSkipsInconclusive(t *testing.T) {
 		t.Fatalf("a real misalignment must still count, got %d", n)
 	}
 }
+
+// TestAlignerAuditsWholeArtifact (or-kzf.1): the judge sees EVERY non-test
+// source file — misalignment hiding outside main.go is visible — while the
+// harness's proof corpus (_test.go) never reaches it.
+func TestAlignerAuditsWholeArtifact(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "sneaky.go"), []byte("package main\nfunc Sneaky() string { return \"hardcoded\" }\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "main_test.go"), []byte("package main\nfunc TestSecretCorpus(t *testing.T) {}\n"), 0o644)
+
+	prov := &fakeLLM{resp: []*llm.ChatResponse{alignResp(true, "none", "fine")}}
+	if _, err := NativeAligner(prov)(context.Background(), "intent", dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	sent := prov.lastUser()
+	if !strings.Contains(sent, "func Sneaky") {
+		t.Fatal("the judge must see source beyond main.go")
+	}
+	if strings.Contains(sent, "TestSecretCorpus") {
+		t.Fatal("the proof corpus must NEVER reach the judge (the wall)")
+	}
+}
+
+// TestAlignJudgeProviderIndependence (or-kzf.1): ORION_ALIGN_MODEL selects an
+// independent judge brain; unset or unbuildable falls back to the session
+// brain (the audit never silently drops).
+func TestAlignJudgeProviderIndependence(t *testing.T) {
+	fallback := &fakeLLM{}
+	t.Setenv("ORION_ALIGN_MODEL", "")
+	if got := AlignJudgeProvider(fallback); got != llm.Provider(fallback) {
+		t.Fatal("unset must return the session brain")
+	}
+	t.Setenv("ORION_ALIGN_MODEL", "no-such-provider/model-x")
+	if got := AlignJudgeProvider(fallback); got != llm.Provider(fallback) {
+		t.Fatal("an unbuildable ref must fall back, never nil")
+	}
+	t.Setenv("HOME", t.TempDir()) // no config file → clean build from env
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-independent")
+	t.Setenv("ORION_ALIGN_MODEL", "anthropic/claude-test")
+	got := AlignJudgeProvider(fallback)
+	if got == llm.Provider(fallback) || got == nil {
+		t.Fatal("a buildable ref must yield the independent judge")
+	}
+	if got.Name() != "anthropic" {
+		t.Fatalf("the judge must be the configured provider, got %s", got.Name())
+	}
+}

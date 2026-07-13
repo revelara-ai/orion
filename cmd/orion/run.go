@@ -12,6 +12,7 @@ import (
 	"github.com/revelara-ai/orion/internal/agentruntime"
 	"github.com/revelara-ai/orion/internal/conductor"
 	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/llmsetup"
 	"github.com/revelara-ai/orion/internal/sandbox"
 )
 
@@ -36,7 +37,15 @@ func cmdRun(_ []string) int {
 	// One-shot build→prove→deliver, shared with the native Orion agent's
 	// build_service tool. generateService injects the (opt-in) vendor-agent
 	// generator; nil would use the fixture.
-	res, err := conductor.BuildAndProve(ctx, store, generateService, nil, func(e conductor.PhaseEvent) { fmt.Printf("run: %s %s %s\n", e.Status, e.Phase, e.Detail) }, conductor.OutputRoot())
+	// or-kzf.1: the alignment judge was NIL on this path — the single
+	// semantic-drift detector never ran for `orion run`. Wire it from the
+	// session brain (independent model honored via ORION_ALIGN_MODEL);
+	// offline stays nil — the deterministic fixture path needs no judge.
+	var aligner conductor.Aligner
+	if brain := llmsetup.Select(); brain.Provider != nil {
+		aligner = conductor.NativeAligner(conductor.AlignJudgeProvider(brain.Provider))
+	}
+	res, err := conductor.BuildAndProve(ctx, store, generateService, aligner, func(e conductor.PhaseEvent) { fmt.Printf("run: %s %s %s\n", e.Status, e.Phase, e.Detail) }, conductor.OutputRoot())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion run:", err)
 		return 1

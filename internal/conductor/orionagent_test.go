@@ -15,14 +15,31 @@ import (
 // in for a real model so Phase 3 is provable without a live API key (the live
 // path is exercised manually).
 type fakeLLM struct {
-	resp []*llm.ChatResponse
-	i    int
+	resp    []*llm.ChatResponse
+	i       int
+	lastReq llm.ChatRequest
+}
+
+// lastUser returns the final user message's text from the last request.
+func (f *fakeLLM) lastUser() string {
+	for i := len(f.lastReq.Messages) - 1; i >= 0; i-- {
+		m := f.lastReq.Messages[i]
+		if m.Role == llm.RoleUser {
+			for _, b := range m.Content {
+				if b.Type == llm.BlockText {
+					return b.Text
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func (f *fakeLLM) Name() string                                    { return "fake" }
 func (f *fakeLLM) Models(context.Context) ([]llm.ModelInfo, error) { return nil, nil }
 func (f *fakeLLM) Ping(context.Context) error                      { return nil }
-func (f *fakeLLM) Chat(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
+func (f *fakeLLM) Chat(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+	f.lastReq = req
 	r := f.resp[f.i]
 	if f.i < len(f.resp)-1 {
 		f.i++
