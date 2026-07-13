@@ -307,7 +307,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 
 	r.Register(tools.Tool{
 		Name:        "propose_goals",
-		Description: "Draft the project's GOALS DOCUMENT from the conversation — goals (what this is for), non-goals (explicitly out of scope), success criteria (how success is judged) — and persist it as a DRAFT for the developer to review (or-045a.2). Use it EARLY on a large/vague intent, BEFORE spec decisions: present the draft, incorporate corrections by re-proposing, then record the developer's confirmation with ratify_goals. The ratified goals steer the grill and the loss-scenario analysis.",
+		Description: "Draft the project's GOALS DOCUMENT from the conversation — goals (what this is for), non-goals (explicitly out of scope), success criteria (how success is judged) — and persist it as a DRAFT for the developer to review (or-045a.2). Use it EARLY on a large/vague intent, BEFORE spec decisions: present the draft, incorporate corrections by re-proposing, then record the developer's confirmation with ratify_goals. If you notice an AMBIGUITY or an internal CONTRADICTION while drafting (e.g. a success criterion a stated direction cannot meet), raise it with raise_open_question instead of resolving it yourself — blocking questions gate ratification. The ratified goals steer the grill and the loss-scenario analysis.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"goals":{"type":"array","items":{"type":"string"}},"non_goals":{"type":"array","items":{"type":"string"}},"success_criteria":{"type":"array","items":{"type":"string"}}},"required":["goals"]}`),
 		Safety:      tools.Safety{Destructive: true},
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
@@ -333,6 +333,79 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				return "", err
 			}
 			return "goals ratified (hash " + hash[:12] + "…) — they now steer the grill and the loss-scenario analysis", nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "raise_open_question",
+		Description: "Record an UNRESOLVED ambiguity as a first-class open question (or-045a.6) instead of assuming an answer: use it when the developer defers/declines a question, or when you spot an ambiguity or contradiction (in the intent, the goals draft, or a direction) that only they can settle. Blocking questions gate ratify_goals and ratify_spec until answered or explicitly assumed — a deferred question must never silently vanish. phase: goals|stpa|direction|spec; severity: blocking (gates) | advisory (noted).",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"phase":{"type":"string","enum":["goals","stpa","direction","spec"]},"question":{"type":"string"},"key":{"type":"string","description":"optional decision key an answer should record under (e.g. grill.setting, direction.engine)"},"severity":{"type":"string","enum":["blocking","advisory"]}},"required":["phase","question","severity"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct{ Phase, Question, Key, Severity string }
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			id, err := c.RaiseOpenQuestion(ctx, p.Phase, "grill", p.Key, p.Question, p.Severity)
+			if err != nil {
+				return "", err
+			}
+			return "open question raised (" + id[:8] + ") — it now gates ratification until answered or explicitly assumed", nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "list_open_questions",
+		Description: "List the project's OPEN questions (or-045a.6) — the deferred/unresolved ambiguities gating ratification. Surface them to the developer; resolve each with resolve_open_question.",
+		Safety:      tools.Safety{ReadOnly: true},
+		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
+			qs, err := c.OpenQuestions(ctx)
+			if err != nil {
+				return "", err
+			}
+			if len(qs) == 0 {
+				return "no open questions.", nil
+			}
+			var b strings.Builder
+			fmt.Fprintf(&b, "%d open question(s):\n", len(qs))
+			for _, q := range qs {
+				fmt.Fprintf(&b, "- %s [%s/%s, %s] %s", q.ID[:8], q.Phase, q.Severity, q.Origin, q.Question)
+				if q.Key != "" {
+					fmt.Fprintf(&b, " (answers record under %s)", q.Key)
+				}
+				b.WriteString("\n")
+			}
+			return strings.TrimRight(b.String(), "\n"), nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "resolve_open_question",
+		Description: "Resolve an open question with the DEVELOPER'S decision (or-045a.6): resolution=answered records their answer (under the question's decision key when it has one); resolution=assumed records their EXPLICIT assumption into the same audited ledger as approve_assumptions. Never resolve on your own guess — the developer decides.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","description":"the open question id (or its 8-char prefix from list_open_questions)"},"resolution":{"type":"string","enum":["answered","assumed"]},"value":{"type":"string","description":"the developer's answer or assumption text"}},"required":["id","resolution","value"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct{ ID, Resolution, Value string }
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			id := p.ID
+			if len(id) == 8 { // resolve a short prefix from list_open_questions
+				qs, err := c.OpenQuestions(ctx)
+				if err != nil {
+					return "", err
+				}
+				for _, q := range qs {
+					if strings.HasPrefix(q.ID, id) {
+						id = q.ID
+						break
+					}
+				}
+			}
+			if err := c.ResolveOpenQuestion(ctx, id, p.Resolution, p.Value); err != nil {
+				return "", err
+			}
+			return "question resolved (" + p.Resolution + ": " + p.Value + ")", nil
 		},
 	})
 

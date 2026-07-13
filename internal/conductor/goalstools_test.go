@@ -93,3 +93,38 @@ func TestGoalsToolsRoundTrip(t *testing.T) {
 		t.Fatal("an empty goals proposal must be refused")
 	}
 }
+
+// TestOpenQuestionTools (or-045a.6 DONE-WHEN a): deferring an ambiguity via
+// raise_open_question persists it (it does not vanish), list surfaces it, and
+// resolve records the developer's decision — including by short id prefix.
+func TestOpenQuestionTools(t *testing.T) {
+	_, run := specRegistry(t)
+	out, err := run("raise_open_question", `{"phase":"goals","question":"Mech-based or fantasy-based?","key":"grill.setting","severity":"blocking"}`)
+	if err != nil {
+		t.Fatalf("raise: %v", err)
+	}
+	if !strings.Contains(out, "raised") {
+		t.Fatalf("unexpected raise output: %q", out)
+	}
+	listed, err := run("list_open_questions", `{}`)
+	if err != nil || !strings.Contains(listed, "Mech-based or fantasy-based?") {
+		t.Fatalf("list must surface the question: %q err=%v", listed, err)
+	}
+	// Resolve by the 8-char prefix shown in the listing.
+	short := strings.Fields(strings.Split(listed, "\n")[1])[1]
+	if _, err := run("resolve_open_question", `{"id":"`+short+`","resolution":"answered","value":"mech-based"}`); err != nil {
+		t.Fatalf("resolve by prefix: %v", err)
+	}
+	if listed2, _ := run("list_open_questions", `{}`); !strings.Contains(listed2, "no open questions") {
+		t.Fatalf("resolved question must leave the list: %q", listed2)
+	}
+	// Negative: junk resolution kind is refused at the tool boundary.
+	if _, err := run("raise_open_question", `{"phase":"goals","question":"q2","severity":"blocking"}`); err != nil {
+		t.Fatal(err)
+	}
+	l3, _ := run("list_open_questions", `{}`)
+	id3 := strings.Fields(strings.Split(l3, "\n")[1])[1]
+	if _, err := run("resolve_open_question", `{"id":"`+id3+`","resolution":"ignored","value":"x"}`); err == nil {
+		t.Fatal("junk resolution kinds must be refused")
+	}
+}
