@@ -4,6 +4,12 @@
 # Invariants (docs/SPEC/Orion-Worktree-Git.md §9):
 #   S1 NoOverlappingIntegration — no two overlapping-scope tasks integrate concurrently.
 #   S2 SingletonIntegration     — at most one integration onto the head at a time.
+#
+# Refinement chain (or-56c.3): each verified invariant is BOUND to the
+# behavioral tests that enforce it on the code — ratified together with the
+# model, compiled + enforced by formal.EnforceRefinement.
+# obligation: NoOverlappingIntegration -> go test ./internal/integration/... -run 'TestTryAcquireLeaseRefusesOverlap|TestAcquireLeaseBlocksUntilRelease|TestEmptyScopeIsExclusive'
+# obligation: SingletonIntegration -> go test ./internal/integration/... -run 'TestOverlappingIntegrationsSerialize|TestInIntegrationPredicate'
 
 TASKS = ["A", "B"]
 SCOPE = {"A": ["foo"], "B": ["foo"]}
