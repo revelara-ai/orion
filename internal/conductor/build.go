@@ -428,7 +428,11 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 
 	// Reliability scan → tier → deployment bar → deliver or escalate (Epic-level, once).
 	findings, _ := reliabilityscan.ScanAndRecord(ctx, store, proj.ID, buildDir)
-	tier := reliabilitytier.Classify(reliabilityscan.DeriveDimensions(findings))
+	// or-xe7.6: enrich the code-derived dimensions with the org's revelara.ai
+	// risk register — a high/critical org risk this artifact inherits raises
+	// the tier (never lowers; conservative). Empty/reduced context is a no-op.
+	dims := reliabilityscan.EnrichDimensions(reliabilityscan.DeriveDimensions(findings), string(relctx.Risks))
+	tier := reliabilitytier.Classify(dims)
 	env := delivery.OperatingEnvelope{
 		ProvenLoad:                provenLoad(es),
 		FaultClassesControlled:    faultClasses(model),

@@ -40,17 +40,22 @@ type Policy struct {
 	MutationThreshold float64
 	RequireAllModes   bool // require behavioral+empirical+hazard converge
 	RequireEnvelope   bool // critical only: a delivery must carry a complete operating envelope (or-v9f.13)
-	AutonomyAllowed   bool // V2.3 only; always false in V2.0
+	// RequireLiveReliabilityContext (or-xe7.6): critical only — a Critical-tier
+	// delivery decided WITHOUT live revelara.ai reliability context cannot
+	// attest the org's known controls/risks were considered, so it escalates.
+	RequireLiveReliabilityContext bool
+	AutonomyAllowed               bool // V2.3 only; always false in V2.0
 }
 
 // PolicyFor returns the policy for a tier.
 func PolicyFor(t Tier) Policy {
 	return Policy{
-		Tier:              t,
-		MutationThreshold: MutationThreshold(t),
-		RequireAllModes:   t != Throwaway, // throwaway tools may ship on fewer modes
-		RequireEnvelope:   t == Critical,  // critical ships only with proven load + controlled fault classes documented
-		AutonomyAllowed:   false,          // V2.0/V2.1: human-mergeable only
+		Tier:                          t,
+		MutationThreshold:             MutationThreshold(t),
+		RequireAllModes:               t != Throwaway, // throwaway tools may ship on fewer modes
+		RequireEnvelope:               t == Critical,  // critical ships only with proven load + controlled fault classes documented
+		RequireLiveReliabilityContext: t == Critical,  // critical ships only on ATTESTED reliability context (or-xe7.6)
+		AutonomyAllowed:               false,          // V2.0/V2.1: human-mergeable only
 	}
 }
 
