@@ -331,3 +331,35 @@ func TestBuildPersistsRunEvents(t *testing.T) {
 		t.Fatal("per-cluster events must carry task attribution")
 	}
 }
+
+// TestGenScopeEnforcedRejectsOutOfScopeArtifact (or-tcs.11b, full lane): with
+// ORION_SCOPE_LEASE=enforce, an artifact whose observed writes fall outside
+// the declared scope is routed to refinement (feedback names the paths) and
+// the task ends non-Accept — never silently integrated. Uses the fixture
+// generator, whose root-level main.go violates the template's declared
+// cmd?/internal layout by construction.
+func TestGenScopeEnforcedRejectsOutOfScopeArtifact(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs the build loop; skipped in -short")
+	}
+	t.Setenv("ORION_SCOPE_LEASE", "enforce")
+	oc, ctx := ratifiedTimeService(t)
+
+	var feedbacks []string
+	gen := func(_ context.Context, gs sandbox.GenSpec, dir, feedback string) (sandbox.GeneratedArtifact, error) {
+		if feedback != "" {
+			feedbacks = append(feedbacks, feedback)
+		}
+		return sandbox.GenerateTimeServiceFixture(dir, gs) // always writes main.go at the worktree root
+	}
+	res, err := BuildAndProve(ctx, oc.Store(), gen, nil, nil, "")
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if res.Verdict == "Accept" {
+		t.Fatalf("an out-of-scope artifact must not Accept under enforcement: %+v", res)
+	}
+	if !strings.Contains(res.FailureAnalysis, "OUTSIDE the module's declared file scope") || !strings.Contains(res.FailureAnalysis, "main.go") {
+		t.Fatalf("the failure analysis must name the out-of-scope paths:\n%s", res.FailureAnalysis)
+	}
+}

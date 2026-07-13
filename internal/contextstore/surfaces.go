@@ -14,6 +14,9 @@ import (
 const (
 	ModuleSurfaceKind  = "module_surface:"
 	ModuleRequiresKind = "module_requires:"
+	// ObservedScopeKind+taskID (or-tcs.11): the file paths a proven module
+	// ACTUALLY wrote — integration leases prefer this over the declaration.
+	ObservedScopeKind = "observed_scope:"
 )
 
 // SaveStringListKind persists a JSON string list under projectID+kind.
