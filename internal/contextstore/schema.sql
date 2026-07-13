@@ -277,3 +277,19 @@ CREATE TABLE IF NOT EXISTS gold_labels (
     producer_version  TEXT NOT NULL DEFAULT 'unknown',
     created_at        TEXT NOT NULL
 );
+
+-- Ratified STAMP baseline (or-06lr): the developer-confirmed UCAs a
+-- brownfield change must PRESERVE. code_tokens (JSON array) are the concrete
+-- code markers proving the control is present; the change-proof hazard gate
+-- checks a CONTROLLED UCA's tokens survive the change. Disposition:
+-- controlled | accepted-gap (only controlled gates).
+CREATE TABLE IF NOT EXISTS ratified_ucas (
+    id          TEXT PRIMARY KEY,
+    project_id  TEXT NOT NULL,
+    uca_id      TEXT NOT NULL,
+    hazard      TEXT NOT NULL,
+    disposition TEXT NOT NULL,
+    code_tokens TEXT NOT NULL DEFAULT '[]',
+    created_at  TEXT NOT NULL,
+    UNIQUE(project_id, uca_id)
+);

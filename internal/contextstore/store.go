@@ -207,6 +207,7 @@ func (t *Tx) PolarisContext() *PolarisContextRepo    { return &PolarisContextRep
 func (t *Tx) Deliveries() *DeliveryRepo              { return &DeliveryRepo{t.tx} }
 func (t *Tx) Escalations() *EscalationRepo           { return &EscalationRepo{t.tx} }
 func (t *Tx) GoldLabels() *GoldLabelRepo             { return &GoldLabelRepo{t.tx} }
+func (t *Tx) RatifiedUCAs() *RatifiedUCARepo         { return &RatifiedUCARepo{t.tx} }
 
 // ── Store-level read helpers (read-model over the repositories) ──────────────
 

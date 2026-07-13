@@ -14,6 +14,7 @@ import (
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/brownfield"
+	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/hookbus"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
@@ -179,6 +180,49 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				return "", serr
 			}
 			return RenderBaseline(model), nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "ratify_stamp_baseline",
+		Description: "Persist the developer's CONFIRMED STAMP baseline: each UCA the developer ratified (controlled / accepted-gap) with the code tokens proving the control exists. Call ONLY after the developer reviewed propose_stamp_baseline's output and confirmed each row. CONTROLLED UCAs arm the change flow's hazard gate: a later change that deletes a control's token is escalated instead of silently shipping.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"ucas":{"type":"array","minItems":1,"items":{"type":"object","properties":{"id":{"type":"string"},"hazard":{"type":"string"},"disposition":{"type":"string","enum":["controlled","accepted-gap"]},"tokens":{"type":"array","items":{"type":"string"},"description":"code tokens proving the control is present (function/guard names)"}},"required":["id","hazard","disposition"]}}},"required":["ucas"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct {
+				UCAs []struct {
+					ID          string   `json:"id"`
+					Hazard      string   `json:"hazard"`
+					Disposition string   `json:"disposition"`
+					Tokens      []string `json:"tokens"`
+				} `json:"ucas"`
+			}
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			if c.Store() == nil {
+				return "", fmt.Errorf("no context store")
+			}
+			controlled := 0
+			err := c.Store().WithTx(ctx, func(tx *contextstore.Tx) error {
+				pid, e := tx.Projects().GetOrCreateReserved(ctx, contextstore.BrownfieldProjectName, "brownfield")
+				if e != nil {
+					return e
+				}
+				for _, u := range p.UCAs {
+					if e := tx.RatifiedUCAs().Upsert(ctx, pid, u.ID, u.Hazard, u.Disposition, u.Tokens); e != nil {
+						return e
+					}
+					if u.Disposition == "controlled" {
+						controlled++
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("ratified %d UCA(s) (%d controlled) — the change flow's hazard gate is armed", len(p.UCAs), controlled), nil
 		},
 	})
 

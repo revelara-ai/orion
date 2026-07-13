@@ -265,6 +265,31 @@ func changeAttempt(ctx context.Context, repoRoot string, store *contextstore.Sto
 	// the generator). Commit is gated on regression-held AND new-behavior=Accept.
 	sink.emit("regression gate", PhaseDone, "do-no-harm held")
 
+	// or-06lr: hazard-preservation gate — the ratified STAMP baseline's
+	// CONTROLLED UCAs must survive the change (deterministic token-presence
+	// differential: present pre-change, gone post-change = the control
+	// vanished). No baseline → a VISIBLE advisory skip, never a silent pass.
+	if ucas := loadControlledUCAs(ctx, store); len(ucas) == 0 {
+		sink.emit("hazard gate", PhaseDone, "no ratified STAMP baseline — advisory skip (propose_stamp_baseline → ratify_stamp_baseline to arm it)")
+	} else {
+		violations, stale := hazardGate(ucas, repoRoot, wt.Path)
+		for _, st := range stale {
+			sink.emit("hazard gate", PhaseWarn, "stale baseline token (absent before this change): "+st)
+		}
+		if len(violations) > 0 {
+			var b strings.Builder
+			b.WriteString("hazard gate: controlled UCA token(s) VANISHED in this change — the control must be preserved (or the baseline re-ratified):")
+			for _, v := range violations {
+				b.WriteString("\n  " + v.UCAID + " (" + v.Hazard + "): token \"" + v.Token + "\" no longer present")
+			}
+			sink.emit("hazard gate", PhaseWarn, b.String())
+			res.Reason = b.String()
+			res.Delivery = "escalate"
+			return res, true, nil // the generator can restore the control — retryable
+		}
+		sink.emit("hazard gate", PhaseDone, "controlled UCAs preserved")
+	}
+
 	if len(cases) > 0 {
 		sink.emit("new-behavior proof", PhaseRunning, fmt.Sprintf("proving %d ratified case(s)", len(cases)))
 		mr, nbErr := newbehavior.ProveNewBehavior(ctx, wt.Path, cases)
