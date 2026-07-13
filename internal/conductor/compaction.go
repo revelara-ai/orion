@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -239,14 +240,27 @@ func (a *OrionAgent) persistSession(sessionID string, convo []llm.Message) {
 	}
 	dir := filepath.Join(st.Dir(), "sessions")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
+		a.persistFailed(err)
 		return
 	}
 	name := a.sessionStamp(sessionID) + ".md"
 	tmp := filepath.Join(dir, "."+name+".tmp")
 	if err := os.WriteFile(tmp, []byte(renderTranscript(convo)), 0o644); err != nil {
+		a.persistFailed(err)
 		return
 	}
-	_ = os.Rename(tmp, filepath.Join(dir, name)) // atomic replace
+	if err := os.Rename(tmp, filepath.Join(dir, name)); err != nil { // atomic replace
+		a.persistFailed(err)
+	}
+}
+
+// persistFailed logs a transcript-write failure ONCE per process (or-08l):
+// persistence is best-effort and must never spam a session that keeps running
+// on a full disk, but a silent swallow hid real losses.
+func (a *OrionAgent) persistFailed(err error) {
+	a.persistWarn.Do(func() {
+		slog.Warn("session transcript persist failed — transcripts may be missing until resolved (logged once)", "err", err)
+	})
 }
 
 // sessionStamp is the transcript filename stem for a session: its start time
