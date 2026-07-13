@@ -86,7 +86,7 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 // the prior single-Tasks[0] build (or-tcs.1.1); the generation⊥proof wall holds
 // per task. Sequential by design — clustering, worktree isolation, and bounded
 // parallelism are later slices.
-func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink, outRoot string) (BuildResult, error) {
+func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink, outRoot string) (finalRes BuildResult, finalErr error) {
 	if gen == nil {
 		gen = func(_ context.Context, gs sandbox.GenSpec, dir, _ string) (sandbox.GeneratedArtifact, error) {
 			return sandbox.GenerateTimeServiceFixture(dir, gs)
@@ -98,6 +98,23 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("no accepted spec (ratify first): %w", err)
 	}
+
+	// or-v9f.16: run/phase survivability — every phase event from here on is
+	// teed into the store, so a dying terminal loses nothing and attach is a
+	// store-tail. The terminal sink is preserved; persistence is best-effort.
+	runProj, _, _ := store.CurrentProjectSpec(ctx)
+	runID := newRunID()
+	termSink := onPhase
+	onPhase = teeRunSink(termSink, store, runProj.ID, runID, "")
+	onPhase.emit("Run", PhaseRunning, "run "+runID+" started")
+	defer func() {
+		if finalErr != nil {
+			onPhase.emit("Run", PhaseFailed, finalErr.Error())
+		} else {
+			onPhase.emit("Run", PhaseDone, "run "+runID+" finished")
+		}
+	}()
+
 	onPhase.emit("Decompose", PhaseRunning, "")
 	pv, err := c.PlanView(ctx) // decomposes + persists on demand
 	if err != nil || len(pv.Tasks) == 0 {
@@ -232,7 +249,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	// each in its own worktree; the shared store/memory writes serialize on stateMu and the phase
 	// sink is made concurrency-safe, so the only parallelism is the expensive generate+prove work.
 	maxConc := maxAgentsFromEnv()
-	safeSink := syncSink(onPhase)
+	safeSink := syncSink(termSink) // terminal only; the per-task tee below adds run persistence WITH task attribution
 	var stateMu sync.Mutex
 	// or-v9f.14: the red button is the deterministic actuation gate — consulted
 	// before every cluster dispatch (in-flight clusters finish; nothing new starts)
@@ -248,7 +265,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		if buildDir == "" {
 			return taskResult{}, fmt.Errorf("task %s has no cluster worktree", task.ID)
 		}
-		tr, terr := buildOneTask(ctx, store, gen, aligner, safeSink, es, model, gs, contract, requiredIDs, buildDir, cache, eng, mem, &stateMu, task)
+		tr, terr := buildOneTask(ctx, store, gen, aligner, teeRunSink(safeSink, store, runProj.ID, runID, task.ID), es, model, gs, contract, requiredIDs, buildDir, cache, eng, mem, &stateMu, task)
 		if terr == nil {
 			drift.RecordAlignment(tr.Alignment)
 		}

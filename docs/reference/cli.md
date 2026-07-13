@@ -47,6 +47,8 @@ command exits 2 with a `not implemented` marker.
 |---|---|
 | `orion agents` | Registered vendor-agent presets (claude / gemini / codex over ACP). |
 | `orion skills` | The skill registry (trust-tiered; proof-tier skills are immutable at runtime). |
+| `orion resume` | Continue an interrupted run: surfaces escalations awaiting a decision, shows where the last run stopped, re-enters the idempotent loop (proof-memo skips unchanged clusters). |
+| `orion conductor attach` | Tail a live (or finished) run's persisted phase events from any terminal — the run outlives the terminal that started it. |
 | `orion evolve` | Manually promote validated memory candidates into generation-tier skills (default-off self-evolution). |
 | `orion design show` / `orion design ratify <hash>` | Review and ratify the drafted design-proof formal model (or-56c.2); only the human signature gives it proof authority. |
 | `orion login\|logout` | revelara.ai OAuth (WorkOS); the token lives in `credentials/`, never in the Context Store. |
