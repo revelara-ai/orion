@@ -213,10 +213,11 @@ func fromConfig(ds []harnessconfig.ChecklistDecision) []RequiredDecision {
 var (
 	portRe = regexp.MustCompile(`(?i)\bport\s+(\d{2,5})\b`)
 	// Only formats the contract + proof pipeline actually support, so the two
-	// gates share one vocabulary. An intent naming an unsupported format (xml,
-	// protobuf) does NOT auto-resolve — it stays open and is asked, then rejected
-	// loudly at contract assembly rather than silently mishandled.
-	jsonRe = regexp.MustCompile(`(?i)\b(json|plain ?text)\b`)
+	// gates share one vocabulary (json/xml/plain text since or-hbc). An intent
+	// naming an unsupported format (protobuf) does NOT auto-resolve — it stays
+	// open and is asked, then rejected loudly at contract assembly rather than
+	// silently mishandled.
+	jsonRe = regexp.MustCompile(`(?i)\b(json|xml|plain ?text)\b`)
 	// A path is recognized only after a route/path/endpoint keyword OR at a word
 	// start (string start or whitespace) — so "client/server" or "and/or" do NOT
 	// falsely resolve a route (the gate never guesses).

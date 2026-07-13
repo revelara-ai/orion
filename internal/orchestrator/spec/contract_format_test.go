@@ -31,12 +31,20 @@ func TestBuildResponseContractFormats(t *testing.T) {
 		}
 	}
 
+	// or-hbc: xml is now a first-class provable format.
+	xmlF := []string{"xml", "XML", "application/xml"}
+	for _, v := range xmlF {
+		rc, err := buildResponseContract(base(v))
+		if err != nil || rc.ContentType != "application/xml" {
+			t.Errorf("format %q → (%q, %v), want application/xml", v, rc.ContentType, err)
+		}
+	}
+
 	// Every value that is NOT cleanly one provable format must fail loud — never a
-	// silent contract. Covers: unrecognized (csv/protobuf), not-yet-supported
-	// (xml → would be a false-pass against JSON), ambiguous/negated (more than one
-	// format named), and MIME types that merely contain "text" (text/csv).
+	// silent contract. Covers: unrecognized (csv/protobuf), ambiguous/negated
+	// (more than one format named), and MIME types that merely contain "text"
+	// (text/csv).
 	failLoud := []string{
-		"xml", "XML", "application/xml", // unprovable — explicitly rejected
 		"protobuf", "csv", "yaml", "binary", "gRPC", // unrecognized
 		"no json please, xml only", "NOT json, use xml", // negation/conflict
 		"a plain-text rendering of the xml", "json or xml", // ambiguous (two formats)

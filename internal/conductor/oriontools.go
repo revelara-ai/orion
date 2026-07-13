@@ -254,7 +254,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 						"request":{"type":"object","properties":{"method":{"type":"string"},"path":{"type":"string"},"query":{"type":"object","additionalProperties":{"type":"string"}},"body":{"type":"string"}}},
 						"expect":{"type":"object","properties":{
 							"status":{"type":"integer"},
-							"content_type":{"type":"string","enum":["application/json","text/plain"]},
+							"content_type":{"type":"string","enum":["application/json","text/plain","application/xml"]},
 							"assertions":{"type":"array","items":{"type":"object","properties":{
 								"kind":{"type":"string","enum":["json_key_present","json_key_rfc3339","json_key_in_tz","json_error_present","body_rfc3339"]},
 								"key":{"type":"string"},"value":{"type":"string","description":"e.g. an IANA timezone for json_key_in_tz"}},"required":["kind"]}}

@@ -27,7 +27,7 @@ import (
 // Contract is the slice of the spec the behavioral corpus is synthesized from.
 type Contract struct {
 	Route    string
-	Format   string // "json" | "text"
+	Format   string // "json" | "text" | "xml"
 	TimeZone string
 	// RequiredJSONKey is the legacy single-key seam: when set, the JSON response must
 	// contain this key. Empty means "no specific key required" — it no longer defaults
@@ -241,7 +241,15 @@ func legacyCorpus(c Contract) string {
 		c.Route = "/" // neutral default, not a time-specific "/time"
 	}
 	var assert string
-	if strings.ToLower(c.Format) == "text" {
+	if strings.ToLower(c.Format) == "xml" {
+		// Content-type + well-formedness — the body must parse as XML.
+		assert = `	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "application/xml") {
+		t.Fatalf("content-type = %q, want application/xml", ct)
+	}
+	if err := xml.Unmarshal(w.Body.Bytes(), new(struct{})); err != nil {
+		t.Fatalf("response is not well-formed XML: %v", err)
+	}`
+	} else if strings.ToLower(c.Format) == "text" {
 		// Content-type only — the body is NOT assumed to be a timestamp.
 		assert = `	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/plain") {
 		t.Fatalf("content-type = %q, want text/plain", ct)
@@ -276,6 +284,7 @@ package main
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -283,6 +292,7 @@ import (
 )
 
 var _ = json.Unmarshal
+var _ = xml.Unmarshal
 var _ = strings.Contains
 var _ = time.Parse // may be unused when no RFC3339 assertion is generated
 
