@@ -32,6 +32,16 @@ func TestControlPlaneDesignProofs(t *testing.T) {
 	forceBlock := os.Getenv("ORION_DESIGN_PROOF") == "block"
 	for _, m := range controlPlaneModels {
 		t.Run(m.name, func(t *testing.T) {
+			// A blocking model runs the FULL refinement chain (or-56c.3): verified
+			// invariants must be bound to resolving, passing behavioral tests.
+			// Advisory models are Check-only until they flip (bindings come with
+			// the flip — an unbound advisory model must not fail the lane).
+			if m.blocking {
+				if err := EnforceRefinement(context.Background(), repoRoot(t), m.path, fb); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
 			r, err := fb.Check(context.Background(), m.path)
 			if err != nil {
 				t.Fatalf("checker error: %v", err)
