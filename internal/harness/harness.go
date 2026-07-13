@@ -343,6 +343,11 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 				if !isErr {
 					streak.reset()
 				}
+				// Boundary guard (or-mvr.7): whatever the tool returned becomes
+				// loop-safe text HERE — binary quarantined, oversized elided
+				// head+tail, invalid UTF-8 repaired — before it can enter the
+				// conversation or blow the window in one turn.
+				content, _ = sanitizeToolResult(content)
 				content += l.Supervisor.paceHint(iter)
 			}
 			emit(Event{Kind: EventToolResult, Tool: tu.Name, Text: content, Error: isErr})
