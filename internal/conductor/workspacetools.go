@@ -24,7 +24,7 @@ import (
 func registerWorkspaceTools(r *tools.Registry, c *orchestrator.Conductor) {
 	r.Register(tools.Tool{
 		Name:        "bash",
-		Description: "Run a shell command in the developer's working directory and return its combined output + exit code. Use for build/test/inspection/scaffolding tasks (make, go test, ls, curl, …). Runs as the developer; secret-shaped env vars (API keys, tokens, passwords) are scrubbed from the environment. Mutating — halted while the red button is engaged.",
+		Description: "Run a shell command in the developer's working directory and return its combined output + exit code. Use for build/test/inspection/scaffolding tasks (make, go test, ls, curl, …). Runs as the developer; secret-shaped env vars (API keys, tokens, passwords) are scrubbed from the environment. Mutating — halted while the red button is engaged. NEVER delete, move, or overwrite the Orion data store (~/.orion) — it holds durable project/spec/proof/memory state; a schema problem is a code MIGRATION in internal/contextstore, never a database reset — and never ask the developer to run such a command on your behalf.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"the shell command to run"}},"required":["command"]}`),
 		Safety:      tools.Safety{Destructive: true, RequiresApproval: true},
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
@@ -35,6 +35,9 @@ func registerWorkspaceTools(r *tools.Registry, c *orchestrator.Conductor) {
 				return "", err
 			}
 			if gerr := bashGitMutation(p.Command); gerr != nil {
+				return "", gerr
+			}
+			if gerr := bashDataDirRefusal(p.Command, orionDataDir(c)); gerr != nil {
 				return "", gerr
 			}
 			if strings.TrimSpace(p.Command) == "" {
@@ -97,6 +100,9 @@ func registerWorkspaceTools(r *tools.Registry, c *orchestrator.Conductor) {
 			if gerr := storeRedButton(c).Guard("write_file"); gerr != nil {
 				return "", gerr
 			}
+			if gerr := dataDirWriteRefusal(orionDataDir(c), p.Path); gerr != nil {
+				return "", gerr
+			}
 			anchored, aerr := anchorWorkspacePath(p.Path)
 			if aerr != nil {
 				return "", aerr
@@ -129,6 +135,9 @@ func registerWorkspaceTools(r *tools.Registry, c *orchestrator.Conductor) {
 				return "", err
 			}
 			if gerr := storeRedButton(c).Guard("edit_file"); gerr != nil {
+				return "", gerr
+			}
+			if gerr := dataDirWriteRefusal(orionDataDir(c), p.Path); gerr != nil {
 				return "", gerr
 			}
 			anchored, aerr := anchorWorkspacePath(p.Path)
