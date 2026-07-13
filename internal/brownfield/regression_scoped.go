@@ -30,6 +30,40 @@ func baselineScopedSkip(ctx context.Context, repoDir string, patterns, skip []st
 	if total == 1 && patterns[0] == "./..." {
 		total = 0 // full-suite pattern: package count unknown
 	}
+	release, lerr := acquireProofLock(ctx) // or-6wbl: one suite machine-wide
+	if lerr != nil {
+		return TestResult{}, lerr
+	}
+	defer release()
+
+	// or-6wbl b: CONCRETE patterns run per package — natural progress, and a
+	// TIMED-OUT package retries once solo before the baseline reds (busy
+	// machine ≠ red package; a genuinely failing test fails solo too).
+	if total > 0 {
+		var b strings.Builder
+		pass := true
+		cmdShown := ""
+		for _, pat := range patterns {
+			argv := withGateTimeout(withSkip([]string{tc.TestCmd[0], "test", pat}, skip))
+			if cmdShown == "" {
+				cmdShown = strings.Join(argv, " ") + " (+ per-package siblings)"
+			}
+			out, err := runTests(ctx, repoDir, argv, progress, step, total)
+			if err != nil && looksTimedOut(out) {
+				progress.emit(step, "package "+pat+" timed out — retrying once solo")
+				out, err = runTests(ctx, repoDir, argv, progress, step, total)
+			}
+			b.WriteString(out)
+			if err != nil {
+				pass = false
+			}
+		}
+		return TestResult{
+			Detected: true, Toolchain: tc.Name, Command: cmdShown,
+			Passed: pass, Output: clip(b.String(), 8000),
+		}, nil
+	}
+
 	argv := withGateTimeout(withSkip(append([]string{tc.TestCmd[0], "test"}, patterns...), skip))
 	out, err := runTests(ctx, repoDir, argv, progress, step, total)
 	return TestResult{
