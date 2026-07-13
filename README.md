@@ -76,6 +76,9 @@ The optional **revelara.ai** connection (reliability controls, incident knowledg
 
 | Document | What it is |
 |---|---|
+| [docs/getting-started.md](docs/getting-started.md) | Install → first proven build → brownfield change. |
+| [docs/reference/cli.md](docs/reference/cli.md) | The full CLI surface. |
+| [docs/reference/environment.md](docs/reference/environment.md) | Every `ORION_*` variable, default + effect. |
 | [docs/MANIFESTO.md](docs/MANIFESTO.md) | The vision and the beliefs — the source of truth everything inherits from. |
 | [docs/PRD/orion-v3.md](docs/PRD/orion-v3.md) | The current product direction (the Anchored Module Pipeline). |
 | [docs/PRD/orion-v2.md](docs/PRD/orion-v2.md) | The V2 spec — the proven spine V3 evolves (kept as the migration oracle). |
