@@ -70,6 +70,9 @@ type Conductor struct {
 	// fitEstimator sizes proposed modules at plan time (or-7et.3). nil = the
 	// context-fit gate is a no-op.
 	fitEstimator decomposer.FitEstimator
+	// grill is the open-ended elicitation driver (or-794, V3 Step 5). nil =
+	// the completeness checklist drives, exactly as V2.
+	grill GrillAgent
 
 	mu        sync.RWMutex
 	intent    string
@@ -242,7 +245,7 @@ func (c *Conductor) Submit(ctx context.Context, intent string) (Confirmation, er
 
 	// Run the deterministic completeness gate. Unresolved dimensions become open
 	// decisions the developer must answer — we never silently guess.
-	open := c.gate.Analyze(trimmed, nil)
+	open := c.openDecisions(ctx, trimmed, nil)
 
 	c.log.InfoContext(ctx, "intent submitted", "intent", trimmed, "open_decisions", len(open))
 

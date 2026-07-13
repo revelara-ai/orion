@@ -381,6 +381,9 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 					c.SetModuleFitEstimator(NewModuleFitEstimator(provider, es))
 				}
 				SetGenerationWindow(contextwindow.WindowOf(provider, contextwindow.DefaultWindow))
+				// or-794 (V3 Step 5): the open-ended grill drives elicitation
+				// behind ORION_ELICITATION=grill; the checklist floor never drops.
+				c.SetGrillAgent(NativeGrillAgent(provider))
 				// or-zn8: the adversarial issue-set reviewer rides the same brain;
 				// the deterministic gate (advisory→ORION_ISSUE_REVIEW=block) decides.
 				c.SetIssueReviewer(NativeIssueReviewer(provider))

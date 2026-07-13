@@ -54,6 +54,7 @@ Everything is optional; unset means the documented default. Variables marked
 
 | Variable | Default | Effect |
 |---|---|---|
+| `ORION_ELICITATION` | checklist | `grill` lets the LLM grill drive open-ended elicitation (V3 Step 5); the completeness checklist is demoted to a reliability floor that still must resolve before ratification. Fail-open: a grill error reverts to the checklist. |
 | `ORION_HARNESS_DIR` | `~/.orion/harness` | Externalized, reviewable harness config: `generation_preamble.tmpl`, `checklists.yaml`, `rules.md` — edits change behavior without a rebuild; invalid files warn + fall back (see `orion doctor`). |
 | `ORION_MEMORY_DISTILL` | off | `1` enables the LLM distillation pass: transferable rules from refinement trajectories, written as generation-tier candidates (opt-in). |
 | `ORION_MEMORY_EMBEDDER` | off | `gomlx` enables pure-Go semantic recall (opt-in). |
