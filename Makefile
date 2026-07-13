@@ -2,8 +2,12 @@
 
 default: build
 
+# Version stamping (or-c6zf.6): releases get the tag; dev builds get
+# git-describe (tag-distance-sha, -dirty when the tree is modified).
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
+
 build:
-	go build -o bin/orion ./cmd/orion
+	go build -ldflags "-X main.version=$(VERSION)" -o bin/orion ./cmd/orion
 
 # Full suite, including the heavy generate→prove e2e. The timeout is bumped past Go's 600s default
 # because the conductor package alone is ~740s of real compile+prove work (or-tcs.9); a bare

@@ -21,3 +21,4 @@ debug/
 .beads/
 .agents/
 .codex/
+dist/
