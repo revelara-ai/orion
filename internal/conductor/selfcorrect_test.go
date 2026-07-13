@@ -252,6 +252,11 @@ func TestChangeFailureWritesThenSecondRunConsults(t *testing.T) {
 	if res1.Committed {
 		t.Fatal("the breaking change must not commit")
 	}
+	// or-kt5: a NOT-committed change reclaims its worktree AND branch (the
+	// evidence is persisted; the checkout is not the record).
+	if out, _ := exec.Command("git", "-C", repo, "branch", "--list", "orion-change-*").Output(); strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("a failed change must reclaim its branch, still present:\n%s", out)
+	}
 
 	gen2 := &seqGen{attempts: []map[string]string{{"note.go": goodNote}}}
 	if _, err := ChangeAndProve(context.Background(), repo, store, gen2, "add a Note helper", nil, nil, nil); err != nil {

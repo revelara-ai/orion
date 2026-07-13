@@ -344,6 +344,21 @@ func (m *Manager) Remove(ctx context.Context, issueID string, opts RemoveOpts) e
 // Reconcile makes the filesystem the source of truth (spec §7): prune deleted
 // worktrees, reap incomplete/empty dirs, and repair Context Store drift. Runs on
 // startup and before allocation.
+// RemoveWithBranch (or-kt5) tears down a change worktree AND its branch in
+// one safety-gated step — raw `git branch -d` fails with "used by worktree"
+// while the checkout exists, so teardown removes the worktree first (all of
+// Remove's refusals apply), then force-deletes the branch (the branch name is
+// the issue id by construction). A missing branch is not an error.
+func (m *Manager) RemoveWithBranch(ctx context.Context, issueID string, opts RemoveOpts) error {
+	if err := m.Remove(ctx, issueID, opts); err != nil {
+		return err
+	}
+	if out, err := m.git("branch", "-D", issueID); err != nil && !strings.Contains(out, "not found") {
+		return fmt.Errorf("worktree removed but branch %s not deleted: %v (%s)", issueID, err, strings.TrimSpace(out))
+	}
+	return nil
+}
+
 func (m *Manager) Reconcile(ctx context.Context) error {
 	if err := m.Prune(); err != nil {
 		return err
