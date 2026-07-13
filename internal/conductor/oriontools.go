@@ -470,6 +470,41 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	})
 
 	r.Register(tools.Tool{
+		Name:        "ratify_split",
+		Description: "Record the developer-CONFIRMED spec-of-specs split (or-045a.4): decompose a large ratified-goals project into ~5 sub-specs — each a FULL FEATURE without which the top-level spec is unfulfilled, each becoming its own child project that runs the normal grill→ratify→build loop with its own anchor hash. Draft the split IN CONVERSATION from the ratified goals, present it for review, and call this only after the developer confirms it. Children inherit the parent's direction decisions and hazard model (re-ratifiable per child); the first sub-spec is activated immediately and the parent delivers only when every child has delivered (roll-up gate). Requires a resolved project type and ratified goals; blocked by open questions.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"subs":{"type":"array","minItems":2,"items":{"type":"object","properties":{"name":{"type":"string","description":"short kebab-case feature name"},"intent":{"type":"string","description":"the sub-spec's full intent, self-contained enough to intake on its own"}},"required":["name","intent"]}}},"required":["subs"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct {
+				Subs []orchestrator.SubIntent `json:"subs"`
+			}
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			children, err := c.RatifySplit(ctx, p.Subs)
+			if err != nil {
+				return "", err
+			}
+			var b strings.Builder
+			fmt.Fprintf(&b, "spec-of-specs ratified: %d sub-spec projects created\n", len(children))
+			for _, ch := range children {
+				fmt.Fprintf(&b, "  - %s [%s] — %s\n", ch.Name, ch.Status, ch.Intent)
+			}
+			b.WriteString("first sub-spec activated: " + children[0].Name + " — run its intake now (check_completeness); the parent delivers only when every sub-spec has delivered (project_tree shows progress)")
+			return b.String(), nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "project_tree",
+		Description: "Show the spec-of-specs tree for the current project (or-045a.4): the top-level parent, each sub-spec child with its status (queued/active/delivered/abandoned), and the roll-up progress. Works from the parent's or any child's seat; a flat project renders as a single line. Use it to report split progress or decide what runs next.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
+			return c.ProjectTree(ctx)
+		},
+	})
+
+	r.Register(tools.Tool{
 		Name:        "set_project_type",
 		Description: "Resolve the project's software type after the DEVELOPER CONFIRMS it in conversation (or-045a.1). When submit_intent reports the type as unclassified, PROPOSE a type grounded in the intent (e.g. http-service, cli, game, pipeline, ml-service), ask the developer to confirm or correct it, THEN record the confirmed slug here — never call this on your own guess. The spec cannot ratify while the type is unresolved. An unregistered type is fine: it simply gets the universal reliability checklist instead of type-specific questions.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"project_type":{"type":"string","description":"the developer-confirmed lowercase slug (e.g. game, cli, http-service, pipeline)"}},"required":["project_type"]}`),

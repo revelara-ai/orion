@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS projects (
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
 );
+-- parent_project_id (spec-of-specs, or-045a.4) is an ADDITIVE column applied
+-- by the migration list in store.go Open, like scale and repo_target.
 
 -- Ratified project goals (or-045a.2): the goal-altitude artifact a large
 -- greenfield intake ratifies BEFORE the spec — goals/non-goals/success

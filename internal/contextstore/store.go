@@ -76,6 +76,9 @@ func Open(dir string) (*Store, error) {
 		{"projects", "project_type", "TEXT NOT NULL DEFAULT 'http-service'"},
 		{"projects", "scale", "TEXT NOT NULL DEFAULT 'standard'"},
 		{"projects", "repo_target", "TEXT NOT NULL DEFAULT ''"},
+		// or-045a.4 spec-of-specs: '' = flat project; set = sub-spec child of
+		// that parent project (roll-up delivery gate lives in SetStatus).
+		{"projects", "parent_project_id", "TEXT NOT NULL DEFAULT ''"},
 		{"escalations", "detail", "TEXT NOT NULL DEFAULT ''"},
 		{"escalations", "resolution", "TEXT NOT NULL DEFAULT ''"},
 		{"escalations", "resolved_at", "TEXT"},

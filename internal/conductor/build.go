@@ -509,8 +509,21 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		})
 		if outcome.partial {
 			onPhase.emit("Deliver", PhaseWarn, "PARTIAL delivery — escalated remainder:\n"+remainder)
-		} else if next, promoted, perr := store.ActivateNextQueued(ctx); perr == nil && promoted {
-			onPhase.emit("Queue", PhaseDone, fmt.Sprintf("next intent activated: %s", next.Intent))
+		} else {
+			// or-045a.4: a delivered SUB-SPEC advances its split first — the
+			// oldest queued sibling takes the slot, or (last child) the parent
+			// rolls up to delivered. Only then may the global FIFO promote an
+			// unrelated intent (a no-op while a sibling holds the slot).
+			if next, rolled, aerr := store.AdvanceSplit(ctx, proj.ID); aerr != nil {
+				onPhase.emit("Queue", PhaseWarn, fmt.Sprintf("split advance failed: %v", aerr))
+			} else if rolled {
+				onPhase.emit("Queue", PhaseDone, fmt.Sprintf("spec-of-specs complete: parent %q delivered", next.Name))
+			} else if next.ID != "" {
+				onPhase.emit("Queue", PhaseDone, fmt.Sprintf("next sub-spec activated: %s", next.Name))
+			}
+			if next, promoted, perr := store.ActivateNextQueued(ctx); perr == nil && promoted {
+				onPhase.emit("Queue", PhaseDone, fmt.Sprintf("next intent activated: %s", next.Intent))
+			}
 		}
 	}
 	if res.Decision != delivery.Deliver || outcome.partial {
