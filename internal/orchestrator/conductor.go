@@ -60,6 +60,9 @@ type Conductor struct {
 	// the conductor tool wiring when an LLM provider is present, mirroring how the
 	// generator/aligner are injected into the build path.
 	proposer decomposer.ModuleProposer
+	// reviewer is the injectable adversarial issue-set reviewer (or-zn8, V3
+	// Step 4). nil = the IssueReviewGate is a no-op.
+	reviewer decomposer.IssueReviewer
 
 	mu        sync.RWMutex
 	intent    string

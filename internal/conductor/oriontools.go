@@ -374,6 +374,9 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				// or-809: give the plan path a semantic ModuleProposer (runs in
 				// SHADOW behind ORION_MODULE_PROPOSER; the oracle still drives).
 				c.SetModuleProposer(NativeModuleProposer(provider))
+				// or-zn8: the adversarial issue-set reviewer rides the same brain;
+				// the deterministic gate (advisory→ORION_ISSUE_REVIEW=block) decides.
+				c.SetIssueReviewer(NativeIssueReviewer(provider))
 			}
 			res, err := BuildAndProve(ctx, st, gen, aligner, func(e PhaseEvent) {
 				phases = append(phases, e)
