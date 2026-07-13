@@ -3,6 +3,7 @@ package conductor
 import (
 	"context"
 	"fmt"
+	"github.com/revelara-ai/orion/pkg/llm"
 	"strings"
 	"time"
 )
@@ -54,6 +55,20 @@ func (a *OrionAgent) compact(ctx context.Context, sessionID string) (string, err
 	}
 	if count == 0 {
 		return "Compaction produced no summary; leaving history unchanged.", nil
+	}
+	// or-2l7: the changeSession survives compaction out-of-band, but the
+	// model's in-context memory of it does not — re-inject the in-flight
+	// change digest so the flow resumes instead of restarting.
+	a.mu.Lock()
+	cs := a.changes[sessionID]
+	a.mu.Unlock()
+	if cs != nil {
+		if d := cs.pendingDigest(); d != "" {
+			a.mu.Lock()
+			a.sessions[sessionID] = append(a.sessions[sessionID], llm.TextMessage(llm.RoleUser, d))
+			a.mu.Unlock()
+			return fmt.Sprintf("Compacted %d messages into a summary — context reset to the essentials.\n%s", count, d), nil
+		}
 	}
 	return fmt.Sprintf("Compacted %d messages into a summary — context reset to the essentials.", count), nil
 }

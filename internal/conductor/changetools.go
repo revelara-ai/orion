@@ -26,6 +26,38 @@ type changeSession struct {
 	cases      []newbehavior.Case
 	supersedes []string // existing tests whose old assertions this change intentionally voids
 	ratified   bool
+	// consumed (or-2l7): the ratified oracle was BUILT AND COMMITTED — spent.
+	// 'ratified && !consumed' is a PENDING oracle a re-submit must not
+	// silently discard (the post-compaction context-loss hazard); a consumed
+	// one lets the next change open cleanly.
+	consumed bool
+}
+
+// pending reports a ratified-but-unbuilt oracle (must not be silently discarded).
+func (s *changeSession) pending() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ratified && !s.consumed && len(s.cases) > 0
+}
+
+// pendingDigest renders the compact in-flight-change context re-injected
+// after compaction, so the model keeps awareness of the unbuilt oracle.
+func (s *changeSession) pendingDigest() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !(s.ratified && !s.consumed && len(s.cases) > 0) {
+		return ""
+	}
+	ids := make([]string, 0, len(s.cases))
+	for _, c := range s.cases {
+		ids = append(ids, c.ID)
+	}
+	d := fmt.Sprintf("IN-FLIGHT CHANGE (ratified, not yet built): %s — %d ratified case(s): %s. Proceed with build_change; do NOT restart the flow.",
+		s.intent, len(s.cases), strings.Join(ids, ", "))
+	if len(s.supersedes) > 0 {
+		d += " Supersedes: " + strings.Join(s.supersedes, ", ") + "."
+	}
+	return d
 }
 
 func (s *changeSession) snapshot() (string, []newbehavior.Case, []string, bool) {
@@ -109,10 +141,11 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 	r.Register(tools.Tool{
 		Name:        "submit_change_intent",
 		Description: "Open a brownfield CHANGE against the existing repo (a fix/refactor/addition to existing CODE — has runtime behavior). Returns the codebase map to ground the change. Flow: submit_change_intent → propose_cases → (add_case/edit_case) → ratify_cases → build_change. For a tooling/config change with NO Go behavior (linter config, Makefile), use change_repo directly instead.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"intent":{"type":"string","description":"the change to make"}},"required":["intent"]}`),
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"intent":{"type":"string","description":"the change to make"},"confirm_discard":{"type":"boolean","description":"set true to deliberately discard a pending (ratified, unbuilt) oracle"}},"required":["intent"]}`),
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
 			var p struct {
-				Intent string `json:"intent"`
+				Intent         string `json:"intent"`
+				ConfirmDiscard bool   `json:"confirm_discard"`
 			}
 			if err := json.Unmarshal(in, &p); err != nil {
 				return "", err
@@ -120,12 +153,18 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 			if strings.TrimSpace(p.Intent) == "" {
 				return "", fmt.Errorf("submit_change_intent: intent is required")
 			}
+			// or-2l7: after compaction the model may have forgotten a ratified
+			// oracle awaiting build_change — never discard it silently.
+			if cs.pending() && !p.ConfirmDiscard {
+				cur, _, _, _ := cs.snapshot()
+				return "", fmt.Errorf("submit_change_intent: a ratified-but-unbuilt oracle exists for %q — run build_change to build it, or re-submit with confirm_discard=true to deliberately discard it", cur)
+			}
 			_, m, err := repoMap(ctx)
 			if err != nil {
 				return "", err
 			}
 			cs.mu.Lock()
-			cs.intent, cs.cases, cs.supersedes, cs.ratified = p.Intent, nil, nil, false
+			cs.intent, cs.cases, cs.supersedes, cs.ratified, cs.consumed = p.Intent, nil, nil, false, false
 			cs.mu.Unlock()
 			return fmt.Sprintf("change intent recorded: %s\n\n%s\n\nNext: propose_cases to draft the behavioral proof oracle.", p.Intent, clip(m.Digest(), 4000)), nil
 		},
@@ -290,6 +329,14 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 			res, cerr := ChangeAndProve(ctx, root, c.Store(), provider, intent, cases, supersedes, phaseActivitySink(emit))
 			if cerr != nil {
 				return "", cerr
+			}
+			// or-2l7: a COMMITTED build spends the oracle — the next
+			// submit_change_intent opens cleanly instead of tripping the
+			// pending-oracle guard. A failed build stays pending (retry loop).
+			if res.Committed {
+				cs.mu.Lock()
+				cs.consumed = true
+				cs.mu.Unlock()
 			}
 			return renderChangeResult(intent, res), nil
 		},
