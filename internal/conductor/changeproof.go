@@ -368,7 +368,13 @@ func changeAttempt(ctx context.Context, repoRoot string, store *contextstore.Sto
 	// or-3p5.4 residual: ADVISORY alignment gate on the proven change — the
 	// same single semantic-drift detector the greenfield loop runs (V3 Step 1
 	// posture: log-only, surfaces to the human, never flips a proof verdict).
-	// Offline (no provider) skips silently.
+	// Offline (no provider) skips silently. or-3ik fix: the judge resolves
+	// through RoleProvider("align", …) EXACTLY as greenfield does
+	// (oriontools.go) — an independent model when one is configured
+	// (ORION_ALIGN_MODEL / ORION_MODEL_ALIGN), otherwise the same model under
+	// the adversarial-auditor role, never the generator's own "generate"
+	// framing grading itself (or-kzf.1). The audit always runs; it just never
+	// self-grades under its own criteria.
 	if provider != nil {
 		// Judge ONLY the changed surface: the aligner walks every .go file
 		// under the dir it is given, and a change worktree holds the WHOLE
@@ -378,7 +384,7 @@ func changeAttempt(ctx context.Context, repoRoot string, store *contextstore.Sto
 		if serr == nil {
 			defer func() { _ = os.RemoveAll(scope) }()
 		}
-		aligner := NativeAligner(AlignJudgeProvider(provider))
+		aligner := NativeAligner(AlignJudgeProvider(RoleProvider("align", provider)))
 		if v, aerr := aligner(ctx, intent, scope, nil); serr == nil && aerr == nil {
 			res.Alignment = AlignmentRecord{Ran: true, Aligned: v.Aligned, Severity: normalizeSeverity(v.Severity), Concern: v.Concern}
 			if v.Inconclusive {
