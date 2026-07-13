@@ -30,7 +30,7 @@ func cmdDesign(args []string) int {
 		fmt.Fprintln(os.Stderr, "orion design:", err)
 		return 1
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	ctx := context.Background()
 
 	proj, _, err := store.CurrentOrLastDeliveredProjectSpec(ctx)

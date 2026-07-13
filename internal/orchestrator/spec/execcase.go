@@ -15,6 +15,7 @@ import (
 // source).
 type CaseKind string
 
+// Case kinds of the closed union (http default, exec).
 const (
 	KindHTTP CaseKind = ""     // legacy HTTP request/response case
 	KindExec CaseKind = "exec" // ratified argv against the built artifact ($BIN)
@@ -57,6 +58,7 @@ type StepExpect struct {
 // regex a human cannot audit for the common shapes.
 type StreamKind string
 
+// Stream-assertion kinds for exec-case stdout/stderr expectations.
 const (
 	StreamExact      StreamKind = "exact"
 	StreamContains   StreamKind = "contains"

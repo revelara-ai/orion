@@ -60,6 +60,7 @@ func NewAnthropic(apiKey, model string) *Anthropic {
 	}
 }
 
+// Name identifies the provider.
 func (a *Anthropic) Name() string { return "anthropic" }
 
 // WithBaseURL overrides the API endpoint (config base_url — proxies, gateways).
@@ -86,6 +87,7 @@ func (a *Anthropic) ContextWindow() int { return anthropicContextWindow(a.model)
 // and brick the session — the exact failure a naive contains("opus") caused.
 // (Model→window facts per the claude-api reference; update when a new 1M model
 // ships. A live Models API lookup — max_input_tokens — is the follow-up.)
+
 // MaxOutputTokens reports the model's max OUTPUT cap (far below the context
 // window). Implements the optional llm.MaxOutputTokens capability so the harness
 // never requests more output than the model allows.
@@ -317,7 +319,7 @@ func (a *Anthropic) do(ctx context.Context, body []byte) (*ChatResponse, error) 
 	if err != nil {
 		return nil, &llmclient.Retryable{Err: err} // network blip → retry
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 
 	switch {
@@ -419,7 +421,7 @@ func (a *Anthropic) CountTokens(ctx context.Context, req ChatRequest) (int, erro
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != 200 {
 		return 0, fmt.Errorf("anthropic count_tokens: status %d: %s", resp.StatusCode, truncate(string(rb), 120))

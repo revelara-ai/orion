@@ -5,6 +5,43 @@ linters:
     - staticcheck
     - revive
     - gosec
+  settings:
+    errcheck:
+      # CLI/stderr prints are fire-and-forget by design.
+      exclude-functions:
+        - fmt.Fprintln
+        - fmt.Fprintf
+        - fmt.Fprint
+    gosec:
+      excludes:
+        # The harness's BUSINESS is reading/writing files at computed paths in
+        # store-owned build dirs, worktrees, and proof scratch (G304), and its
+        # artifact trees deliberately ship developer-readable 0755/0644 (G301,
+        # G306) — secretscan gates content, credentials use 0600 explicitly
+        # (polaris token store), and the sandbox/workspace anchors are the
+        # actual traversal boundary (or-1cv, or-5ym).
+        - G301
+        - G304
+        - G306
+        # Same boundary argument for the taint/TOCTOU variants: walk roots and
+        # write targets are store-owned build/proof trees; the sandbox jails
+        # the writers that could plant hostile symlinks.
+        - G122
+        - G703
+    staticcheck:
+      # QF* are opinionated quickfix SUGGESTIONS (style rewrites), not defects —
+      # the bar is S/SA/ST correctness + simplicity classes (or-3p5.12).
+      checks: ["all", "-QF*"]
   exclusions:
+    rules:
+      # Test fixtures fire-and-forget Close/Run/Serve, write 0755 scratch
+      # trees, and exec fixed test binaries deliberately.
+      - path: _test\.go
+        linters: [errcheck, gosec, revive]
+      # The exported-comment bar applies to the PUBLIC surface (pkg/, cmd/);
+      # internal/ plumbing documents opportunistically, not ceremonially.
+      - path: ^internal/
+        text: "^exported:"
+        linters: [revive]
     paths:
       - archive

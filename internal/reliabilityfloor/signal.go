@@ -8,8 +8,10 @@ import (
 	"strings"
 )
 
+// Severity ranks a floor signal's weight.
 type Severity int
 
+// Severity levels, ascending.
 const (
 	SevLow Severity = iota
 	SevMedium
@@ -17,6 +19,7 @@ const (
 	SevCritical
 )
 
+// ParseSeverity maps corpus severity strings onto the closed scale (unknown → low).
 func ParseSeverity(s string) Severity {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "critical":
@@ -30,18 +33,22 @@ func ParseSeverity(s string) Severity {
 	}
 }
 
+// CheckKind names the deterministic check a signal can drive.
 type CheckKind string
 
+// Check kinds.
 const (
 	CheckNone         CheckKind = "none"
 	CheckGolangciLint CheckKind = "golangci-lint"
 )
 
+// Check is the deterministic check derived from a signal.
 type Check struct {
 	Kind    CheckKind
 	Linters []string
 }
 
+// Signal is one corpus-sourced reliability fact scoped to the change.
 type Signal struct {
 	ID       string // RC-XXX | R-XXX | incident short_name
 	Title    string

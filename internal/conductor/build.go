@@ -454,7 +454,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	// (visible in the PR) and, at Critical tier, refuse delivery.
 	runbook := delivery.GenerateRunbook(es, model, env)
 	var missingOps []string
-	if b, rerr := os.ReadFile(filepath.Join(buildDir, "main.go")); rerr == nil {
+	if b, rerr := os.ReadFile(filepath.Join(buildDir, "main.go")); rerr == nil { // #nosec G304 -- store-owned build dir
 		runbook, missingOps = delivery.VerifyRunbook(runbook, string(b))
 	}
 	res := delivery.EvaluateBar(outcome.barVerdict, barProof.PresentModes(), reliabilitytier.PolicyFor(tier), env, securityOK, missingOps)
@@ -1136,7 +1136,7 @@ func persistProofMemo(ctx context.Context, store *contextstore.Store, stateMu *s
 // not the hardcoded Standard 0.6 (or-v9f.11).
 func mutationThresholdFor(artifactDir string) float64 {
 	tier := reliabilitytier.Standard
-	if b, err := os.ReadFile(filepath.Join(artifactDir, "main.go")); err == nil {
+	if b, err := os.ReadFile(filepath.Join(artifactDir, "main.go")); err == nil { // #nosec G304 -- store-owned artifact dir
 		findings := reliabilityscan.ScanSource(string(b))
 		tier = reliabilitytier.Classify(reliabilityscan.DeriveDimensions(findings))
 	}

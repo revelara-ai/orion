@@ -73,7 +73,7 @@ func scopedWaveReprove(full func(ctx context.Context, dir string) (bool, error))
 
 // goRun executes `go <args...>` at dir under the proof-exec scrubbed env.
 func goRun(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "go", args...)
+	cmd := exec.CommandContext(ctx, "go", args...) // #nosec G204 -- fixed toolchain binary; args are harness-built patterns
 	cmd.Dir = dir
 	cmd.Env = safeenv.Build()
 	out, err := cmd.CombinedOutput()

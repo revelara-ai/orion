@@ -87,7 +87,7 @@ func TestModuleProposerLiveFallsBackToOracleOnGateFailure(t *testing.T) {
 func TestModuleProposerLiveCoverageGateIndependentlyBlocks(t *testing.T) {
 	t.Setenv("ORION_MODULE_PROPOSER", "live")
 	c, ctx := storeConductor(t)
-	c.SetModuleProposer(func(_ context.Context, es spec.ExecutableSpec, _ string, floor []completeness.Dimension) ([]decomposer.ProposedModule, error) {
+	c.SetModuleProposer(func(_ context.Context, _ spec.ExecutableSpec, _ string, floor []completeness.Dimension) ([]decomposer.ProposedModule, error) {
 		covers := make([]string, 0, len(floor))
 		for _, d := range floor {
 			covers = append(covers, string(d)) // floor fully covered…

@@ -39,7 +39,7 @@ func TestToolPermissionSingleKeys(t *testing.T) {
 		m := newTestConvo(t)
 		reply := make(chan acp.PermissionResult, 1)
 		m = feed(m, permMsg{req: acp.PermissionRequest{Kind: "tool", Tool: "bash", Preview: "$ ls"}, reply: reply})
-		m = feed(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+		_ = feed(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
 		if res := <-reply; res.Outcome != want {
 			t.Errorf("key %q should resolve %q, got %q", key, want, res.Outcome)
 		}

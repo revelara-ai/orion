@@ -17,7 +17,7 @@ import (
 // these; a proof Reject or a user cancel is not a dead dependency).
 var ErrProvider = errors.New("harness: provider error")
 
-// ErrBreakerOpen: the loop-level circuit breaker is open — N consecutive
+// ErrBreakerOpen reports the loop-level circuit breaker open — N consecutive
 // turns failed on the provider, so the loop escalates instead of burning
 // budget on a dead dependency (or-mvr.2; the C4 failure mode of inc-qdi).
 var ErrBreakerOpen = errors.New("harness: loop circuit breaker open")
@@ -40,8 +40,8 @@ const (
 // single probe turn — a failed probe re-opens with a fresh timer, a successful
 // one closes the breaker. The zero value is usable.
 type Breaker struct {
-	Threshold     int              // consecutive provider-failed turns to open; <=0 → defaultBreakerThreshold
-	HalfOpenAfter time.Duration    // cool-down before a probe turn; <=0 → defaultHalfOpenAfter
+	Threshold     int               // consecutive provider-failed turns to open; <=0 → defaultBreakerThreshold
+	HalfOpenAfter time.Duration     // cool-down before a probe turn; <=0 → defaultHalfOpenAfter
 	OnOpen        func(cause error) // optional escalation hook, fired exactly once per open transition
 
 	mu          sync.Mutex

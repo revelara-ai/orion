@@ -752,7 +752,7 @@ func persistEpicTx(ctx context.Context, tx *contextstore.Tx, projectID, specID, 
 	return eid, keyToID, nil
 }
 
-// currentEpicID returns the latest epic id for a project (read-only).
+// latestSpec returns the project's newest spec row (read-only).
 func (c *Conductor) latestSpec(ctx context.Context, projectID string) (contextstore.Spec, error) {
 	var sp contextstore.Spec
 	err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
@@ -764,11 +764,6 @@ func (c *Conductor) latestSpec(ctx context.Context, projectID string) (contextst
 		return nil
 	})
 	return sp, err
-}
-
-func (c *Conductor) currentEpicID(ctx context.Context, projectID string) (string, error) {
-	e, err := c.currentEpic(ctx, projectID)
-	return e.ID, err
 }
 
 func (c *Conductor) currentEpic(ctx context.Context, projectID string) (contextstore.Epic, error) {

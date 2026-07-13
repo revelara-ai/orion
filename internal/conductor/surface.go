@@ -46,7 +46,7 @@ func extractModuleSurface(artifactDir, fileScope string) []string {
 			if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 				return nil
 			}
-			src, rerr := os.ReadFile(path) // #nosec G304 -- proof-accepted artifact files
+			src, rerr := os.ReadFile(path) // #nosec G304 -- proof-accepted artifact files // #nosec G122 -- harness-owned build tree walk, no hostile symlinks (sandbox-jailed writers)
 			if rerr != nil {
 				return nil
 			}

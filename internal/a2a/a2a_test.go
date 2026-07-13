@@ -56,7 +56,7 @@ func TestEvidenceClaimIsNeverTrusted(t *testing.T) {
 
 type echoHandler struct{ status string }
 
-func (h echoHandler) Handle(req Request) (EvidenceClaim, error) {
+func (h echoHandler) Handle(_ Request) (EvidenceClaim, error) {
 	// A handler that tries to forge a different correlation/task id.
 	return EvidenceClaim{CorrelationID: "FORGED", TaskID: "FORGED", AssertionStatus: h.status}, nil
 }

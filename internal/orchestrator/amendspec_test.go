@@ -10,7 +10,7 @@ import (
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 )
 
-func latestSpecRow(t *testing.T, c *Conductor, ctx context.Context) contextstore.Spec {
+func latestSpecRow(t *testing.T, ctx context.Context, c *Conductor) contextstore.Spec {
 	t.Helper()
 	proj, _, err := c.Store().CurrentProjectSpec(ctx)
 	if err != nil {
@@ -54,7 +54,7 @@ func TestAmendSpecSeedsDraftFromRatified(t *testing.T) {
 	if _, err := c.ApproveSpec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	parent := latestSpecRow(t, c, ctx)
+	parent := latestSpecRow(t, ctx, c)
 	if parent.Status != "accepted" {
 		t.Fatalf("precondition: ratified spec, got %s", parent.Status)
 	}
@@ -63,7 +63,7 @@ func TestAmendSpecSeedsDraftFromRatified(t *testing.T) {
 	if err != nil {
 		t.Fatalf("amend: %v", err)
 	}
-	draft := latestSpecRow(t, c, ctx)
+	draft := latestSpecRow(t, ctx, c)
 	if draft.Status != "drafting" || draft.Version != parent.Version+1 || draft.ParentSpecID != parent.ID {
 		t.Fatalf("amendment must be a new draft version with lineage, got status=%s v=%d parent=%q", draft.Status, draft.Version, draft.ParentSpecID)
 	}
@@ -116,7 +116,7 @@ func TestAmendedDraftEditsIndependentlyAndReratifies(t *testing.T) {
 	if _, err := c.PlanView(ctx); err != nil { // materialize the plan on the v1 anchor
 		t.Fatal(err)
 	}
-	parent := latestSpecRow(t, c, ctx)
+	parent := latestSpecRow(t, ctx, c)
 
 	if _, err := c.AmendSpec(ctx); err != nil {
 		t.Fatal(err)

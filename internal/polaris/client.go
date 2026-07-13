@@ -44,7 +44,7 @@ func (c *Client) Login(ctx context.Context, username, password string) (Token, e
 	if err != nil {
 		return Token{}, fmt.Errorf("polaris login: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<14))
 		return Token{}, fmt.Errorf("polaris login: status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
@@ -73,7 +73,7 @@ func (c *Client) Me(ctx context.Context, accessToken string) (Identity, error) {
 	if err != nil {
 		return Identity{}, fmt.Errorf("polaris me: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return Identity{}, fmt.Errorf("polaris me: status %d", resp.StatusCode)
 	}

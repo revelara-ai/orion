@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-// ErrRetryBudgetExhausted: the operation's stack-wide retry budget is spent —
+// ErrRetryBudgetExhausted reports the operation's stack-wide retry budget spent —
 // further failures fail FAST everywhere in the stack instead of amplifying
 // (or-mvr.1, the inc-qdi C1 failure mode: one request became 48 retries
 // because every layer retried independently).

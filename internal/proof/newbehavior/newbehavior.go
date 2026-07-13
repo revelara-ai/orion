@@ -338,7 +338,7 @@ func runArgv(ctx context.Context, dir string, argv []string) (string, string, in
 	if len(argv) == 0 {
 		return "", "", -1
 	}
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) // #nosec G204 -- harness-built toolchain argv (routes through proofexec sandbox)
 	cmd.Dir = dir
 	cmd.Env = safeenv.Build()
 	var stdout, stderr bytes.Buffer

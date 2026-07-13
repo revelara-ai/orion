@@ -83,7 +83,7 @@ func (o *OpenAI) doStream(ctx context.Context, body []byte, onText func(string))
 	if err != nil {
 		return nil, &llmclient.Retryable{Err: fmt.Errorf("%s: cannot reach %s (is it running?): %w", o.cfg.Name, o.cfg.BaseURL, err)}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		// Reuse the non-streaming status mapping by reading the (JSON) error body.
 		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))

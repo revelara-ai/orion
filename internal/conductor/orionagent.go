@@ -119,6 +119,9 @@ func (a *OrionAgent) turnLockFor(sessionID string) *sync.Mutex {
 	return m
 }
 
+// Prompt runs ONE conductor turn for a session: context assembly, the
+// tool-driven harness loop, compaction when needed, and the async transcript
+// update.
 func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream func(acp.Update), ask acp.AskFunc) (acp.PromptResult, error) {
 	end := acp.PromptResult{StopReason: "end_turn"}
 

@@ -96,16 +96,16 @@ func Audit(ctx context.Context, root string) Result {
 	}
 	rctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(rctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(rctx, http.MethodPost, url, bytes.NewReader(body)) // #nosec G704 -- fixed OSV endpoint; ORION_OSV_URL override is operator-controlled
 	if err != nil {
 		return Result{Skipped: err.Error()}
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) // #nosec G704 -- see above
 	if err != nil {
 		return Result{Skipped: "OSV unreachable: " + err.Error()}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return Result{Skipped: fmt.Sprintf("OSV answered status %d", resp.StatusCode)}
 	}

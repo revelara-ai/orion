@@ -146,7 +146,7 @@ func SpawnDriver(preset Preset, role string, gate acp.PermissionGate) ACPDriver 
 		}
 		runCtx, cancel := context.WithCancel(ctx)
 		client := acp.NewClient(agent.Stdout, agent.Stdin, gate, acp.ScopedFS{Root: root})
-		go client.Run(runCtx)
+		go func() { _ = client.Run(runCtx) }()
 		cleanup := func() {
 			cancel()
 			agent.Stop(2 * time.Second)

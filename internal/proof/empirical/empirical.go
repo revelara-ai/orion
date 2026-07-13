@@ -76,7 +76,7 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truth
 	if err != nil {
 		return truthalign.ModeResult{}, ProbeResult{}, err
 	}
-	defer os.RemoveAll(binDir)
+	defer func() { _ = os.RemoveAll(binDir) }()
 
 	// Stage the artifact into a proof-controlled dir and build it INSIDE the proof
 	// sandbox (network + filesystem isolated): the generator's worktree is never
@@ -126,7 +126,7 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truth
 		} else {
 			runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
-			svc := exec.CommandContext(runCtx, bin)
+			svc := exec.CommandContext(runCtx, bin) // #nosec G204 -- the built artifact binary under proof (bare fallback path)
 			svc.Env = []string{"PORT=" + fmt.Sprint(port), "PATH=/usr/bin:/bin"}
 			svc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			if err := svc.Start(); err != nil {
@@ -332,7 +332,7 @@ func freePort() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
@@ -380,7 +380,7 @@ func probeContract(addr string, c testsynth.Contract) ProbeResult {
 	if err != nil || resp == nil {
 		return ProbeResult{PortOpen: false, Detail: "service never answered HTTP: " + errString(err)}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// The service answered HTTP → the port is genuinely open and serving.
 	pr := ProbeResult{PortOpen: true}
@@ -483,7 +483,7 @@ func checkCaseLive(client *http.Client, base string, cs spec.BehavioralCase) (bo
 	if err != nil {
 		return false, "no response: " + err.Error()
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if cs.Expect.Status != 0 && resp.StatusCode != cs.Expect.Status {
 		return false, fmt.Sprintf("status %d, want %d", resp.StatusCode, cs.Expect.Status)
 	}

@@ -56,11 +56,11 @@ func mcpLogin() string {
 	// or-xe7.9: probe the session NOW — an org-less JWT authorizes at login
 	// but 403s on every tool call; surface that here, not as silently-reduced
 	// context later.
-	if detail, perr := polaris.ProbeSession(ctx, endpoint, tok); perr != nil {
+	detail, perr := polaris.ProbeSession(ctx, endpoint, tok)
+	if perr != nil {
 		return "logged in to revelara.ai (" + endpoint + ") — but: " + perr.Error()
-	} else {
-		return "logged in to revelara.ai (" + endpoint + ") — " + detail
 	}
+	return "logged in to revelara.ai (" + endpoint + ") — " + detail
 }
 
 // mcpLogout clears the cached revelara.ai credential.

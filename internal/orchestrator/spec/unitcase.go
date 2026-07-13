@@ -15,12 +15,10 @@ const (
 	KindFile CaseKind = "file"
 )
 
-// ModesRationale is the closed enum justifying a narrowed ModesApply. Slice:
-// cross_process_persistence (unit Restart steps are empirical-only — an
-// in-process test cannot cross a process boundary).
+// RationaleCrossProcess is the one entry in the closed modes-rationale enum:
+// unit Restart steps are empirical-only (an in-process test cannot cross a
+// process boundary).
 const RationaleCrossProcess = "cross_process_persistence"
-
-var knownModesRationales = map[string]bool{RationaleCrossProcess: true}
 
 // UnitCase proves package-level behavior: sequential call-and-assert steps
 // evaluated IN the artifact's package scope. A Restart step marks a process
@@ -51,6 +49,7 @@ type FileCase struct {
 // FileKind is the closed file-assertion vocabulary.
 type FileKind string
 
+// File-assertion kinds (the closed file vocabulary).
 const (
 	FileExists   FileKind = "exists"
 	FileAbsent   FileKind = "absent"

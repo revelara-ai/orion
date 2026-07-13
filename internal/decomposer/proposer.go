@@ -119,11 +119,7 @@ func bookendEpic(es spec.ExecutableSpec, floor []completeness.Dimension, mods []
 		if m.Key == "acceptance" {
 			continue // the bookend is Orion's to synthesize; never the proposer's
 		}
-		tasks = append(tasks, Task{
-			Key: m.Key, Title: m.Title, ProofObligation: m.ProofObligation,
-			FileScope: m.FileScope, Covers: m.Covers, DependsOn: m.DependsOn,
-			Provides: m.Provides, Requires: m.Requires,
-		})
+		tasks = append(tasks, Task(m))
 		keys = append(keys, m.Key)
 	}
 	tasks = append(tasks, acceptanceModule(es, floor, keys))

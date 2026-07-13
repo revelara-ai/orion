@@ -27,7 +27,7 @@ import (
 	"time"
 
 	"github.com/revelara-ai/orion/internal/embed"
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // registers the pure-Go sqlite driver
 )
 
 // Tier is a memory tier.
@@ -341,7 +341,7 @@ func (s *Store) Retrieve(ctx context.Context, query string, tiers ...Tier) ([]It
 	args = append(args, scopeArgs...)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, visit_count, last_accessed_at
-		 FROM memory_items WHERE candidate=0 AND tier IN (`+strings.Join(placeholders, ",")+`)`+scopeClause, args...)
+		 FROM memory_items WHERE candidate=0 AND tier IN (`+strings.Join(placeholders, ",")+`)`+scopeClause, args...) // #nosec G202 -- placeholders + scopeWhere are code-built fragments; values are bound args
 	if err != nil {
 		return nil, err
 	}
@@ -508,7 +508,7 @@ func (s *Store) summarizeForEviction(ctx context.Context, tier Tier, keep int) (
 	evScope, evArgs := s.scopeWhere()
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, kind, content, content_hash, trust_tier, heat, visit_count, last_accessed_at, created_at
-		 FROM memory_items WHERE tier=? AND pinned=0 AND security_relevant=0`+evScope, append([]any{string(tier)}, evArgs...)...)
+		 FROM memory_items WHERE tier=? AND pinned=0 AND security_relevant=0`+evScope, append([]any{string(tier)}, evArgs...)...) // #nosec G202 -- scopeWhere is a code-built fragment; values bound
 	if err != nil {
 		return nil, fmt.Errorf("memory summarize scan: %w", err)
 	}
@@ -643,7 +643,7 @@ func (s *Store) Promote(ctx context.Context) (string, int, error) {
 	// promotion candidates (moving them between tiers is needless churn).
 	prScope, prArgs := s.scopeWhere()
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, heat, visit_count, last_accessed_at FROM memory_items WHERE tier=? AND pinned=0`+prScope, append([]any{string(MTM)}, prArgs...)...)
+		`SELECT id, heat, visit_count, last_accessed_at FROM memory_items WHERE tier=? AND pinned=0`+prScope, append([]any{string(MTM)}, prArgs...)...) // #nosec G202 -- scopeWhere is a code-built fragment; values bound
 	if err != nil {
 		return "", 0, fmt.Errorf("memory promote scan: %w", err)
 	}
@@ -729,7 +729,7 @@ func (s *Store) ListByKind(ctx context.Context, kind string) ([]Item, error) {
 	lkScope, lkArgs := s.scopeWhere()
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, visit_count, last_accessed_at, candidate
-		 FROM memory_items WHERE kind=?`+lkScope, append([]any{kind}, lkArgs...)...)
+		 FROM memory_items WHERE kind=?`+lkScope, append([]any{kind}, lkArgs...)...) // #nosec G202 -- scopeWhere is a code-built fragment; values bound
 	if err != nil {
 		return nil, err
 	}
@@ -775,7 +775,7 @@ func (s *Store) ListCandidates(ctx context.Context, tiers ...Tier) ([]Item, erro
 	lcScope, lcArgs := s.scopeWhere()
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, visit_count, last_accessed_at
-		 FROM memory_items WHERE candidate=1 AND tier IN (`+strings.Join(placeholders, ",")+`)`+lcScope, append(args, lcArgs...)...)
+		 FROM memory_items WHERE candidate=1 AND tier IN (`+strings.Join(placeholders, ",")+`)`+lcScope, append(args, lcArgs...)...) // #nosec G202 -- placeholders + scopeWhere are code-built; values bound
 	if err != nil {
 		return nil, fmt.Errorf("memory candidates: %w", err)
 	}

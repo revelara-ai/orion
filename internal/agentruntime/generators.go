@@ -20,7 +20,7 @@ type StubGenerator struct{}
 func (StubGenerator) Role() string { return RoleGoGenerator }
 
 // Run honors context cancellation/deadline and returns an untrusted claim.
-func (StubGenerator) Run(ctx context.Context, req a2a.Request) (a2a.EvidenceClaim, error) {
+func (StubGenerator) Run(ctx context.Context, _ a2a.Request) (a2a.EvidenceClaim, error) {
 	if err := ctx.Err(); err != nil {
 		return a2a.EvidenceClaim{}, err
 	}

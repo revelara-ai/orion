@@ -113,7 +113,7 @@ func EnforceRefinement(ctx context.Context, repoRoot, modelPath string, checker 
 		}
 		args := append([]string{"test"}, o.Packages...)
 		args = append(args, "-run", o.RunPattern, "-count=1")
-		cmd := exec.CommandContext(ctx, "go", args...)
+		cmd := exec.CommandContext(ctx, "go", args...) // #nosec G204 -- fixed toolchain binary; harness-built args
 		cmd.Dir = repoRoot
 		cmd.Env = safeenv.Build()
 		if out, terr := cmd.CombinedOutput(); terr != nil {

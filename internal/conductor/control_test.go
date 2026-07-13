@@ -33,7 +33,7 @@ func TestControlCompactAndModel(t *testing.T) {
 	}
 
 	// /model with no arg shows the current model.
-	a.SetModel("claude-opus-4-8", func(currentRef, m string) (llm.Provider, string, error) {
+	a.SetModel("claude-opus-4-8", func(_, m string) (llm.Provider, string, error) {
 		return &fakeLLM{resp: []*llm.ChatResponse{endTurn("x")}}, m, nil
 	}, nil)
 	if r, _ := a.Control(context.Background(), "s1", "model", ""); !strings.Contains(r, "claude-opus-4-8") {
@@ -63,7 +63,7 @@ func TestControlCompactGraceful(t *testing.T) {
 
 func TestSwitchModelRebuildError(t *testing.T) {
 	a := NewOrionAgent(nil, nil, RoleTemplate{})
-	a.SetModel("m1", func(currentRef, arg string) (llm.Provider, string, error) {
+	a.SetModel("m1", func(_, arg string) (llm.Provider, string, error) {
 		return nil, "", fmt.Errorf(`unknown provider "nope"`)
 	}, nil)
 	msg, err := a.switchModel("nope/m2")
@@ -80,7 +80,7 @@ func TestSwitchModelRebuildError(t *testing.T) {
 
 func TestSwitchModelListsAcrossProviders(t *testing.T) {
 	a := NewOrionAgent(nil, nil, RoleTemplate{})
-	a.SetModel("m1", func(currentRef, arg string) (llm.Provider, string, error) { return nil, arg, nil },
+	a.SetModel("m1", func(_, arg string) (llm.Provider, string, error) { return nil, arg, nil },
 		func(context.Context) []string { return []string{"anthropic/claude-opus-4-8", "lmstudio/qwen3-32b"} })
 	msg, err := a.switchModel("")
 	if err != nil {

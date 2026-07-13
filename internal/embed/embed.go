@@ -84,7 +84,7 @@ func (s *Stub) embedOne(text string) []float32 {
 	for _, w := range strings.Fields(strings.ToLower(text)) {
 		h := fnv.New32a()
 		_, _ = h.Write([]byte(w))
-		v[int(h.Sum32()%uint32(s.dim))]++
+		v[int(h.Sum32()%uint32(s.dim))]++ // #nosec G115 -- dim is a small positive config constant; the modulo bounds the index
 	}
 	l2normalize(v)
 	return v

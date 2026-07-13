@@ -196,7 +196,7 @@ func (c *Client) Prompt(ctx context.Context, sessionID, text string, onUpdate fu
 }
 
 // Cancel requests cancellation of the session (interrupt / Red Button path).
-func (c *Client) Cancel(ctx context.Context, sessionID string) error {
+func (c *Client) Cancel(_ context.Context, sessionID string) error {
 	return c.conn.Notify("session/cancel", map[string]any{"sessionId": sessionID})
 }
 
@@ -258,7 +258,7 @@ func (s ScopedFS) WriteTextFile(path, content string) error {
 
 // Terminal is intentionally minimal in V2.0: execution flows through the sandbox
 // + dry-run gates elsewhere; here it is disabled unless explicitly allowed.
-func (s ScopedFS) Terminal(command string, args []string) (string, error) {
+func (s ScopedFS) Terminal(_ string, _ []string) (string, error) {
 	if !s.AllowExec {
 		return "", fmt.Errorf("acp: terminal execution not permitted in this scope")
 	}

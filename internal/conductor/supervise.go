@@ -17,7 +17,7 @@ import (
 
 const (
 	heartbeatFile = "conductor.heartbeat"
-	// WedgeThreshold: a live pid whose heartbeat is older than this is WEDGED.
+	// WedgeThreshold is the heartbeat age past which a live pid counts as WEDGED.
 	WedgeThreshold = 90 * time.Second
 )
 

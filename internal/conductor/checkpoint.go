@@ -165,7 +165,7 @@ func (cp *checkpointer) openEscalations() int {
 // store tx (the teed phase sink writes to the store).
 func (cp *checkpointer) emit(ctx context.Context, n int, digest string) {
 	status := PhaseDone
-	if strings.Contains(digest, "concerns 0; open escalations 0") == false {
+	if !strings.Contains(digest, "concerns 0; open escalations 0") {
 		status = PhaseWarn
 	}
 	withLock(cp.stateMu, func() {

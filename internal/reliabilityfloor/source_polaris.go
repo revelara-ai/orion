@@ -14,6 +14,7 @@ type PolarisSource struct {
 
 var _ SignalSource = (*PolarisSource)(nil)
 
+// Fetch retrieves floor signals from the live revelara.ai corpus (fail-open).
 func (p *PolarisSource) Fetch(ctx context.Context, projectID, query string) ([]Signal, error) {
 	if p == nil || p.Consumer == nil {
 		return nil, nil // fail open

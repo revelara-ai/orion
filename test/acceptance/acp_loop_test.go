@@ -71,7 +71,7 @@ func fixtureACPDriver(t *testing.T, req agentruntime.GenRequest) agentruntime.AC
 		client := acp.NewClient(clientEnd, clientEnd, nil, acp.ScopedFS{Root: root})
 		go client.Run(ctx)
 		var agentConn *acp.Conn
-		handler := func(hctx context.Context, method string, params json.RawMessage) (any, error) {
+		handler := func(hctx context.Context, method string, _ json.RawMessage) (any, error) {
 			switch method {
 			case "initialize":
 				return map[string]any{"protocolVersion": 1}, nil

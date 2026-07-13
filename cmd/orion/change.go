@@ -91,7 +91,7 @@ prove NEW behavior against ratified --cases, and commit on a review branch.`
 	if dir, derr := resolveDataDir(); derr == nil {
 		if s, serr := contextstore.Open(dir); serr == nil {
 			store = s
-			defer store.Close()
+			defer func() { _ = store.Close() }()
 		} else {
 			fmt.Fprintln(os.Stderr, "orion change: context store unavailable (continuing without reliability context):", serr)
 		}
@@ -147,7 +147,7 @@ func extractCases(args []string) ([]string, []newbehavior.Case, error) {
 			if i+1 >= len(args) {
 				return nil, nil, fmt.Errorf("--cases needs a file path")
 			}
-			data, err := os.ReadFile(args[i+1])
+			data, err := os.ReadFile(args[i+1]) // #nosec G304,G703 -- the developer's own --cases file path, by their own hand
 			if err != nil {
 				return nil, nil, fmt.Errorf("read --cases: %w", err)
 			}

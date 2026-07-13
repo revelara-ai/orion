@@ -54,7 +54,7 @@ func (g *Gemini) doStream(ctx context.Context, path string, body []byte, onText 
 	if err != nil {
 		return nil, &llmclient.Retryable{Err: fmt.Errorf("%s: request: %w", g.cfg.Name, err)}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		msg := string(rb)

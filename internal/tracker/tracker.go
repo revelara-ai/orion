@@ -35,8 +35,10 @@ type Backend interface {
 // shape). One-way only — it never reads back into the store.
 type JSONLBackend struct{ Path string }
 
+// Name identifies the backend.
 func (b JSONLBackend) Name() string { return "beads" }
 
+// Project renders the epic's tasks as tracker issue lines (JSONL export).
 func (b JSONLBackend) Project(_ context.Context, epicTitle string, tasks []Task) error {
 	var sb strings.Builder
 	for _, t := range tasks {

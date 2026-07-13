@@ -23,7 +23,8 @@ func TestWithRetryBudgetInstallsAndRespectsEnvAndOuter(t *testing.T) {
 	if llmclient.GateFrom(withLLMGuards(context.Background())) != llmclient.GateFrom(ctx) {
 		t.Fatal("every operation root must share ONE process-wide gate — a per-root gate would be the inc-qdi bypass lane")
 	}
-	if !b.Take() || !b.Take() || b.Take() {
+	first, second, third := b.Take(), b.Take(), b.Take()
+	if !first || !second || third {
 		t.Fatal("env-configured budget must be 2")
 	}
 	// Outermost wins: a nested root keeps the existing budget.
@@ -39,7 +40,7 @@ type budgetProbeLLM struct {
 	sawBudget bool
 }
 
-func (p *budgetProbeLLM) ChatStream(ctx context.Context, req llm.ChatRequest, onText func(string)) (*llm.ChatResponse, error) {
+func (p *budgetProbeLLM) ChatStream(ctx context.Context, req llm.ChatRequest, _ func(string)) (*llm.ChatResponse, error) {
 	p.sawBudget = llmclient.BudgetFrom(ctx) != nil
 	return &llm.ChatResponse{StopReason: llm.StopEndTurn, Content: []llm.ContentBlock{{Type: llm.BlockText, Text: "ok"}}}, nil
 }

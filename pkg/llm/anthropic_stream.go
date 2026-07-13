@@ -101,7 +101,7 @@ func (a *Anthropic) doStream(ctx context.Context, body []byte, onText func(strin
 	if err != nil {
 		return nil, &llmclient.Retryable{Err: err} // connect failure, nothing emitted → retry
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	switch {
 	case resp.StatusCode == 429 || resp.StatusCode == 529:
 		return nil, &llmclient.RetryAfter{After: parseRetryAfter(resp.Header), Err: fmt.Errorf("anthropic: status %d", resp.StatusCode)}

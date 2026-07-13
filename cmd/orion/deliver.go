@@ -34,7 +34,7 @@ func cmdDeliver(args []string) int {
 		fmt.Fprintln(os.Stderr, "orion deliver show:", err)
 		return 1
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	ctx := context.Background()
 
 	// A delivery record only exists once the project is delivered — by which point it

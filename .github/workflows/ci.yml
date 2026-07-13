@@ -58,15 +58,12 @@ jobs:
       - name: Test (short lane)
         run: make test-short
 
-      - name: Lint (golangci-lint v2, new issues only)
-        # The legacy tree carries ~143 pre-bar findings (tracked: or-3p5.12,
-        # "clean codebase to the new gosec/revive lint bar"). PRs are gated on
-        # the issues THEY introduce; flip to full once or-3p5.12 lands.
-        if: github.event_name == 'pull_request'
+      - name: Lint (golangci-lint v2, full)
+        # or-3p5.12 cleaned the tree to the bar — the gate is FULL on every
+        # event; a red lint is a real regression, not legacy debt.
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.1
-          only-new-issues: true
 
   full-lane:
     name: full suite (main + nightly)

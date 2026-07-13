@@ -9,7 +9,7 @@ import (
 )
 
 // TestProjectScopeIsolatesReads (or-gb1.6): project A's scoped items never
-// appear under project B's scope; explicitly-global ('') items appear
+// appear under project B's scope; explicitly-global (”) items appear
 // everywhere; the unscoped (admin) view sees all.
 func TestProjectScopeIsolatesReads(t *testing.T) {
 	ctx := context.Background()

@@ -41,7 +41,7 @@ func CmdRunner(timeout time.Duration) Runner {
 		}
 		cctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		cmd := exec.CommandContext(cctx, c.Cmd[0], c.Cmd[1:]...)
+		cmd := exec.CommandContext(cctx, c.Cmd[0], c.Cmd[1:]...) // #nosec G204 -- skilleval fixture command from PROOF-tier evidence, never agent-authored at runtime
 		cmd.Dir = c.Dir
 		cmd.Env = safeenv.Build()
 		out, err := cmd.CombinedOutput()

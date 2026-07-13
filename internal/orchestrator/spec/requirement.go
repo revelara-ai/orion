@@ -31,6 +31,7 @@ func IsConditionalValue(v string) bool {
 // must fail, never silently pass — the or-y9d invariant).
 type AssertionKind string
 
+// Body-assertion kinds the proof domain can execute.
 const (
 	AssertJSONKeyPresent   AssertionKind = "json_key_present"   // body is JSON with Key present + non-empty
 	AssertJSONKeyRFC3339   AssertionKind = "json_key_rfc3339"   // body[Key] parses as RFC3339

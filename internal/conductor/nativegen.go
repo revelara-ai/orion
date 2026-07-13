@@ -199,6 +199,7 @@ func editFileTool(root string) tools.Tool {
 // The handleTime symbol is the proof harness's stable entry point (the behavioral
 // mode calls it in-process); the model writes whatever logic satisfies the cases
 // behind it.
+
 // GenerationPrompt builds the code generator's system prompt from the spec slice.
 // It is CASE-DRIVEN (the declared behavioral cases ARE the contract), uses the
 // DECLARED entry symbol, and stresses RELIABILITY — it primes the generator to build

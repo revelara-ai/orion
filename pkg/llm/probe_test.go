@@ -17,7 +17,7 @@ type fakeProvider struct {
 }
 
 func (f *fakeProvider) Name() string { return "fake" }
-func (f *fakeProvider) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+func (f *fakeProvider) Chat(_ context.Context, req ChatRequest) (*ChatResponse, error) {
 	f.gotReq = req
 	return f.chat, f.chatErr
 }

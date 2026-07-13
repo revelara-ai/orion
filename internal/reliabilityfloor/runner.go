@@ -10,6 +10,7 @@ import (
 	"github.com/revelara-ai/orion/internal/proof/safeenv"
 )
 
+// LintResult reports the floor's lint run (log-only slice).
 type LintResult struct {
 	Ran     bool
 	ExitOK  bool
@@ -42,7 +43,7 @@ func RunLint(ctx context.Context, dir string, args []string) LintResult {
 	if _, err := exec.LookPath("golangci-lint"); err != nil {
 		return LintResult{Skipped: "golangci-lint not installed"}
 	}
-	cmd := exec.CommandContext(ctx, "golangci-lint", args...)
+	cmd := exec.CommandContext(ctx, "golangci-lint", args...) // #nosec G204 -- fixed binary; harness-built args
 	cmd.Dir = dir
 	cmd.Env = safeenv.Build() // host module cache; NEVER os.Environ()
 	out, err := cmd.CombinedOutput()

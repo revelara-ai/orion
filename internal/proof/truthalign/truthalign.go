@@ -13,6 +13,7 @@ package truthalign
 // proofs.verdict CHECK domain.
 type Verdict string
 
+// Converged proof verdicts.
 const (
 	Accept       Verdict = "Accept"
 	Reject       Verdict = "Reject"

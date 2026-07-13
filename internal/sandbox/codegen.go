@@ -17,12 +17,12 @@ import (
 
 // GenSpec is the slice of the executable spec the Go-service generator needs.
 type GenSpec struct {
-	Module   string // go module path (e.g. "orion-generated/timeservice")
+	Module string // go module path (e.g. "orion-generated/timeservice")
 	// Lease (or-tcs.11): the cluster's declared file-scope prefixes. The
 	// generator's write tools refuse paths outside it and the post-generate
 	// gate diffs observed writes against it. nil/empty = whole worktree
 	// (today's undeclared fail-safe).
-	Lease []string
+	Lease    []string
 	Route    string // e.g. "/time"
 	Port     int    // e.g. 8080
 	Format   string // "json" | "text"

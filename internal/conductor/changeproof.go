@@ -313,7 +313,7 @@ func changeAttempt(ctx context.Context, repoRoot string, store *contextstore.Sto
 		if !strings.HasSuffix(f, ".go") {
 			continue
 		}
-		if b, rerr := os.ReadFile(filepath.Join(wt.Path, f)); rerr == nil {
+		if b, rerr := os.ReadFile(filepath.Join(wt.Path, f)); rerr == nil { // #nosec G304 -- harness-created worktree, changed-file list from git
 			findings = append(findings, reliabilityscan.ScanSource(string(b))...)
 		}
 	}
@@ -321,9 +321,6 @@ func changeAttempt(ctx context.Context, repoRoot string, store *contextstore.Sto
 	return res, false, nil
 }
 
-// finishChange fires the out-of-band event for a SETTLED change outcome
-// (or-v9f.17) — all three callers (CLI, build_change, change_repo) inherit it.
-// Fire-and-forget: a delivery miss never fails the change.
 // FailureDigest distills the regression gate's failing run for the loop: red
 // baseline digests Before, green→red digests After; a held gate has none. This
 // is the evidence a model needs to SELF-CORRECT (or-67av) — "held=false" alone
@@ -339,6 +336,9 @@ func (r ChangeResult) FailureDigest() string {
 	return brownfield.FailureDigest(failing.Output, 40)
 }
 
+// finishChange fires the out-of-band event for a SETTLED change outcome
+// (or-v9f.17) — all three callers (CLI, build_change, change_repo) inherit it.
+// Fire-and-forget: a delivery miss never fails the change.
 func finishChange(ctx context.Context, store *contextstore.Store, repoRoot string, res ChangeResult, intent string) ChangeResult {
 	kind := "change.delivered"
 	if res.Delivery != "deliver" {
@@ -363,16 +363,16 @@ func finishChange(ctx context.Context, store *contextstore.Store, repoRoot strin
 			if postProofAutonomy() {
 				rb := actuation.RedButton{Path: filepath.Join(store.Dir(), "red_button")}
 				if actuation.AutonomousDeliverPermitted(rb, res.Delivery) {
-					if summary, lerr := LandProvenChange(ctx, repoRoot, store, rb, res.Branch, intent); lerr == nil {
+					summary, lerr := LandProvenChange(ctx, repoRoot, store, rb, res.Branch, intent)
+					if lerr == nil {
 						res.Landed = true
 						_ = notify.Notify(ctx, notify.Event{
 							Kind: "change.landed", Task: oneLine(intent), Verdict: "Accept",
 							Detail: summary, Artifact: res.Branch, NextAction: "none — landed",
 						})
 						return res
-					} else {
-						res.Reason = strings.TrimSpace(res.Reason + "\nauto-land declined: " + lerr.Error())
 					}
+					res.Reason = strings.TrimSpace(res.Reason + "\nauto-land declined: " + lerr.Error())
 				}
 			}
 			if pr, perr := ChangePRHandoff(ctx, repoRoot, store.Dir(), res.Path, res.Branch, intent, res.Tier, res.Evidence.Markdown()); perr == nil {
@@ -463,7 +463,7 @@ func changedFiles(ctx context.Context, dir string) []string {
 	// Raw (non-trimming) git call: gitIn TrimSpace's its output, which would strip the
 	// leading status column of the first porcelain line. Porcelain parsing needs the
 	// bytes verbatim.
-	out, err := exec.CommandContext(ctx, "git", "-C", dir, "status", "--porcelain").Output()
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "status", "--porcelain").Output() // #nosec G204 -- fixed binary + fixed args
 	if err != nil {
 		return nil
 	}

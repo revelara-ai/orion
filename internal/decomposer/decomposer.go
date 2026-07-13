@@ -45,7 +45,7 @@ type Epic struct {
 // stays generic (or-3ba.1). Deterministic for the V2.0 Go-greenfield path. Empty
 // projectType defaults to http-service.
 func Decompose(es spec.ExecutableSpec, projectType string) Epic {
-	cap := capacityTarget(es)
+	target := capacityTarget(es)
 
 	tasks := []Task{
 		{
@@ -59,7 +59,7 @@ func Decompose(es spec.ExecutableSpec, projectType string) Epic {
 		{
 			Key:             "capacity",
 			Title:           "Apply capacity & concurrency controls",
-			ProofObligation: fmt.Sprintf("request handling is bounded (timeouts + concurrency limits) to sustain the stated scale of ~%s", cap),
+			ProofObligation: fmt.Sprintf("request handling is bounded (timeouts + concurrency limits) to sustain the stated scale of ~%s", target),
 			FileScope:       "internal/server/",
 			Covers:          []string{string(completeness.DimScale)},
 			DependsOn:       []string{"handler"},

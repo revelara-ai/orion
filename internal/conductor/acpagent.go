@@ -21,6 +21,8 @@ import (
 // blocking questions it PRESENTS the assembled spec for review and ratifies only
 // on the developer's say-so (or-owz, or-owo). It reasons/coordinates only; proof,
 // the deployment bar, and leases stay deterministic tools it invokes.
+//
+//nolint:revive // conductor.Agent reads worse at call sites; ConductorAgent is the established name across CLI + tests (stutter accepted).
 type ConductorAgent struct {
 	Role      RoleTemplate
 	conductor *orchestrator.Conductor

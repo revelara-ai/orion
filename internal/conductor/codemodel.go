@@ -66,9 +66,9 @@ func AnalyzeFunctionalModel(ctx context.Context, provider llm.Provider, m brownf
 // groundFunctionalModel drops any package the model named that is NOT in the real
 // RepoMap (no invented structure), recording them in Ungrounded for transparency.
 func groundFunctionalModel(fm FunctionalModel, m brownfield.RepoMap) FunctionalModel {
-	real := make(map[string]bool, len(m.Packages))
+	actual := make(map[string]bool, len(m.Packages))
 	for _, p := range m.Packages {
-		real[p.Dir] = true
+		actual[p.Dir] = true
 	}
 	seenBad := map[string]bool{}
 	out := fm
@@ -76,7 +76,7 @@ func groundFunctionalModel(fm FunctionalModel, m brownfield.RepoMap) FunctionalM
 	for _, d := range fm.Domains {
 		var kept []string
 		for _, pkg := range d.Packages {
-			if real[pkg] {
+			if actual[pkg] {
 				kept = append(kept, pkg)
 			} else if !seenBad[pkg] {
 				seenBad[pkg] = true

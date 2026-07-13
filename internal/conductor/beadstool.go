@@ -61,7 +61,7 @@ func bdRun(ctx context.Context, dir string, args ...string) (string, int) {
 }
 
 func runOnce(ctx context.Context, dir string, args []string) (string, int) {
-	cmd := exec.CommandContext(ctx, "bd", args...)
+	cmd := exec.CommandContext(ctx, "bd", args...) // #nosec G204 -- fixed binary; args policy-gated (read allowlist + red button) upstream
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err == nil {

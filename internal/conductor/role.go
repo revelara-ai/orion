@@ -24,7 +24,7 @@ var RoleSections = []string{
 	"escalation",
 }
 
-// RenderRole renders the role template that primes the Conductor agent. It states
+// Render renders the role template that primes the Conductor agent. It states
 // both what the Conductor owns (reasoning/coordination) and the hard invariant:
 // the deterministic gates are invoked, never overridden.
 func (rt RoleTemplate) Render() string {

@@ -159,7 +159,7 @@ func (noneBackend) Run(ctx context.Context, s Spec) (Result, error) {
 	if len(s.Argv) == 0 {
 		return Result{}, errors.New("sandbox: empty argv")
 	}
-	cmd := exec.CommandContext(ctx, s.Argv[0], s.Argv[1:]...)
+	cmd := exec.CommandContext(ctx, s.Argv[0], s.Argv[1:]...) // #nosec G204 -- the sandbox 'none' backend EXISTS to exec the spec argv; bwrap is preferred and go-arm fails closed without it (or-tf8)
 	cmd.Dir = s.Workdir
 	env := []string{}
 	for k, v := range s.Env {

@@ -8,6 +8,7 @@ type FakeSource struct {
 	Err     error
 }
 
-func (f *FakeSource) Fetch(ctx context.Context, projectID, query string) ([]Signal, error) {
+// Fetch returns the canned signals (test double).
+func (f *FakeSource) Fetch(_ context.Context, _, _ string) ([]Signal, error) {
 	return f.Signals, f.Err
 }

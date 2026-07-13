@@ -61,7 +61,7 @@ func TestExecValidationBattery(t *testing.T) {
 		wantOK bool
 		want   string
 	}{
-		{"valid R10 shape", func(c *BehavioralCase) {}, true, ""},
+		{"valid R10 shape", func(_ *BehavioralCase) {}, true, ""},
 		{"missing exec payload", func(c *BehavioralCase) { c.Exec = nil }, false, "no exec payload"},
 		{"http fields on exec case", func(c *BehavioralCase) { c.Request.Method = "GET" }, false, "zero-valued"},
 		{"modes_apply rejected", func(c *BehavioralCase) { c.ModesApply = []string{"empirical"} }, false, "dual-mode"},

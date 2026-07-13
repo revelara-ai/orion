@@ -69,7 +69,7 @@ func Diagnose(ctx context.Context, dir string) (Result, error) {
 	if len(files) == 0 {
 		return Result{Tool: "gopls"}, nil
 	}
-	cmd := exec.CommandContext(ctx, bin, append([]string{"check"}, files...)...)
+	cmd := exec.CommandContext(ctx, bin, append([]string{"check"}, files...)...) // #nosec G204 -- resolved lsp binary; harness-built file list
 	cmd.Dir = dir
 	cmd.Env = safeenv.Build()
 	out, err := cmd.Output()
