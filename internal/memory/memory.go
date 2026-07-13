@@ -669,6 +669,34 @@ func (s *Store) Get(ctx context.Context, id string) (Item, bool, error) {
 	return it, true, nil
 }
 
+// ListByKind returns every item of a kind across tiers — the deterministic
+// lookup the SkillEval gate uses to find a candidate's eval evidence
+// (or-gb1.5). Not heat-ranked; not recall.
+func (s *Store) ListByKind(ctx context.Context, kind string) ([]Item, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tier, kind, content, content_hash, pinned, security_relevant, trust_tier, heat, visit_count, last_accessed_at, candidate
+		 FROM memory_items WHERE kind=?`, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var items []Item
+	for rows.Next() {
+		var it Item
+		var pinned, secRel, cand int
+		var la string
+		if err := rows.Scan(&it.ID, &it.Tier, &it.Kind, &it.Content, &it.Hash, &pinned, &secRel, &it.TrustTier, &it.Heat, &it.VisitCount, &la, &cand); err != nil {
+			return nil, err
+		}
+		it.Pinned = pinned == 1
+		it.SecurityRelevant = secRel == 1
+		it.Candidate = cand == 1
+		it.LastAccessed = parseTS(la)
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
+
 // Count returns the number of items in a tier (including pins).
 func (s *Store) Count(ctx context.Context, tier Tier) (int, error) {
 	var n int

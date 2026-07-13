@@ -14,33 +14,86 @@ package selfevolve
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/memory"
 	"github.com/revelara-ai/orion/internal/skill"
+	"github.com/revelara-ai/orion/internal/skilleval"
 )
 
-// PromoteCandidates materializes every active memory candidate as a generation-tier skill in
-// skillsDir, returning the promoted skill names. Idempotent: each skill's name is derived from
-// the candidate's content-addressed id, so re-running overwrites rather than duplicating.
-func PromoteCandidates(ctx context.Context, mem *memory.Store, skillsDir string) ([]string, error) {
+// Rejection names a candidate the SkillEval gate refused, and why.
+type Rejection struct {
+	CandidateID string
+	Reason      string
+}
+
+// EvalEvidenceKind is the memory kind carrying a candidate's eval evidence
+// (a skilleval.Eval JSON whose candidate_id names the candidate item).
+const EvalEvidenceKind = "skilleval"
+
+// PromoteCandidates materializes memory candidates as generation-tier skills
+// in skillsDir — GATED by SkillEval (or-gb1.5, PRD-normative): a candidate
+// promotes ONLY with passing deterministic eval evidence attached; no
+// evidence, invalid evidence, or a failing predicate FAILS CLOSED with the
+// reason named. Idempotent: skill names derive from the candidate's
+// content-addressed id. This is the ONLY promotion path — every caller
+// (orion evolve, the admin verb) routes through this gate.
+func PromoteCandidates(ctx context.Context, mem *memory.Store, skillsDir string) ([]string, []Rejection, error) {
 	if mem == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	cands, err := mem.ListCandidates(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	evidence, err := evalEvidenceByCandidate(ctx, mem)
+	if err != nil {
+		return nil, nil, err
 	}
 	var promoted []string
+	var rejected []Rejection
 	for _, c := range cands {
+		raw, ok := evidence[c.ID]
+		if !ok {
+			rejected = append(rejected, Rejection{CandidateID: c.ID, Reason: "no eval evidence attached — fail closed (attach a skilleval fixture set)"})
+			continue
+		}
+		ev, lerr := skilleval.Load(raw)
+		if lerr != nil {
+			rejected = append(rejected, Rejection{CandidateID: c.ID, Reason: lerr.Error()})
+			continue
+		}
+		if res := skilleval.Run(ev); !res.Pass {
+			rejected = append(rejected, Rejection{CandidateID: c.ID, Reason: res.Failing})
+			continue
+		}
 		sk := candidateToSkill(c)
 		if _, werr := skill.WriteSkill(skillsDir, sk); werr != nil {
-			return promoted, fmt.Errorf("promote candidate %s: %w", c.ID, werr)
+			return promoted, rejected, fmt.Errorf("promote candidate %s: %w", c.ID, werr)
 		}
 		promoted = append(promoted, sk.Name)
 	}
-	return promoted, nil
+	return promoted, rejected, nil
+}
+
+// evalEvidenceByCandidate indexes skilleval evidence items by candidate id.
+func evalEvidenceByCandidate(ctx context.Context, mem *memory.Store) (map[string][]byte, error) {
+	items, err := mem.ListByKind(ctx, EvalEvidenceKind)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]byte{}
+	for _, it := range items {
+		var probe struct {
+			CandidateID string `json:"candidate_id"`
+		}
+		if json.Unmarshal([]byte(it.Content), &probe) == nil && probe.CandidateID != "" {
+			out[probe.CandidateID] = []byte(it.Content)
+		}
+	}
+	return out, nil
 }
 
 // candidateToSkill renders a candidate memory item as a generation-tier skill with a stable,

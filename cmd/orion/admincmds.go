@@ -111,17 +111,20 @@ func evolveText() string {
 		return "evolve: " + err.Error()
 	}
 	defer func() { _ = mem.Close() }()
-	promoted, err := selfevolve.PromoteCandidates(context.Background(), mem, filepath.Join(dir, "skills"))
+	promoted, rejected, err := selfevolve.PromoteCandidates(context.Background(), mem, filepath.Join(dir, "skills"))
 	if err != nil {
 		return "evolve: " + err.Error()
 	}
-	if len(promoted) == 0 {
+	if len(promoted) == 0 && len(rejected) == 0 {
 		return "no candidates to promote"
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "promoted %d candidate(s) to generation-tier skills:\n", len(promoted))
 	for _, n := range promoted {
 		b.WriteString("  - " + n + "\n")
+	}
+	for _, r := range rejected {
+		fmt.Fprintf(&b, "rejected %s: %s\n", r.CandidateID, r.Reason)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
