@@ -66,6 +66,7 @@ func OptionsFor(key string) []string { return enumerableOptions[key] }
 // (intent, answers).
 type Analyzer struct {
 	projectType string
+	scale       string // standard | large — reconstructed gates must match on BOTH (or-hn15.4)
 	checklist   []RequiredDecision
 }
 
@@ -76,7 +77,7 @@ type Analyzer struct {
 // have. (Registering more types — gRPC, worker, CLI — is how the harness generalizes
 // the front door; the type is currently passed by the conductor.)
 func NewAnalyzer(projectType string) *Analyzer {
-	return &Analyzer{projectType: projectType, checklist: checklistFor(projectType)}
+	return &Analyzer{projectType: projectType, scale: ScaleStandard, checklist: checklistFor(projectType)}
 }
 
 // RegisteredProjectType reports whether a project type has a functional checklist.
@@ -87,6 +88,11 @@ func RegisteredProjectType(projectType string) bool {
 // ProjectType returns the analyzer's project type — it drives both the functional
 // checklist and the decomposer's per-type functional task template (or-3ba.1).
 func (a *Analyzer) ProjectType() string { return a.projectType }
+
+// Scale returns the analyzer's scale class (or-hn15.4). A reloaded gate must be
+// reconstructed to match BOTH the project's type AND scale — matching type alone
+// let a resumed large project silently drop the direction rail.
+func (a *Analyzer) Scale() string { return a.scale }
 
 // Unclassified is the project type of an intent with NO explicit type signal:
 // the conductor must propose a type and the developer confirm it before the

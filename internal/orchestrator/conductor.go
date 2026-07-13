@@ -142,12 +142,25 @@ func (c *Conductor) currentProjectSpec(ctx context.Context) (contextstore.Projec
 	if err != nil {
 		return proj, sp, err
 	}
-	if pt := effectiveProjectType(proj); pt != "" && pt != c.gate.ProjectType() {
-		c.mu.Lock()
-		c.gate = completeness.NewAnalyzer(pt)
-		c.mu.Unlock()
-	}
+	c.rebuildGate(effectiveProjectType(proj), proj.Scale)
 	return proj, sp, err
+}
+
+// rebuildGate reconstructs the completeness gate to match a resolved project's
+// type AND scale (or-hn15.4). Matching on type alone let a resumed large project
+// silently drop the direction rail — and made its recalled anchor mismatch,
+// falsely reading as tampered. NewAnalyzerScaled keeps a standard http-service
+// byte-identical, so legacy anchors are unaffected.
+func (c *Conductor) rebuildGate(projectType, scale string) {
+	if projectType == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if projectType == c.gate.ProjectType() && scale == c.gate.Scale() {
+		return
+	}
+	c.gate = completeness.NewAnalyzerScaled(projectType, scale)
 }
 
 // activeProjectSpec resolves the strict-active project + spec and enforces the
@@ -217,11 +230,7 @@ func (c *Conductor) currentOrDeliveredProjectSpec(ctx context.Context) (contexts
 	if err != nil {
 		return proj, sp, err
 	}
-	if pt := effectiveProjectType(proj); pt != "" && pt != c.gate.ProjectType() {
-		c.mu.Lock()
-		c.gate = completeness.NewAnalyzer(pt)
-		c.mu.Unlock()
-	}
+	c.rebuildGate(effectiveProjectType(proj), proj.Scale)
 	return proj, sp, err
 }
 

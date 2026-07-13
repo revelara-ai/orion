@@ -720,13 +720,11 @@ func (c *Conductor) RecallLastProvenSpec(ctx context.Context) (spec.ExecutableSp
 	if derr != nil {
 		return spec.ExecutableSpec{}, err // nothing delivered: keep the active-slot message
 	}
-	// Match the completeness gate to the delivered project's type so the recompiled
-	// anchor uses the same checklist it was originally compiled under.
-	if pt := proj.ProjectType; pt != "" && pt != c.gate.ProjectType() {
-		c.mu.Lock()
-		c.gate = completeness.NewAnalyzer(pt)
-		c.mu.Unlock()
-	}
+	// Match the completeness gate to the delivered project's type AND scale so the
+	// recompiled anchor uses the same checklist it was originally compiled under —
+	// matching type alone dropped a large project's direction dimension and made
+	// the recall falsely read as tampered (or-hn15.4).
+	c.rebuildGate(proj.ProjectType, proj.Scale)
 	return c.recallSpecFor(ctx, proj, sp)
 }
 

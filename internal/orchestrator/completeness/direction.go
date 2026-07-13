@@ -24,16 +24,21 @@ func directionDecisions() []RequiredDecision {
 }
 
 // NewAnalyzerScaled returns an analyzer whose checklist reflects the intent's
-// SCALE as well as its type: a large-scale intake additionally raises the
-// direction family before the universal reliability floor. NewAnalyzer (the
-// unscaled constructor) stays byte-compatible with V2.
+// SCALE as well as its type. The direction family (stack/language/engine/wire/
+// repo) is raised whenever the harness cannot presume the stack: for EVERY
+// large-scale intake, and for EVERY unregistered project type — a game has no
+// functional template, so its language/engine must be elicited rather than
+// silently defaulted to Go (or-hn15.4). A standard registered type (the legacy
+// http-service path) stays direction-free and byte-compatible with V2, so its
+// anchors don't shift. NewAnalyzer (the unscaled constructor) is likewise
+// unchanged.
 func NewAnalyzerScaled(projectType, scale string) *Analyzer {
 	checklist := functionalDecisions(projectType)
-	if scale == ScaleLarge {
+	if scale == ScaleLarge || !RegisteredProjectType(projectType) {
 		checklist = append(checklist, directionDecisions()...)
 	}
 	checklist = append(checklist, universalDecisions()...)
-	return &Analyzer{projectType: projectType, checklist: checklist}
+	return &Analyzer{projectType: projectType, scale: scale, checklist: checklist}
 }
 
 // Gap is one direction decision the proof harness cannot currently prove.

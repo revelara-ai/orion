@@ -49,7 +49,7 @@ func Decompose(es spec.ExecutableSpec, projectType string) Epic {
 	target := capacityTarget(es)
 
 	tasks := []Task{
-		scaffoldTask(es),
+		scaffoldTask(es, projectType),
 		functionalTask(projectType, es),
 		{
 			Key:             "capacity",
@@ -94,8 +94,22 @@ func Decompose(es spec.ExecutableSpec, projectType string) Epic {
 // instead of a blind Go+HTTP one (or-045a.5 — the harness must never silently
 // steer the plan back to its own comfort zone). Full non-Go proof execution is
 // owned by or-4rxw; here the DECISION visibly shapes the plan.
-func scaffoldTask(es spec.ExecutableSpec) Task {
+func scaffoldTask(es spec.ExecutableSpec, projectType string) Task {
 	lang := strings.ToLower(strings.TrimSpace(es.Decisions["direction.language"]))
+	// or-hn15.4: an UNREGISTERED type with no chosen language must NOT inherit
+	// the Go scaffold — a game whose direction.language was never answered is
+	// unchosen, not Go. Emit a language-neutral skeleton so the plan doesn't
+	// presume go.mod / `go build`. A registered type (http-service) keeps the Go
+	// default, and any explicit language is honored below.
+	if lang == "" && !completeness.RegisteredProjectType(projectType) {
+		return Task{
+			Key:             "scaffold",
+			Title:           "Scaffold the project skeleton (language undecided — ratify direction.language)",
+			ProofObligation: "the project skeleton builds cleanly from a fresh checkout once the language/toolchain is chosen (reduced proof until direction.language is ratified, or-4rxw)",
+			FileScope:       ".",
+			Covers:          []string{string(completeness.DimFunctional)},
+		}
+	}
 	if lang == "" || lang == "go" {
 		return Task{
 			Key:             "scaffold",
