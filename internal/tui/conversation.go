@@ -357,7 +357,9 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// Alt+Enter / Ctrl+J insert a newline into the multi-line input; plain Enter
 		// submits. (Terminals rarely distinguish Shift+Enter, so Alt+Enter is the
 		// portable "newline" chord.)
-		if (t.Type == tea.KeyEnter && t.Alt) || t.Type == tea.KeyCtrlJ {
+		if !m.hasPerm() && ((t.Type == tea.KeyEnter && t.Alt) || t.Type == tea.KeyCtrlJ) {
+			// The input is inert while a permission card is up (single-key/free-text
+			// answer), so the newline chord must not edit it there (or-ns8).
 			m.input.InsertString("\n")
 			m.relayout()
 			return m, nil
@@ -381,29 +383,24 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch t.Type {
 		case tea.KeyUp:
-			// Recall the previous submitted line (shell-style input history). Transcript scroll moves
-			// to pgup/pgdn + the mouse wheel (still handled by the viewport below).
+			// While a completion is open, ↑ moves its selection (as the palette
+			// footer advertises); otherwise it recalls the previous submitted line
+			// (shell-style history). Transcript scroll is pgup/pgdn + the wheel.
+			if m.cycleAtFile(-1) || m.cyclePalette(-1) {
+				return m, nil
+			}
 			m.historyPrev()
 			return m, nil
 		case tea.KeyDown:
+			if m.cycleAtFile(1) || m.cyclePalette(1) {
+				return m, nil
+			}
 			m.historyNext()
 			return m, nil
 		case tea.KeyTab:
-			// Tab cycles + completes an @-file token when one is being typed.
-			if token, matches := m.atCompletions(); len(matches) > 0 {
-				m.paletteIdx = (m.clampPalette(len(matches)) + 1) % len(matches)
-				v := strings.TrimSuffix(m.input.Value(), token) + matches[m.paletteIdx]
-				m.input.SetValue(v)
-				m.input.CursorEnd()
-				m.relayout()
+			// Tab cycles + completes an @-file token, else the command palette.
+			if m.cycleAtFile(1) || m.cyclePalette(1) {
 				return m, nil
-			}
-			// Tab cycles + completes the command palette (shown while typing a bare /prefix).
-			if matches := m.paletteMatches(); len(matches) > 0 {
-				m.paletteIdx = (m.clampPalette(len(matches)) + 1) % len(matches)
-				m.input.SetValue("/" + matches[m.paletteIdx].Name)
-				m.input.CursorEnd()
-				m.relayout()
 			}
 			return m, nil
 		}
@@ -470,6 +467,39 @@ func (m *Conversation) historyNext() {
 	}
 	m.input.CursorEnd()
 	m.relayout()
+}
+
+// cyclePalette moves the command-palette selection by dir (+1/-1, wrapping) and
+// writes the selected command into the input. Returns false if no palette is
+// open (a bare /prefix with matches). Shared by Tab and ↑/↓ (or-ns8).
+func (m *Conversation) cyclePalette(dir int) bool {
+	matches := m.paletteMatches()
+	if len(matches) == 0 {
+		return false
+	}
+	n := len(matches)
+	m.paletteIdx = (m.clampPalette(n) + dir + n) % n
+	m.input.SetValue("/" + matches[m.paletteIdx].Name)
+	m.input.CursorEnd()
+	m.relayout()
+	return true
+}
+
+// cycleAtFile moves the @-file completion by dir and writes it into the input,
+// re-prepending the '@' sigil that globFiles strips (or-ns8 — without it the
+// completed path is no longer a recognized file directive on submit). Returns
+// false if no @-token is being completed.
+func (m *Conversation) cycleAtFile(dir int) bool {
+	token, matches := m.atCompletions()
+	if len(matches) == 0 {
+		return false
+	}
+	n := len(matches)
+	m.paletteIdx = (m.clampPalette(n) + dir + n) % n
+	m.input.SetValue(strings.TrimSuffix(m.input.Value(), token) + "@" + matches[m.paletteIdx])
+	m.input.CursorEnd()
+	m.relayout()
+	return true
 }
 
 // handleEnter routes the current line: a permission response if one is pending,
@@ -557,7 +587,7 @@ func (m *Conversation) surfacePerm(p pendingPermission) {
 		m.input.Placeholder = "y allow · a always · n deny"
 	} else {
 		m.msgs = append(m.msgs, msg{role: "orion", kind: "permission", text: p.req.Title})
-		m.input.Placeholder = "y to ratify · e to edit"
+		m.input.Placeholder = "y to ratify · n to reject"
 	}
 	m.render()
 	// Force the card into view even if the developer scrolled up to read history.
@@ -858,7 +888,7 @@ func (m Conversation) renderMsg(mm msg, w int, active bool) string {
 		card := cardTitle.Render("spec — review") + "\n" + mm.text
 		return label + specCard.Width(cw-4).MarginLeft(2).Render(card)
 	case "permission":
-		card := cardTitle.Render("ratify") + "\n" + mm.text + "\n[y] ratify   [e] edit a field"
+		card := cardTitle.Render("ratify") + "\n" + mm.text + "\n[y] ratify   [n] reject"
 		return label + permCard.Width(cw-4).MarginLeft(2).Render(card)
 	case "tool_permission":
 		return label + permCard.Width(cw-4).MarginLeft(2).Render(m.toolPermCard(mm))
