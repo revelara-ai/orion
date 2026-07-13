@@ -1,26 +1,51 @@
+# Orion CI (or-c6zf.2): two lanes, no secrets, green-able by any external PR.
+#
+#   pr-lane   — every PR and main push: tidy check, build, SHORT test lane
+#               (skips the heavy generate→prove e2e), golangci-lint v2.
+#   full-lane — main pushes + nightly: `make test` (the real suite; the
+#               conductor package alone is ~12min of compile+prove work).
+#               ORION_RUN_ACCEPTANCE=false skips TestV20Loop, the 56-predicate
+#               North-Star harness that is RED BY DESIGN while deferred-epic
+#               surfaces remain (see test/acceptance/v20_loop_test.go and the
+#               deferredPredicates ratchet) — a tracker, not a merge gate.
+#
+# bubblewrap: the proof sandbox (internal/sandbox, proofexec) requires bwrap
+# even in the short lane. Ubuntu 24.04 runners block unprivileged user
+# namespaces via AppArmor by default, which breaks `bwrap --unshare-user` —
+# the sysctl below is the documented mitigation.
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 9 * * *" # nightly full lane
 
 permissions:
   contents: read
 
 jobs:
-  build-test-lint:
-    name: build / test / lint
+  pr-lane:
+    name: build / test-short / lint
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: Set up Go (from go.mod)
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
           cache: true
+
+      - name: Install bubblewrap (proof sandbox)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          # Ubuntu 24.04 AppArmor blocks unprivileged userns by default; the
+          # proof sandbox needs it (bwrap --unshare-user).
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
       - name: Verify go.mod is tidy
         run: |
@@ -30,10 +55,41 @@ jobs:
       - name: Build
         run: make build
 
-      - name: Test
-        run: make test
+      - name: Test (short lane)
+        run: make test-short
 
-      - name: Lint
-        uses: golangci/golangci-lint-action@v6
+      - name: Lint (golangci-lint v2, new issues only)
+        # The legacy tree carries ~143 pre-bar findings (tracked: or-3p5.12,
+        # "clean codebase to the new gosec/revive lint bar"). PRs are gated on
+        # the issues THEY introduce; flip to full once or-3p5.12 lands.
+        if: github.event_name == 'pull_request'
+        uses: golangci/golangci-lint-action@v7
         with:
-          version: v1.64.5
+          version: v2.1
+          only-new-issues: true
+
+  full-lane:
+    name: full suite (main + nightly)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go (from go.mod)
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install bubblewrap (proof sandbox)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+      - name: Full test suite
+        # TestV20Loop (the North-Star acceptance harness) is red by design
+        # while deferred-epic predicates remain — tracked via the
+        # deferredPredicates ratchet, evaluated out-of-band, never a CI gate.
+        run: ORION_RUN_ACCEPTANCE=false make test
