@@ -380,6 +380,9 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				// or-gb1.4: the opt-in memory distillation pass rides the same
 				// brain — inert unless ORION_MEMORY_DISTILL=1.
 				SetDistillProvider(provider)
+				// or-56c.2: the design-proof synthesis slot drafts a candidate
+				// formal model at plan time; a human ratifies before it counts.
+				c.SetModelSynthesizer(NativeModelSynthesizer(provider))
 			}
 			res, err := BuildAndProve(ctx, st, gen, aligner, func(e PhaseEvent) {
 				phases = append(phases, e)

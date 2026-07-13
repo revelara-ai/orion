@@ -22,6 +22,7 @@ import (
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/decomposer"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
+	"github.com/revelara-ai/orion/internal/proof/formal"
 	"github.com/revelara-ai/orion/internal/repo"
 )
 
@@ -63,6 +64,9 @@ type Conductor struct {
 	// reviewer is the injectable adversarial issue-set reviewer (or-zn8, V3
 	// Step 4). nil = the IssueReviewGate is a no-op.
 	reviewer decomposer.IssueReviewer
+	// modelSynth drafts the candidate design-proof model (or-56c.2). nil =
+	// design-model synthesis is skipped.
+	modelSynth formal.Synthesizer
 
 	mu        sync.RWMutex
 	intent    string

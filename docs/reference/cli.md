@@ -48,4 +48,5 @@ command exits 2 with a `not implemented` marker.
 | `orion agents` | Registered vendor-agent presets (claude / gemini / codex over ACP). |
 | `orion skills` | The skill registry (trust-tiered; proof-tier skills are immutable at runtime). |
 | `orion evolve` | Manually promote validated memory candidates into generation-tier skills (default-off self-evolution). |
+| `orion design show` / `orion design ratify <hash>` | Review and ratify the drafted design-proof formal model (or-56c.2); only the human signature gives it proof authority. |
 | `orion login\|logout` | revelara.ai OAuth (WorkOS); the token lives in `credentials/`, never in the Context Store. |
