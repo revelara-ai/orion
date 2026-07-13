@@ -31,12 +31,13 @@ type ChangeResult struct {
 	FilesChanged []string
 	NewBehavior  *truthalign.ModeResult // nil when no ratified cases were supplied
 	Committed    bool
-	Reason       string   // why not committed, if applicable
-	Tier         string   // reliability tier classified from the change worktree (or-v9f.15)
-	Delivery     string   // "deliver" | "escalate" — the same decision semantic as the greenfield bar
-	PR           PRResult // PR-ready handoff over the review branch on deliver (or-v9f.15)
-	Landed       bool     // or-7fd: auto-landed post-proof under the standing opt-in
-	EscalationID string   // inbox escalation recorded on escalate (or-v9f.15)
+	Reason       string          // why not committed, if applicable
+	Tier         string          // reliability tier classified from the change worktree (or-v9f.15)
+	Delivery     string          // "deliver" | "escalate" — the same decision semantic as the greenfield bar
+	PR           PRResult        // PR-ready handoff over the review branch on deliver (or-v9f.15)
+	Landed       bool            // or-7fd: auto-landed post-proof under the standing opt-in
+	Alignment    AlignmentRecord // or-3p5.4: advisory intent-alignment audit of the proven change (log-only)
+	EscalationID string          // inbox escalation recorded on escalate (or-v9f.15)
 
 	// Reliability floor (or-uvw.8, log-only): corpus-sourced signals retrieved once in
 	// the trusted control plane, used twice — advisory generator context + lint checks.
@@ -318,6 +319,32 @@ func changeAttempt(ctx context.Context, repoRoot string, store *contextstore.Sto
 		}
 	}
 	res.Tier = string(reliabilitytier.Classify(reliabilityscan.DeriveDimensions(findings)))
+
+	// or-3p5.4 residual: ADVISORY alignment gate on the proven change — the
+	// same single semantic-drift detector the greenfield loop runs (V3 Step 1
+	// posture: log-only, surfaces to the human, never flips a proof verdict).
+	// Offline (no provider) skips silently.
+	if provider != nil {
+		// Judge ONLY the changed surface: the aligner walks every .go file
+		// under the dir it is given, and a change worktree holds the WHOLE
+		// repo — a scratch copy of the changed files keeps the audit scoped
+		// (and the judge's window intact) on any real codebase.
+		scope, serr := changedScopeDir(wt.Path, res.FilesChanged)
+		if serr == nil {
+			defer func() { _ = os.RemoveAll(scope) }()
+		}
+		aligner := NativeAligner(AlignJudgeProvider(provider))
+		if v, aerr := aligner(ctx, intent, scope, nil); serr == nil && aerr == nil {
+			res.Alignment = AlignmentRecord{Ran: true, Aligned: v.Aligned, Severity: normalizeSeverity(v.Severity), Concern: v.Concern}
+			if v.Inconclusive {
+				sink.emit("align", PhaseWarn, "audit inconclusive (refusal/no verdict): "+v.Concern)
+			} else if !v.Aligned {
+				sink.emit("align", PhaseWarn, "advisory concern ("+res.Alignment.Severity+"): "+v.Concern)
+			} else {
+				sink.emit("align", PhaseDone, "change serves the intent")
+			}
+		}
+	}
 	return res, false, nil
 }
 
@@ -509,4 +536,27 @@ func slugFromIntent(intent string) string {
 		s = "change"
 	}
 	return s
+}
+
+// changedScopeDir copies the changed files into a scratch tree so the
+// alignment judge audits the CHANGE, not the whole repo (or-3p5.4).
+func changedScopeDir(root string, files []string) (string, error) {
+	dir, err := os.MkdirTemp("", "orion-align-scope-")
+	if err != nil {
+		return "", err
+	}
+	for _, f := range files {
+		b, rerr := os.ReadFile(filepath.Join(root, f)) // #nosec G304 -- harness worktree + git-derived list
+		if rerr != nil {
+			continue // deleted files have no content to audit
+		}
+		dst := filepath.Join(dir, f)
+		if merr := os.MkdirAll(filepath.Dir(dst), 0o755); merr != nil {
+			return dir, merr
+		}
+		if werr := os.WriteFile(dst, b, 0o600); werr != nil {
+			return dir, werr
+		}
+	}
+	return dir, nil
 }
