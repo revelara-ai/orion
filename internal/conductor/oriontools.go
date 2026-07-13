@@ -307,7 +307,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 
 	r.Register(tools.Tool{
 		Name:        "record_answer",
-		Description: "Record the developer's answer to a spec decision (key from check_completeness + the value). For response_format, use a canonical value — \"json\" or \"plain text\" (the only formats the build+proof pipeline supports). If a tool returns an \"unrecognized/ambiguous format\" error, re-ask and record one of those.",
+		Description: "Record the developer's answer to a spec decision (key from check_completeness + the value). Record only a single scalar value (one concrete value like a port, a format, a language, or an engine — never conditional prose). For response_format, use a canonical value — \"json\", \"plain text\", or \"xml\". If a tool returns an \"unrecognized/ambiguous format\" error, re-ask and record one of those.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]}`),
 		Safety:      tools.Safety{Destructive: true},
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
@@ -476,7 +476,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 
 	r.Register(tools.Tool{
 		Name:        "acknowledge_reduced_proof",
-		Description: "Record the developer's EXPLICIT acceptance that a ratified direction decision (e.g. direction.wire_protocol=grpc) exceeds what the proof harness can prove today, so the build proceeds with the provable subset of obligations (or-045a.5). Call ONLY after ratification was refused with a capability gap AND the developer chose 'reduced proof' over changing direction. Audited (gold-labeled).",
+		Description: "Record the developer's EXPLICIT, considered choice to accept a REDUCED PROOF for a ratified direction decision the harness cannot fully prove today (e.g. direction.wire_protocol=grpc) — a recorded engineering trade-off, not a failure or a lesser choice. The build then proceeds with the provable subset of obligations, the rest recorded as acknowledged-unproven (or-045a.5). Call ONLY after ratification surfaced the capability gap AND the developer chose reduced proof over changing direction. Audited (gold-labeled).",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"keys":{"type":"array","minItems":1,"items":{"type":"string"},"description":"the direction keys the developer accepted reduced proof for"}},"required":["keys"]}`),
 		Safety:      tools.Safety{Destructive: true},
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
