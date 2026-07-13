@@ -19,6 +19,26 @@ const codeGroundingKind = "code_grounding"
 
 const groundingMaxChars = 4000
 
+// greenfieldIntake reports whether the session's active project is a NEW
+// standalone build rather than a change to the cwd repo (or-hn15.1). When true,
+// the cwd's codebase is an UNRELATED host repo — not the build target — so it
+// must not ground the grill, the spec, or read_codebase (the dogfood ran a
+// greenfield game intent from inside the Orion repo and inherited Orion's Go
+// map). The change flow attributes to the reserved brownfield project; every
+// other active project is a greenfield build. No active project yet ⇒ false
+// (the intent is unknown — the caller keeps its default behavior).
+func greenfieldIntake(ctx context.Context, c *orchestrator.Conductor) bool {
+	st := c.Store()
+	if st == nil {
+		return false
+	}
+	proj, _, err := st.CurrentProjectSpec(ctx)
+	if err != nil {
+		return false
+	}
+	return proj.Name != contextstore.BrownfieldProjectName && proj.ProjectType != "brownfield"
+}
+
 func codebaseGrounding(ctx context.Context, c *orchestrator.Conductor) string {
 	dir, err := os.Getwd()
 	if err != nil {
