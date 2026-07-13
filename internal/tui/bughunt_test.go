@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -9,6 +10,56 @@ import (
 
 	"github.com/revelara-ai/orion/internal/acp"
 )
+
+// TestCancelResubmitDropsStaleTurnMessages (or-5g2q): cancelling a turn and
+// resubmitting starts a new turn generation; the superseded turn's late stream,
+// completion, and ticker must NOT corrupt the live turn (append stale output,
+// reset inFlight, or inject its error), while the LIVE turn's messages still
+// process.
+func TestCancelResubmitDropsStaleTurnMessages(t *testing.T) {
+	m := newTestConvo(t)
+
+	m.input.SetValue("do A")
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // turn A dispatched
+	if m.turnGen != 1 || !m.inFlight {
+		t.Fatalf("turn A should dispatch: turnGen=%d inFlight=%v", m.turnGen, m.inFlight)
+	}
+	genA := m.turnGen
+
+	m.cancelInFlight() // user cancels A (inFlight -> false; turnGen advances so A's tail is invalidated)
+	if m.turnGen == genA {
+		t.Fatal("cancelInFlight must advance turnGen so the cancelled turn's late messages are dropped")
+	}
+	m.input.SetValue("do B")
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter}) // turn B dispatched
+	if m.turnGen <= genA || !m.inFlight {
+		t.Fatalf("turn B should dispatch a fresh gen > genA: turnGen=%d genA=%d inFlight=%v", m.turnGen, genA, m.inFlight)
+	}
+
+	// (1) A late streamMsg from the cancelled turn A is dropped.
+	m = feed(m, streamMsg{u: acp.Update{Kind: "agent_message", Text: "STALE_A_OUTPUT"}, gen: genA})
+	if strings.Contains(transcript(m), "STALE_A_OUTPUT") {
+		t.Fatal("a superseded turn's streamMsg must be dropped, not appended to the live transcript")
+	}
+	// (2) A late turnDoneMsg from turn A must not reset the live turn or inject its error.
+	m = feed(m, turnDoneMsg{err: fmt.Errorf("A was cancelled"), gen: genA})
+	if !m.inFlight {
+		t.Fatal("a superseded turn's completion must not reset the live turn's inFlight")
+	}
+	if strings.Contains(transcript(m), "A was cancelled") {
+		t.Fatal("a superseded turn's error must not be injected into the live transcript")
+	}
+
+	// Negative: the LIVE turn B's messages ARE processed (drop is scoped to stale gens).
+	m = feed(m, streamMsg{u: acp.Update{Kind: "agent_message", Text: "LIVE_B_OUTPUT"}, gen: m.turnGen})
+	if !strings.Contains(transcript(m), "LIVE_B_OUTPUT") {
+		t.Fatal("the live turn's streamMsg must be processed")
+	}
+	m = feed(m, turnDoneMsg{gen: m.turnGen})
+	if m.inFlight {
+		t.Fatal("the live turn's completion must reset inFlight")
+	}
+}
 
 // TestPaletteArrowKeysCycleNotHistory (or-ns8 bug 7): while the command palette
 // is open, ↑/↓ move the selection (as the footer advertises) instead of being
