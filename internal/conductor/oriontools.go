@@ -228,7 +228,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 
 	r.Register(tools.Tool{
 		Name:        "add_requirement",
-		Description: "Record a behavioral requirement the developer stated, as STRUCTURED CASES. HTTP shape: {request:{...}, expect:{...}}. CLI shape: {kind:\"exec\", exec:{seed?, steps:[{argv:[\"$BIN\",...], expect:{exit?, stdout?, stderr?}}]}}. LIBRARY shape (or-v9f.23): {kind:\"unit\", unit:{pkg:\"storage\", steps:[{call:\"Put(\\\"k\\\",\\\"v\\\")\", want:\"error(nil)\"} | {call:..., want_err_re:\"missing.*name\"}]}} — call is a Go expression on the package's EXPORTED surface (wrap multi-returns: func() error { _, err := F(); return err }()); a step with restart:true crosses a REAL process boundary and requires modes_apply [\"empirical\"] + modes_rationale \"cross_process_persistence\". ARTIFACT shape: {kind:\"file\", file:{assertions:[{path, kind: exists|absent|contains|regex, value?}]}}. Each case becomes a proof obligation, so the build is held to it.",
+		Description: "Record a behavioral requirement the developer stated, as STRUCTURED CASES. HTTP shape: {request:{...}, expect:{...}}. CLI shape: {kind:\"exec\", exec:{seed?, steps:[{argv:[\"$BIN\",...], expect:{exit?, stdout?, stderr?}}]}}. LIBRARY shape (or-v9f.23): {kind:\"unit\", unit:{pkg:\"storage\", steps:[{call:\"Put(\\\"k\\\",\\\"v\\\")\", want:\"error(nil)\"} | {call:..., want_err_re:\"missing.*name\"}]}} — call is a Go expression on the package's EXPORTED surface (wrap multi-returns: func() error { _, err := F(); return err }()); a step with restart:true crosses a REAL process boundary and requires modes_apply [\"empirical\"] + modes_rationale \"cross_process_persistence\". ARTIFACT shape: {kind:\"file\", file:{assertions:[{path, kind: exists|absent|contains|regex, value?}]}}. Each case becomes a proof obligation, so the build is held to it. NOT for test-only additions to an existing repo: use submit_change_intent -> build_change instead — the regression gate runs the new tests green-after, proving them without case capture.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -281,7 +281,9 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			}
 			req := spec.Requirement{Source: completeness.DimFunctional, DecisionKey: p.DecisionKey, Text: p.Text, Cases: p.Cases}
 			if err := c.AddRequirement(ctx, req); err != nil {
-				return "", err
+				// or-4j37: a rejection must TEACH — anchor diagnosis + the
+				// closed union + a valid example + the test-only steer.
+				return "", teachCaseShape(err, p.Cases)
 			}
 			return fmt.Sprintf("recorded requirement %q (%d case(s)) — it will be proven", p.Text, len(p.Cases)), nil
 		},
