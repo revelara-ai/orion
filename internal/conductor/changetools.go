@@ -153,6 +153,13 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 			if strings.TrimSpace(p.Intent) == "" {
 				return "", fmt.Errorf("submit_change_intent: intent is required")
 			}
+			// or-3p5.10: the mirror route — no existing code means nothing to
+			// change; the intent belongs to the build flow.
+			if dir, derr := os.Getwd(); derr == nil {
+				if brownfield.Classify(dir).Mode == brownfield.Greenfield {
+					return "ROUTED: this workspace has no existing source (greenfield) — the intent belongs to the BUILD flow. Call submit_intent with the same intent.", nil
+				}
+			}
 			// or-2l7: after compaction the model may have forgotten a ratified
 			// oracle awaiting build_change — never discard it silently.
 			if cs.pending() && !p.ConfirmDiscard {

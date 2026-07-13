@@ -71,6 +71,7 @@ func endTurn(text string) *llm.ChatResponse {
 // ratify and lands an accepted spec. The model never writes the store directly;
 // the gates (which would reject an incomplete spec) are the truth source.
 func TestOrionAgentDrivesSpecToRatification(t *testing.T) {
+	t.Chdir(t.TempDir()) // greenfield cwd: or-3p5.10 routes brownfield workspaces to the change flow
 	oc := orchestrator.NewWithStore(openStore(t))
 	prov := &fakeLLM{resp: []*llm.ChatResponse{
 		tuResp("1", "submit_intent", `{"intent":"build a time service"}`),
@@ -165,6 +166,7 @@ func TestOrionAgentRatifiesThenBuildsInOneShot(t *testing.T) {
 // records conditional tz behavior via add_requirement (record_answer can't hold it),
 // so the spec is COMPLETE and ratifies with all the cases the developer asked for.
 func TestOrionAgentCapturesRequirementThenRatifies(t *testing.T) {
+	t.Chdir(t.TempDir()) // greenfield cwd: or-3p5.10 routes brownfield workspaces to the change flow
 	oc := orchestrator.NewWithStore(openStore(t))
 	tzReq := `{"text":"tz query param","cases":[` +
 		`{"request":{"method":"GET","path":"/time","query":{"tz":"America/New_York"}},"expect":{"status":200,"content_type":"application/json","assertions":[{"kind":"json_key_in_tz","key":"time","value":"America/New_York"}]}},` +
