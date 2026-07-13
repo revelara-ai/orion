@@ -3,41 +3,50 @@ package conductor
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/revelara-ai/orion/internal/decomposer"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/worktree"
 )
 
-// clusterWorktreeSet creates one git worktree per cluster off the project repo's
-// base, returning a map of cluster key → worktree path plus a cleanup func that
-// removes every worktree it created. Each cluster's generated code is built inside
-// its own isolated, scoped workdir — the agent's only writable directory — which is
-// the foundation for parallel cluster builds and conflict-free integration
-// (or-tcs.1.3, PRD side-effect sandboxing / trust-domain isolation). On any failure
-// the partially-created worktrees are cleaned up before returning.
-func clusterWorktreeSet(ctx context.Context, mgr *worktree.Manager, clusters []decomposer.TaskCluster, base string) (paths map[string]string, cleanup func(), err error) {
+// lazyWorktrees (or-7et.4c) allocates cluster worktrees AT DISPATCH instead of
+// upfront: an N-cluster plan holds ~maxConc checkouts, not N. Each cluster's
+// generated code is built inside its own isolated, scoped workdir — the
+// agent's only writable directory (or-tcs.1.3). The shared map is what
+// integrateEpic consumes (and eagerly empties as waves integrate); cleanup
+// removes whatever remains at end of run. Safe for parallel dispatch.
+func lazyWorktrees(ctx context.Context, mgr *worktree.Manager, base string) (paths map[string]string, get func(key string) (string, error), cleanup func()) {
 	paths = map[string]string{}
-	created := make([]string, 0, len(clusters))
-	cleanup = func() {
-		for _, k := range created {
-			_ = mgr.Remove(ctx, k, worktree.RemoveOpts{Force: true})
+	var mu sync.Mutex
+	get = func(key string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if key == "" {
+			return "", fmt.Errorf("task has no cluster")
 		}
-	}
-	for _, cl := range clusters {
+		if p, ok := paths[key]; ok {
+			return p, nil
+		}
 		// Recreate (not Create): each cluster tree holds freshly-GENERATED code built from base, so
-		// it must be fresh each run — and a prior `orion run` leaves the cl.Key branch behind (Remove
-		// drops the worktree, not the branch), which plain Create would collide on. Recreate makes
-		// cluster allocation idempotent on re-run, matching the epic-integration head (or-d3w).
-		wt, cerr := mgr.Recreate(ctx, cl.Key, base)
+		// it must be fresh each run — and a prior `orion run` leaves the key branch behind (Remove
+		// drops the worktree, not the branch), which plain Create would collide on (or-d3w).
+		wt, cerr := mgr.Recreate(ctx, key, base)
 		if cerr != nil {
-			cleanup()
-			return nil, nil, fmt.Errorf("worktree for cluster %s: %w", cl.Key, cerr)
+			return "", cerr
 		}
-		paths[cl.Key] = wt.Path
-		created = append(created, cl.Key)
+		paths[key] = wt.Path
+		return wt.Path, nil
 	}
-	return paths, cleanup, nil
+	cleanup = func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for k := range paths {
+			_ = mgr.Remove(ctx, k, worktree.RemoveOpts{Force: true})
+			delete(paths, k)
+		}
+	}
+	return paths, get, cleanup
 }
 
 // singleCluster collapses all tasks into one cluster — the fallback used when

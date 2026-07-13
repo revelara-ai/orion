@@ -53,7 +53,7 @@ func TestIntegrateEpicAssemblesClustersOntoHead(t *testing.T) {
 	results := []taskResult{{TaskID: "a1", Verdict: "Accept"}, {TaskID: "b1", Verdict: "Accept"}}
 	green := func(context.Context, string) (bool, error) { return true, nil }
 
-	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil)
+	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,11 +85,11 @@ func TestIntegrateEpicIsIdempotentOnReRun(t *testing.T) {
 	green := func(context.Context, string) (bool, error) { return true, nil }
 
 	// First run creates the epic-integration head + branch.
-	if _, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil); err != nil || !ok {
+	if _, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, nil); err != nil || !ok {
 		t.Fatalf("first run: ok=%v err=%v", ok, err)
 	}
 	// Second run (the re-run) must integrate cleanly despite the leftover epic-integration branch.
-	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil)
+	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, nil)
 	if err != nil || !ok {
 		t.Fatalf("re-run must integrate without an epic-integration collision: ok=%v err=%v", ok, err)
 	}
@@ -98,31 +98,39 @@ func TestIntegrateEpicIsIdempotentOnReRun(t *testing.T) {
 	}
 }
 
-// TestClusterWorktreeSetIsIdempotentOnReRun (or-d3w): the re-run collision fires FIRST at cluster
-// allocation — clusterWorktreeSet must not collide on the cl.Key branches a prior run's cleanup left
-// behind (Remove drops the worktree, not the branch). Without the Recreate fix this crashes with
-// "a branch named scaffold already exists" before integrateEpic is ever reached.
-func TestClusterWorktreeSetIsIdempotentOnReRun(t *testing.T) {
+// TestLazyWorktreesIdempotentOnReRun (or-d3w + or-7et.4c): allocation is lazy
+// (nothing exists until a key is requested), a re-run must not collide on the
+// branches a prior run's cleanup left behind (Remove drops the worktree, not
+// the branch), and repeated gets return the same checkout.
+func TestLazyWorktreesIdempotentOnReRun(t *testing.T) {
 	ctx := context.Background()
 	repo := initManagedRepo(t)
 	mgr := worktree.New(repo, openStore(t)).WithBase("main")
-	clusters := []decomposer.TaskCluster{{Key: "scaffold", Members: []string{"a1"}}, {Key: "handler", Members: []string{"b1"}}}
 
-	// First run: allocate the cluster worktrees, then clean them up (leaving the branches behind).
-	if _, cleanup1, err := clusterWorktreeSet(ctx, mgr, clusters, "main"); err != nil {
-		t.Fatalf("first clusterWorktreeSet: %v", err)
-	} else {
-		cleanup1()
+	paths1, get1, cleanup1 := lazyWorktrees(ctx, mgr, "main")
+	if len(paths1) != 0 {
+		t.Fatal("lazy allocation must create nothing upfront")
 	}
-
-	// Second run must NOT collide on the leftover scaffold/handler branches.
-	paths, cleanup2, err := clusterWorktreeSet(ctx, mgr, clusters, "main")
+	p1, err := get1("scaffold")
 	if err != nil {
-		t.Fatalf("re-run clusterWorktreeSet must not collide on leftover cluster branches: %v", err)
+		t.Fatal(err)
 	}
+	if again, _ := get1("scaffold"); again != p1 {
+		t.Fatal("repeated gets must return the same checkout")
+	}
+	if _, err := get1(""); err == nil {
+		t.Fatal("an unclustered task must error, not allocate")
+	}
+	cleanup1()
+	if _, err := os.Stat(p1); err == nil {
+		t.Fatal("cleanup must remove the allocated checkout")
+	}
+
+	// Second run must NOT collide on the leftover scaffold branch.
+	_, get2, cleanup2 := lazyWorktrees(ctx, mgr, "main")
 	defer cleanup2()
-	if len(paths) != 2 {
-		t.Errorf("re-run should re-allocate both cluster worktrees, got %d", len(paths))
+	if _, err := get2("scaffold"); err != nil {
+		t.Fatalf("re-run must not collide on the leftover cluster branch: %v", err)
 	}
 }
 
@@ -149,7 +157,7 @@ func TestIntegrateEpicRollsBackOnRedAssembly(t *testing.T) {
 	results := []taskResult{{TaskID: "a1", Verdict: "Accept"}, {TaskID: "b1", Verdict: "Accept"}}
 	red := func(context.Context, string) (bool, error) { return false, nil }
 
-	if _, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", red, nil); err != nil {
+	if _, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", red, nil, nil); err != nil {
 		t.Fatal(err)
 	} else if ok {
 		t.Fatal("a red post-merge re-proof must fail the epic assembly (ok=false)")
@@ -180,7 +188,7 @@ func TestIntegrateEpicAssemblesAcceptedSubset(t *testing.T) {
 	results := []taskResult{{TaskID: "a1", Verdict: "Accept"}, {TaskID: "b1", Verdict: "Reject"}}
 	green := func(context.Context, string) (bool, error) { return true, nil }
 
-	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil)
+	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

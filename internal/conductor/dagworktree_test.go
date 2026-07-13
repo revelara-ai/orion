@@ -43,9 +43,11 @@ func TestEachClusterBuildsInIsolatedWorktree(t *testing.T) {
 		{Key: "clusterA", Members: []string{"a1"}},
 		{Key: "clusterB", Members: []string{"b1"}},
 	}
-	paths, cleanup, err := clusterWorktreeSet(context.Background(), mgr, clusters, "HEAD")
-	if err != nil {
-		t.Fatalf("clusterWorktreeSet: %v", err)
+	paths, get, cleanup := lazyWorktrees(context.Background(), mgr, "HEAD")
+	for _, cl := range clusters {
+		if _, err := get(cl.Key); err != nil {
+			t.Fatalf("allocate %s: %v", cl.Key, err)
+		}
 	}
 
 	// Distinct worktree per cluster.

@@ -210,10 +210,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		return BuildResult{}, fmt.Errorf("resolve managed repo: %w", rerr)
 	}
 	wtMgr := worktree.New(managed.Path, store).WithBase(managed.Base)
-	clusterWT, cleanupWT, werr := clusterWorktreeSet(ctx, wtMgr, clusters, managed.Base)
-	if werr != nil {
-		return BuildResult{}, fmt.Errorf("worktree isolation: %w", werr)
-	}
+	clusterWT, getClusterWT, cleanupWT := lazyWorktrees(ctx, wtMgr, managed.Base)
 	defer cleanupWT()
 	clusterByTask := map[string]string{}
 	for _, cl := range clusters {
@@ -265,9 +262,11 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	// not once at end-of-run.
 	drift := newDriftMonitor(c)
 	results, err := runClusterDAG(clusters, scheduleTasks, maxConc, func(task orchestrator.PlanTask, cache map[string]proof.Report) (taskResult, error) {
-		buildDir := clusterWT[clusterByTask[task.ID]]
-		if buildDir == "" {
-			return taskResult{}, fmt.Errorf("task %s has no cluster worktree", task.ID)
+		// or-7et.4c: the cluster worktree is created AT DISPATCH — an N-cluster
+		// plan holds ~maxConc checkouts, not N, and integrated waves free theirs.
+		buildDir, wterr := getClusterWT(clusterByTask[task.ID])
+		if wterr != nil {
+			return taskResult{}, fmt.Errorf("worktree for task %s: %w", task.ID, wterr)
 		}
 		tr, terr := buildOneTask(ctx, store, gen, aligner, teeRunSink(safeSink, store, runProj.ID, runID, task.ID), es, model, gs, contract, requiredIDs, buildDir, cache, eng, mem, &stateMu, task)
 		if terr == nil {
@@ -300,7 +299,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	reprove := epicReprover(store, contract, model, es, requiredIDs, proj.ID, onPhase, func(r proof.Report) {
 		assembledReport, haveAssembled = r, true
 	})
-	intDir, integrated, ierr := integrateEpic(ctx, wtMgr, clusters, clusterWT, results, managed.Base, reprove, onPhase)
+	intDir, integrated, ierr := integrateEpic(ctx, wtMgr, clusters, clusterWT, results, managed.Base, reprove, scopedWaveReprove(reprove), onPhase)
 	if ierr != nil {
 		return BuildResult{}, fmt.Errorf("epic integration: %w", ierr)
 	}
