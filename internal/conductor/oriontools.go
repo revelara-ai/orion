@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/revelara-ai/orion/internal/contextwindow"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -374,6 +375,12 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				// or-809: give the plan path a semantic ModuleProposer (runs in
 				// SHADOW behind ORION_MODULE_PROPOSER; the oracle still drives).
 				c.SetModuleProposer(NativeModuleProposer(provider))
+				// or-7et.3: plan-time context-fit — a module that cannot fit
+				// the window is split or escalated, never built.
+				if es, eerr := c.RecallSpec(ctx); eerr == nil {
+					c.SetModuleFitEstimator(NewModuleFitEstimator(provider, es))
+				}
+				SetGenerationWindow(contextwindow.WindowOf(provider, contextwindow.DefaultWindow))
 				// or-zn8: the adversarial issue-set reviewer rides the same brain;
 				// the deterministic gate (advisory→ORION_ISSUE_REVIEW=block) decides.
 				c.SetIssueReviewer(NativeIssueReviewer(provider))

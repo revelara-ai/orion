@@ -101,6 +101,12 @@ func Propose(ctx context.Context, es spec.ExecutableSpec, projectType string, fl
 	if len(mods) == 0 {
 		return Epic{}, fmt.Errorf("module proposer returned no modules")
 	}
+	return bookendEpic(es, floor, mods), nil
+}
+
+// bookendEpic converts proposed modules to the Epic the DAG consumes and
+// appends the deterministic whole-intent acceptance bookend.
+func bookendEpic(es spec.ExecutableSpec, floor []completeness.Dimension, mods []ProposedModule) Epic {
 	tasks := make([]Task, 0, len(mods)+1)
 	keys := make([]string, 0, len(mods))
 	for _, m := range mods {
@@ -114,7 +120,7 @@ func Propose(ctx context.Context, es spec.ExecutableSpec, projectType string, fl
 		keys = append(keys, m.Key)
 	}
 	tasks = append(tasks, acceptanceModule(es, floor, keys))
-	return Epic{Title: es.Intent, Tasks: tasks}, nil
+	return Epic{Title: es.Intent, Tasks: tasks}
 }
 
 // acceptanceModule is the deterministic whole-intent bookend.

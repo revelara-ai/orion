@@ -240,7 +240,11 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 			if e, ok := embedderFromEnv(); ok {
 				mem.SetEmbedder(e)
 			}
-			eng = contextengine.New(store, mem)
+			// or-7et.3: recalled cognition is budgeted by TOKENS against the
+			// active provider's window (set at the tool seam; default window
+			// otherwise) — an eighth of the window, leaving the bulk for the
+			// spec slice, tool results, and the response.
+			eng = contextengine.New(store, mem).WithTokenBudget(generationWindow() / 8)
 			defer func() { _ = mem.Close() }()
 		}
 	}
