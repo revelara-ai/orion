@@ -8,6 +8,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/polaris"
+	"github.com/revelara-ai/orion/internal/promptguard"
 	"github.com/revelara-ai/orion/internal/tools"
 )
 
@@ -59,12 +60,22 @@ func registerMCPTools(r *tools.Registry, store *contextstore.Store) {
 					return "", err
 				}
 				if res.IsError {
-					return "revelara.ai tool error: " + mcpToolText(res), nil
+					return "revelara.ai tool error: " + guardToolText(mcpToolText(res)), nil
 				}
-				return mcpToolText(res), nil
+				return guardToolText(mcpToolText(res)), nil
 			},
 		})
 	}
+}
+
+// guardToolText neutralizes known injection patterns in an EXTERNAL tool
+// result before the model reads it (or-ykz.17): MCP results are remote data —
+// the classic injection-via-tool-output vector. ScopeContext keeps the guard
+// conservative (instruction-injection shapes only) so legitimate incident
+// text survives intact.
+func guardToolText(s string) string {
+	safe, _ := promptguard.Neutralize(s, promptguard.ScopeContext)
+	return safe
 }
 
 // mcpToolText flattens an MCP tool result's content blocks into the text the model reads back.

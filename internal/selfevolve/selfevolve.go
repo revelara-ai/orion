@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/memory"
+	"github.com/revelara-ai/orion/internal/promptguard"
 	"github.com/revelara-ai/orion/internal/skill"
 	"github.com/revelara-ai/orion/internal/skilleval"
 )
@@ -67,6 +68,18 @@ func PromoteCandidates(ctx context.Context, mem *memory.Store, skillsDir string)
 		}
 		if res := skilleval.Run(ev); !res.Pass {
 			rejected = append(rejected, Rejection{CandidateID: c.ID, Reason: res.Failing})
+			continue
+		}
+		// or-ykz.17: threat-pattern scan at INSTALL time — a candidate whose
+		// content carries injection/exfil/SSRF patterns never becomes a skill,
+		// even with passing eval evidence (the eval proves usefulness, not
+		// benignity). Fail closed with the pattern names.
+		if hits := promptguard.Detect(c.Content, promptguard.ScopeAll); len(hits) > 0 {
+			names := make([]string, 0, len(hits))
+			for _, h := range hits {
+				names = append(names, h.Pattern)
+			}
+			rejected = append(rejected, Rejection{CandidateID: c.ID, Reason: "threat patterns detected (promptguard v" + promptguard.Version + "): " + strings.Join(names, ", ")})
 			continue
 		}
 		sk := candidateToSkill(c)

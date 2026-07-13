@@ -5,11 +5,17 @@
 // injected instruction is redacted so it cannot be read as an instruction at all.
 package promptguard
 
-import "regexp"
+import (
+	"fmt"
+	"net"
+	"net/url"
+	"regexp"
+	"strings"
+)
 
 // Version is the threat-pattern library version. Bump it whenever the pattern set changes so
 // a downstream consumer can tell which library a stored neutralization was produced by.
-const Version = "1"
+const Version = "2" // v2: +ssrf-metadata patterns, +URLSafe egress guard (or-ykz.17)
 
 // Scope tunes how aggressively content is scanned.
 type Scope int
@@ -45,6 +51,10 @@ var patterns = []pattern{
 	{"role-spoof", regexp.MustCompile(`(?im)^\s*(?:system|assistant|developer)\s*:`), ScopeAll},
 	{"exfil", reCI(`\b(?:send|post|exfiltrate|upload|curl|wget)\b[^.\n]{0,60}https?://`), ScopeAll},
 	{"override", reCI(`\b(?:bypass|jailbreak|do\s+anything\s+now|developer\s+mode\s+enabled)\b`), ScopeStrict},
+	// or-ykz.17 (A16): SSRF / cloud-metadata exfil — an instruction steering any
+	// fetch at a metadata service or link-local target is hostile in ANY scope
+	// that scans untrusted content.
+	{"ssrf-metadata", reCI(`(?:169\.254\.\d{1,3}\.\d{1,3}|metadata\.google\.internal|metadata\.azure\.|100\.100\.100\.200|\bfd00:ec2::254\b)`), ScopeAll},
 }
 
 // Match is one detected threat span.
@@ -90,4 +100,27 @@ func Neutralize(s string, scope Scope) (string, []Match) {
 		out = p.re.ReplaceAllString(out, redaction)
 	}
 	return out, ms
+}
+
+// URLSafe is the egress guard for any URL an agent tool is about to fetch
+// (or-ykz.17): cloud-metadata endpoints and private/internal ranges are SSRF
+// targets, never legitimate research egress. Literal checks only — no DNS
+// resolution happens here (a resolver-based bypass is the sandbox netns's
+// problem; proof execs already run egress-denied).
+func URLSafe(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("promptguard: unparsable URL %q", raw)
+	}
+	host := strings.ToLower(u.Hostname())
+	switch host {
+	case "metadata.google.internal", "metadata.azure.com", "metadata":
+		return fmt.Errorf("promptguard: %q is a cloud metadata endpoint (SSRF guard, library v%s)", host, Version)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+			return fmt.Errorf("promptguard: %q is a private/link-local address (SSRF guard, library v%s)", host, Version)
+		}
+	}
+	return nil
 }
