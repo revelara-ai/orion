@@ -141,8 +141,8 @@ func functionalTask(projectType string, es spec.ExecutableSpec) Task {
 		format := es.Decisions["response_format"]
 		return Task{
 			Key:             "handler",
-			Title:           fmt.Sprintf("Implement %s handler returning %s time in %s", rc.Route, format, rc.TimeZone),
-			ProofObligation: fmt.Sprintf("GET %s listens on port %d and returns a %s body containing the current time in %s, conforming to the ResponseContract", rc.Route, rc.Port, format, rc.TimeZone),
+			Title:           fmt.Sprintf("Implement the %s handler (%s response)", rc.Route, format),
+			ProofObligation: fmt.Sprintf("GET %s listens on port %d and returns a %s body satisfying the ResponseContract's declared cases", rc.Route, rc.Port, format),
 			FileScope:       "internal/server/",
 			Covers:          append([]string{string(completeness.DimFunctional)}, es.ResponseContract.RequiredCaseIDs()...),
 			DependsOn:       []string{"scaffold"},
