@@ -101,6 +101,8 @@ func doctorChecks(dir string, lookPath func(string) (string, error), agentEnv st
 	} else {
 		out = append(out, doctorCheck{Name: "harness-config", Status: statusOK, Detail: "externalized config valid (or absent → compiled defaults)"})
 	}
+	// or-c6zf.5: semantic-recall provisioning state (opt-in feature).
+	out = append(out, embedderCheck(dir))
 	return out
 }
 
