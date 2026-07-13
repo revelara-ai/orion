@@ -3,6 +3,7 @@ package conductor
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/decomposer"
@@ -80,6 +81,18 @@ func integrateEpic(
 		merged := 0
 		for _, cl := range wave {
 			wt := clusterWT[cl.Key]
+			// or-7et.4c: eager removal (below) or lazy allocation may have left no
+			// checkout — the BRANCH survives, so reattach it (or-d3w: never treat a
+			// missing checkout as "nothing to integrate"; that silently drops the
+			// cluster's files from the head).
+			if wt == "" || !dirExists(wt) {
+				rewt, rerr := wtMgr.CreateResume(ctx, cl.Key, cl.Key)
+				if rerr != nil {
+					return headDir, false, fmt.Errorf("reattach worktree for cluster %s: %w", cl.Key, rerr)
+				}
+				wt = rewt.Path
+				clusterWT[cl.Key] = wt
+			}
 			// Commit any uncommitted build on the cluster's branch (= cl.Key) so it is a mergeable ref.
 			// A re-run's cluster is ALREADY committed (clean worktree) — do NOT mistake that for "no
 			// change" and skip it, or the re-assembled head loses the cluster's files (or-d3w).
@@ -206,4 +219,9 @@ func clusterAccepted(cl decomposer.TaskCluster, accepted map[string]bool) bool {
 		}
 	}
 	return len(cl.Members) > 0
+}
+
+func dirExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
 }
