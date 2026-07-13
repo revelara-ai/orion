@@ -34,11 +34,22 @@ func codebaseGrounding(ctx context.Context, c *orchestrator.Conductor) string {
 	}
 	// Audit trail: the facts the grill was grounded in, on the project record.
 	if st := c.Store(); st != nil && digest != "" {
+		projID := ""
 		if proj, _, perr := st.CurrentProjectSpec(ctx); perr == nil {
-			_ = st.WithTx(ctx, func(tx *contextstore.Tx) error {
-				return tx.PolarisContext().Upsert(ctx, proj.ID, codeGroundingKind, digest, 0)
-			})
+			projID = proj.ID
 		}
+		_ = st.WithTx(ctx, func(tx *contextstore.Tx) error {
+			if projID == "" {
+				// Routed pre-submit (or-3p5.10): the change flow's audit trail
+				// lives on the reserved brownfield project.
+				id, e := tx.Projects().GetOrCreateReserved(ctx, contextstore.BrownfieldProjectName, "brownfield")
+				if e != nil {
+					return e
+				}
+				projID = id
+			}
+			return tx.PolarisContext().Upsert(ctx, projID, codeGroundingKind, digest, 0)
+		})
 	}
 	return digest
 }

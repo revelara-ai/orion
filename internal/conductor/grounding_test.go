@@ -67,14 +67,15 @@ func TestSubmitIntentAutoGroundsInBrownfieldRepo(t *testing.T) {
 		t.Fatalf("grounding must name the REAL package: %s", toolResult)
 	}
 
-	// Citation trail: the facts are recorded on the project.
-	proj, _, err := oc.Store().CurrentProjectSpec(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Citation trail: routed pre-submit (or-3p5.10), the facts are recorded
+	// on the reserved brownfield project.
 	var recorded string
 	_ = oc.Store().WithTx(context.Background(), func(tx *contextstore.Tx) error {
-		if e, ok, _ := tx.PolarisContext().Get(context.Background(), proj.ID, codeGroundingKind); ok {
+		pid, e := tx.Projects().GetOrCreateReserved(context.Background(), contextstore.BrownfieldProjectName, "brownfield")
+		if e != nil {
+			return e
+		}
+		if e, ok, _ := tx.PolarisContext().Get(context.Background(), pid, codeGroundingKind); ok {
 			recorded = e.Payload
 		}
 		return nil

@@ -45,13 +45,30 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	r.Register(tools.Tool{
 		Name:        "submit_intent",
 		Description: "Submit the developer's build intent (call once, first). Returns the open spec decisions to resolve.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"intent":{"type":"string","description":"the developer's stated goal"}},"required":["intent"]}`),
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"intent":{"type":"string","description":"the developer's stated goal"},"force_greenfield":{"type":"boolean","description":"build a NEW standalone service even though this workspace has existing code"}},"required":["intent"]}`),
 		Safety:      tools.Safety{Destructive: true},
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
 			var p struct {
-				Intent string `json:"intent"`
+				Intent          string `json:"intent"`
+				ForceGreenfield bool   `json:"force_greenfield"`
 			}
 			_ = json.Unmarshal(in, &p)
+			// or-3p5.10: route by CLASSIFICATION, not a role hint — an intent
+			// in a brownfield workspace belongs to the change flow unless the
+			// developer explicitly greenfields a new standalone service.
+			if !p.ForceGreenfield {
+				if dir, derr := os.Getwd(); derr == nil {
+					if brownfield.Classify(dir).Mode == brownfield.Brownfield {
+						out := "ROUTED: this workspace has existing code (brownfield) — the intent belongs to the CHANGE flow. Call submit_change_intent with the same intent (flow: propose_cases → ratify_cases → build_change). If the developer truly wants a NEW standalone service here, re-call submit_intent with force_greenfield=true."
+						// or-tcs.5 still holds under routing: the grounding
+						// rides the redirect (and its audit row persists).
+						if g := codebaseGrounding(ctx, c); g != "" {
+							out += "\n\nCODEBASE GROUNDING (read from the repo — cite these REAL packages/APIs; do not invent structure):\n" + g
+						}
+						return out, nil
+					}
+				}
+			}
 			conf, err := c.Submit(ctx, p.Intent)
 			if err != nil {
 				return "", err
