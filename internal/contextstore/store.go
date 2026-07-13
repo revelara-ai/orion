@@ -102,6 +102,14 @@ func Open(dir string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("contextstore migrate spec_dimensions: %w", err)
 	}
+	// or-r4v6: proofs.mode's CHECK gained 'diagnostics' and 'new_behavior'. SQLite
+	// cannot ALTER a CHECK, so rebuild the table once for DBs created before those
+	// modes existed — otherwise the proof pipeline crashes writing a diagnostics
+	// report, which is what led an agent to (wrongly) delete the whole database.
+	if err := ensureProofModes(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("contextstore migrate proofs: %w", err)
+	}
 	// projects.status (or-v9f.1): the backfill must run ONLY when the column is
 	// first added to a pre-queue DB — the latest project was the implicit work
 	// item, so it stays active and every earlier (already-orphaned) project is
@@ -680,5 +688,58 @@ func ensureDirectionDimension(db *sql.DB) error {
 		INSERT INTO spec_dimensions_new SELECT * FROM spec_dimensions;
 		DROP TABLE spec_dimensions;
 		ALTER TABLE spec_dimensions_new RENAME TO spec_dimensions;`)
+	return err
+}
+
+// ensureProofModes rebuilds proofs when its mode CHECK predates the
+// 'diagnostics'/'new_behavior' modes (or-r4v6). Unlike spec_dimensions, proofs is
+// referenced by tasks.proof_id, so foreign keys are disabled across the rebuild
+// (a bare DROP would otherwise fail the inbound reference). Columns are named
+// explicitly because `detail` was added to older DBs by ALTER — its ordinal
+// trails created_at there but leads it in the current schema, so `SELECT *`
+// would misalign. Idempotent: a DB whose DDL already names 'diagnostics' is
+// untouched.
+func ensureProofModes(db *sql.DB) error {
+	var ddl string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='proofs'`).Scan(&ddl); err != nil {
+		return err // the table always exists (schemaSQL ran first)
+	}
+	if strings.Contains(ddl, "'diagnostics'") {
+		return nil
+	}
+	if _, err := db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+		return err
+	}
+	// tasks has a done-gate trigger that references proofs; legacy_alter_table
+	// stops the RENAME from choking while proofs is momentarily absent (the
+	// trigger re-resolves to the rebuilt table afterward — SQLite ALTER docs).
+	if _, err := db.Exec(`PRAGMA legacy_alter_table=ON`); err != nil {
+		_, _ = db.Exec(`PRAGMA foreign_keys=ON`)
+		return err
+	}
+	_, err := db.Exec(`
+		CREATE TABLE proofs_new (
+		    id                     TEXT PRIMARY KEY,
+		    task_id                TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+		    mode                   TEXT NOT NULL CHECK (mode IN ('behavioral','empirical','hazard','converged','diagnostics','new_behavior')),
+		    verdict                TEXT NOT NULL CHECK (verdict IN ('Accept','Reject','Inconclusive')),
+		    mutation_score         REAL NOT NULL DEFAULT 0,
+		    empirical_pass_rate    REAL NOT NULL DEFAULT 0,
+		    hazard_controlled_count INTEGER NOT NULL DEFAULT 0,
+		    hazard_total_count     INTEGER NOT NULL DEFAULT 0,
+		    run_count              INTEGER NOT NULL DEFAULT 0,
+		    detail                 TEXT NOT NULL DEFAULT '{}',
+		    created_at             TEXT NOT NULL
+		);
+		INSERT INTO proofs_new (id, task_id, mode, verdict, mutation_score, empirical_pass_rate, hazard_controlled_count, hazard_total_count, run_count, detail, created_at)
+		    SELECT id, task_id, mode, verdict, mutation_score, empirical_pass_rate, hazard_controlled_count, hazard_total_count, run_count, detail, created_at FROM proofs;
+		DROP TABLE proofs;
+		ALTER TABLE proofs_new RENAME TO proofs;
+		CREATE INDEX IF NOT EXISTS idx_proofs_task ON proofs(task_id);`)
+	// Restore the pragmas whether or not the rebuild succeeded.
+	_, _ = db.Exec(`PRAGMA legacy_alter_table=OFF`)
+	if _, e2 := db.Exec(`PRAGMA foreign_keys=ON`); e2 != nil && err == nil {
+		err = e2
+	}
 	return err
 }
