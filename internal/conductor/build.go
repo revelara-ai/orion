@@ -583,6 +583,7 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	var failureAnalysis string
 	var feedback string
 	attempts := 0
+	var prevSnapshot refinementSnapshot // or-mvr.5: prior attempt's quality/security signals
 	var lastHash string
 	var lastNarrative string // the latest attempt's agent self-report (or-7mr), quarantined on failure
 	for attempt := 1; attempt <= maxBuildAttempts; attempt++ {
@@ -683,6 +684,21 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		// Reject/Inconclusive → causal analysis becomes the next attempt's feedback.
 		failureAnalysis = analyzeFailure(report, es.ResponseContract.Cases)
 		feedback = failureAnalysis
+
+		// Net-negative-refinement detector (or-mvr.5): a pass that made the
+		// artifact WORSE than the attempt it was refining terminates the loop —
+		// "keep prompting until it works" is not a control strategy.
+		passing, has := obligationSnapshot(report)
+		cur := refinementSnapshot{PassingObligations: passing, hasObligations: has, ScanFindings: artifactScanFindings(buildDir)}
+		if attempt > 1 {
+			if regressed, why := refinementRegressed(prevSnapshot, cur); regressed {
+				failureAnalysis = why + "\n\n" + failureAnalysis
+				onPhase.emit("Prove", PhaseWarn, why+" — terminating refinement")
+				break
+			}
+		}
+		prevSnapshot = cur
+
 		if attempt < maxBuildAttempts {
 			onPhase.emit("Prove", PhaseWarn, fmt.Sprintf("%s (attempt %d/%d) — analyzing failure, refining", report.Outcome.Verdict, attempt, maxBuildAttempts))
 		} else {
