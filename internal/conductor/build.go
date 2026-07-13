@@ -563,6 +563,16 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		gs.Context += cat
 	}
 
+	// or-gb1.3 CONSULT: known failure modes ride every generation context —
+	// "never silently repeat a known failure" only works if the knowledge is
+	// READ. Harness-derived (TrustProof posture); best-effort.
+	if fmSection := knownFailureModesSection(ctx, store, stateMu); fmSection != "" {
+		if gs.Context != "" {
+			gs.Context += "\n\n"
+		}
+		gs.Context += fmSection
+	}
+
 	// Bounded refinement loop (Manifesto): generate → prove → if the verdict is not
 	// Accept, run a CAUSAL analysis of the failing cases + feed it back so the next
 	// attempt FIXES the specific failures — repeating until Accept or the attempt
@@ -762,6 +772,13 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 				if e != nil {
 					return e
 				}
+				// or-gb1.3 PERSIST: the deduped failure-mode row, keyed from the
+				// failing obligation + dissenting mode — the CONSULT half reads it
+				// at every later task start.
+				if _, fe := tx.FailureModes().Record(ctx, proj.ID,
+					failureCategory(report), clip(task.ProofObligation, 60), clip(failureSymptom(failureAnalysis), 80)); fe != nil {
+					return fe
+				}
 				id, e := tx.Escalations().CreateDetailed(ctx, proj.ID, taskID,
 					fmt.Sprintf("task failed proof after %d attempt(s)", attempts), failureAnalysis)
 				if e == nil {
@@ -788,7 +805,7 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	// write miss never fails an otherwise-green build.
 	if mem != nil {
 		withLock(stateMu, func() {
-			memMaintenance(ctx, mem, taskID, buildDir, report, lastNarrative)
+			memMaintenance(ctx, mem, taskID, buildDir, report, lastNarrative, failureAnalysis)
 		})
 	}
 
@@ -893,7 +910,7 @@ func mutationThresholdFor(artifactDir string) float64 {
 // memMaintenance records the proven outcome into memory + bounds the tiers (or-hd3.*). Best-effort
 // (a memory miss never fails an otherwise-green build); called under stateMu so it is race-free
 // when clusters build in parallel.
-func memMaintenance(ctx context.Context, mem *memory.Store, taskID, buildDir string, report proof.Report, lastNarrative string) {
+func memMaintenance(ctx context.Context, mem *memory.Store, taskID, buildDir string, report proof.Report, lastNarrative, failureAnalysis string) {
 	_ = rememberOutcome(ctx, mem, taskID, report)
 	// or-v9f.8: the durable decision log — a proven module's structural choices
 	// (exports, routes, module path) persist so dependent modules reuse them.
@@ -902,7 +919,7 @@ func memMaintenance(ctx context.Context, mem *memory.Store, taskID, buildDir str
 	// proof facts trusted, the agent's self-report quarantined. or-7mr: the last attempt's agent
 	// narrative (empty for the deterministic fixture) is the untrusted half; rememberFailure tags
 	// it generation-tier so it can never reach proof.
-	_ = rememberFailure(ctx, mem, taskID, report, lastNarrative)
+	_ = rememberFailure(ctx, mem, taskID, report, lastNarrative, failureAnalysis)
 	// or-ykz.8: propose a self-evolution candidate from a passing run (generation-tier,
 	// active=false — quarantined AND excluded from recall until the lifecycle activates it).
 	_ = proposeCandidate(ctx, mem, taskID, report)

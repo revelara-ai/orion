@@ -32,7 +32,7 @@ func TestRejectWritesFailureFactsAndQuarantinedNarrative(t *testing.T) {
 			{Mode: "empirical", Pass: true},
 		},
 	}}
-	if err := rememberFailure(ctx, mem, "T1", rejectReport, "the regex was too greedy; try anchoring"); err != nil {
+	if err := rememberFailure(ctx, mem, "T1", rejectReport, "the regex was too greedy; try anchoring", "Proof verdict: Reject.\nFAILED case case-abc123: want 200 got 500"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -40,23 +40,28 @@ func TestRejectWritesFailureFactsAndQuarantinedNarrative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var fact, narrative *memory.Item
+	var proofContents []string
+	var narrative *memory.Item
 	for i := range items {
 		if items[i].Kind != memory.KindFailure {
 			continue
 		}
 		switch items[i].TrustTier {
 		case memory.TrustProof:
-			fact = &items[i]
+			proofContents = append(proofContents, items[i].Content)
 		case memory.TrustGeneration:
 			narrative = &items[i]
 		}
 	}
-	if fact == nil {
-		t.Fatal("Reject must write a proof-tier (trusted) failure FACT")
+	joined := strings.Join(proofContents, "\n")
+	if len(proofContents) < 2 {
+		t.Fatalf("Reject must write the proof-tier failure FACT and the causal analysis (or-gb1.3), got %d items", len(proofContents))
 	}
-	if !strings.Contains(fact.Content, "FAILED") || !strings.Contains(fact.Content, "behavioral") {
-		t.Fatalf("failure fact should carry the verdict + dissenting mode; got %q", fact.Content)
+	if !strings.Contains(joined, "FAILED") || !strings.Contains(joined, "behavioral") {
+		t.Fatalf("failure fact should carry the verdict + dissenting mode; got %q", joined)
+	}
+	if !strings.Contains(joined, "case-abc123") {
+		t.Fatalf("the causal analysis must persist a failing case id (or-gb1.3); got %q", joined)
 	}
 	if narrative == nil {
 		t.Fatal("a supplied agent narrative must be written as a quarantined generation-tier item")
@@ -72,7 +77,7 @@ func TestRejectWritesFailureFactsAndQuarantinedNarrative(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = mem2.Close() }()
-	if err := rememberFailure(ctx, mem2, "T2", acceptReport, "should be ignored"); err != nil {
+	if err := rememberFailure(ctx, mem2, "T2", acceptReport, "should be ignored", ""); err != nil {
 		t.Fatal(err)
 	}
 	got2, err := mem2.Retrieve(ctx, "", memory.MTM)
@@ -97,7 +102,7 @@ func TestRejectWithoutNarrativeWritesOnlyTheFact(t *testing.T) {
 	}
 	defer func() { _ = mem.Close() }()
 	r := proof.Report{Outcome: truthalign.Outcome{Verdict: truthalign.Inconclusive, Dissenting: []string{"hazard"}}}
-	if err := rememberFailure(ctx, mem, "T3", r, "   "); err != nil {
+	if err := rememberFailure(ctx, mem, "T3", r, "   ", ""); err != nil {
 		t.Fatal(err)
 	}
 	items, err := mem.Retrieve(ctx, "", memory.MTM)

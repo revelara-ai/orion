@@ -106,12 +106,30 @@ func summarizeCandidate(taskID string, report proof.Report) string {
 // supplied, is an untrusted self-report, so it is TrustGeneration — quarantined: the
 // context engine renders it only in the UNTRUSTED block and it can never enter a proof
 // prompt. Accept is handled by rememberOutcome. Best-effort: a write miss never fails a build.
-func rememberFailure(ctx context.Context, mem *memory.Store, taskID string, report proof.Report, narrative string) error {
+func rememberFailure(ctx context.Context, mem *memory.Store, taskID string, report proof.Report, narrative, analysis string) error {
 	if mem == nil {
 		return nil
 	}
 	if v := report.Outcome.Verdict; v != truthalign.Reject && v != truthalign.Inconclusive {
 		return nil
+	}
+	// or-gb1.3: the causal WHY (analyzeFailure's harness-derived analysis —
+	// failing cases, unexecuted cases, per-mode diagnostics) persists as a
+	// TRUSTED item, so a sibling or later task can avoid the trap instead of
+	// re-deriving it. Clipped: the analysis is evidence, not a transcript.
+	if a := strings.TrimSpace(analysis); a != "" {
+		if len(a) > 1500 {
+			a = a[:1500] + "…"
+		}
+		if _, err := mem.Write(ctx, memory.Item{
+			Tier:      memory.MTM,
+			Kind:      memory.KindFailure,
+			Content:   fmt.Sprintf("causal analysis (task %s): %s", taskID, a),
+			TrustTier: memory.TrustProof, // harness-derived, never an agent self-report
+			Heat:      1.0,
+		}); err != nil {
+			return err
+		}
 	}
 	if _, err := mem.Write(ctx, memory.Item{
 		Tier:      memory.MTM,
