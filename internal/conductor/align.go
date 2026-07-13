@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/revelara-ai/orion/internal/llmsetup"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/pkg/llm"
 )
@@ -47,7 +48,10 @@ type AlignmentRecord struct {
 // examples but not the general intent — Manifesto failure mode #2).
 func NativeAligner(provider llm.Provider) Aligner {
 	return func(ctx context.Context, intent, artifactDir string, cases []spec.BehavioralCase) (AlignVerdict, error) {
-		mainSrc, _ := os.ReadFile(filepath.Join(artifactDir, "main.go"))
+		// or-kzf.1: audit the WHOLE artifact, not just main.go — readBuildSource
+		// walks every non-test .go file (the proof corpus stays excluded, so the
+		// judge never sees the harness's tests: the wall holds).
+		src := readBuildSource(artifactDir)
 		tool := llm.Tool{
 			Name:        "report_alignment",
 			Description: "Report whether the generated code serves the developer's intent (not just the cases).",
@@ -56,7 +60,7 @@ func NativeAligner(provider llm.Provider) Aligner {
 		resp, err := provider.Chat(ctx, llm.ChatRequest{
 			System:   alignSystemPrompt,
 			Tools:    []llm.Tool{tool},
-			Messages: []llm.Message{llm.TextMessage(llm.RoleUser, renderAlignTask(intent, cases, string(mainSrc)))},
+			Messages: []llm.Message{llm.TextMessage(llm.RoleUser, renderAlignTask(intent, cases, src))},
 		})
 		if err != nil {
 			return AlignVerdict{}, err
@@ -122,4 +126,23 @@ func orGet(v, d string) string {
 		return d
 	}
 	return v
+}
+
+// AlignJudgeProvider resolves the INDEPENDENT judge brain (or-kzf.1): with
+// ORION_ALIGN_MODEL set (e.g. "anthropic/claude-x"), the alignment audit runs
+// on a DIFFERENT model than the generator — independence by model, not just
+// by adversarial criteria. Unset or unbuildable falls back to the session
+// brain (independent criteria still apply; the audit never silently drops).
+func AlignJudgeProvider(fallback llm.Provider) llm.Provider {
+	ref := strings.TrimSpace(os.Getenv("ORION_ALIGN_MODEL"))
+	if ref == "" {
+		return fallback
+	}
+	prov, full, err := llmsetup.Rebuild(llmsetup.Select(), ref)
+	if err != nil {
+		slog.Warn("ORION_ALIGN_MODEL unbuildable — the session brain judges (independent criteria only)", "ref", ref, "err", err)
+		return fallback
+	}
+	slog.Info("alignment judge on an independent model", "ref", full)
+	return prov
 }
