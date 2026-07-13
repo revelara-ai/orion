@@ -261,6 +261,10 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	// the alignment-degradation threshold enforced before EVERY cluster dispatch,
 	// not once at end-of-run.
 	drift := newDriftMonitor(c)
+	leaseByCluster := map[string][]string{}
+	for _, cl := range clusters {
+		leaseByCluster[cl.Key] = clusterLeaseScope(cl)
+	}
 	results, err := runClusterDAG(clusters, scheduleTasks, maxConc, func(task orchestrator.PlanTask, cache map[string]proof.Report) (taskResult, error) {
 		// or-7et.4c: the cluster worktree is created AT DISPATCH — an N-cluster
 		// plan holds ~maxConc checkouts, not N, and integrated waves free theirs.
@@ -268,7 +272,11 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		if wterr != nil {
 			return taskResult{}, fmt.Errorf("worktree for task %s: %w", task.ID, wterr)
 		}
-		tr, terr := buildOneTask(ctx, store, gen, aligner, teeRunSink(safeSink, store, runProj.ID, runID, task.ID), es, model, gs, contract, requiredIDs, buildDir, cache, eng, mem, &stateMu, task)
+		// or-tcs.11: the generator KNOWS its lease — write tools refuse
+		// out-of-scope paths, the post-generate gate diffs observed writes.
+		gsTask := gs
+		gsTask.Lease = leaseByCluster[clusterByTask[task.ID]]
+		tr, terr := buildOneTask(ctx, store, gen, aligner, teeRunSink(safeSink, store, runProj.ID, runID, task.ID), es, model, gsTask, contract, requiredIDs, buildDir, cache, eng, mem, &stateMu, task)
 		if terr == nil {
 			drift.RecordAlignment(tr.Alignment)
 		}
@@ -300,7 +308,8 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		assembledReport, haveAssembled = r, true
 	})
 	conform := conformanceGate(ctx, store, proj.ID, pv.Tasks, onPhase)
-	intDir, integrated, ierr := integrateEpic(ctx, wtMgr, clusters, clusterWT, results, managed.Base, reprove, scopedWaveReprove(reprove), conform, onPhase)
+	observed := observedScopeFor(ctx, store, proj.ID)
+	intDir, integrated, ierr := integrateEpic(ctx, wtMgr, clusters, clusterWT, results, managed.Base, reprove, scopedWaveReprove(reprove), conform, observed, onPhase)
 	if ierr != nil {
 		return BuildResult{}, fmt.Errorf("epic integration: %w", ierr)
 	}
@@ -633,6 +642,26 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		}
 		lastHash = art.ContentHash
 		lastNarrative = art.Narrative
+		// or-tcs.11 (deterministic, covers ACP too): observed writes must fall
+		// inside the cluster's lease — an out-of-scope artifact is routed to
+		// refinement with the violating paths named, Rejected on repeat.
+		if bad := outOfLease(gs.Lease, observedWrites(ctx, buildDir)); len(bad) > 0 {
+			if scopeLeaseEnforced() {
+				failureAnalysis = fmt.Sprintf("the artifact writes OUTSIDE the module's declared file scope %v: %s — regenerate strictly within your scope (delete the out-of-scope files)", gs.Lease, strings.Join(bad, ", "))
+				feedback = failureAnalysis
+				traj.recordFailure(failureAnalysis, buildDir)
+				report = proof.Report{}
+				report.Outcome.Verdict = truthalign.Reject
+				onPhase.emit("Generate", PhaseWarn, "out-of-scope writes: "+strings.Join(bad, ", "))
+				if attempt < maxBuildAttempts {
+					continue
+				}
+				break
+			}
+			// Observe mode (default): surface the declaration/reality gap; the
+			// observed-scope record grounds the integration leases regardless.
+			onPhase.emit("Generate", PhaseWarn, "out-of-scope writes (advisory — ORION_SCOPE_LEASE=enforce to gate): "+strings.Join(bad, ", "))
+		}
 		if _, perr := sandbox.PersistArtifact(ctx, store, taskID, art); perr != nil {
 			return taskResult{}, fmt.Errorf("persist artifact: %w", perr)
 		}
@@ -835,12 +864,17 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 					fmt.Sprintf("task failed proof after %d attempt(s)", attempts), failureAnalysis)
 				if e == nil {
 					escID = id
-					onPhase.emit("Escalate", PhaseWarn,
-						fmt.Sprintf("escalation %s filed — answer with: orion escalations resolve %s", id, id))
 				}
 				return e
 			})
 		})
+		// Emit AFTER the tx commits — the teed run-event sink (or-v9f.16)
+		// writes to the SAME single-connection store, so an emit inside the
+		// transaction deadlocks the build (found by or-tcs.11's e2e).
+		if escID != "" {
+			onPhase.emit("Escalate", PhaseWarn,
+				fmt.Sprintf("escalation %s filed — answer with: orion escalations resolve %s", escID, escID))
+		}
 		// or-v9f.17: notify AFTER the tx committed (never on rollback) — the
 		// mid-run event that lets the human act while siblings keep building.
 		if escID != "" {
@@ -871,6 +905,13 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 			}
 		})
 		persistModuleSurface(ctx, store, stateMu, projID, taskID, extractModuleSurface(buildDir, task.FileScope))
+		// or-tcs.11: the OBSERVED scope (what was actually written) is recorded
+		// per task — integration leases prefer it over the declaration.
+		if obs := observedWrites(ctx, buildDir); len(obs) > 0 {
+			withLock(stateMu, func() {
+				_ = store.SaveStringListKind(ctx, projID, contextstore.ObservedScopeKind+taskID, obs)
+			})
+		}
 	}
 
 	return taskResult{

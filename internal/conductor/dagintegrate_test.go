@@ -56,7 +56,7 @@ func TestIntegrateEpicAssemblesClustersOntoHead(t *testing.T) {
 	results := []taskResult{{TaskID: "a1", Verdict: "Accept"}, {TaskID: "b1", Verdict: "Accept"}}
 	green := func(context.Context, string) (bool, error) { return true, nil }
 
-	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, nil, nil)
+	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,11 +88,11 @@ func TestIntegrateEpicIsIdempotentOnReRun(t *testing.T) {
 	green := func(context.Context, string) (bool, error) { return true, nil }
 
 	// First run creates the epic-integration head + branch.
-	if _, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, nil, nil); err != nil || !ok {
+	if _, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, nil, nil, nil); err != nil || !ok {
 		t.Fatalf("first run: ok=%v err=%v", ok, err)
 	}
 	// Second run (the re-run) must integrate cleanly despite the leftover epic-integration branch.
-	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, nil, nil)
+	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, nil, nil, nil)
 	if err != nil || !ok {
 		t.Fatalf("re-run must integrate without an epic-integration collision: ok=%v err=%v", ok, err)
 	}
@@ -160,7 +160,7 @@ func TestIntegrateEpicRollsBackOnRedAssembly(t *testing.T) {
 	results := []taskResult{{TaskID: "a1", Verdict: "Accept"}, {TaskID: "b1", Verdict: "Accept"}}
 	red := func(context.Context, string) (bool, error) { return false, nil }
 
-	if _, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", red, nil, nil, nil); err != nil {
+	if _, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", red, nil, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	} else if ok {
 		t.Fatal("a red post-merge re-proof must fail the epic assembly (ok=false)")
@@ -191,7 +191,7 @@ func TestIntegrateEpicAssemblesAcceptedSubset(t *testing.T) {
 	results := []taskResult{{TaskID: "a1", Verdict: "Accept"}, {TaskID: "b1", Verdict: "Reject"}}
 	green := func(context.Context, string) (bool, error) { return true, nil }
 
-	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, nil, nil)
+	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestAssemblyWaveBatching(t *testing.T) {
 	calls := 0
 	spy := func(context.Context, string) (bool, error) { calls++; return true, nil }
 
-	_, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", spy, nil, nil, nil)
+	_, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", spy, nil, nil, nil, nil)
 	if err != nil || !ok {
 		t.Fatalf("assembly must succeed: ok=%v err=%v", ok, err)
 	}
@@ -281,7 +281,7 @@ func TestWaveRollback(t *testing.T) {
 	}
 	full := func(context.Context, string) (bool, error) { return true, nil }
 
-	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", full, waves, nil, nil)
+	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", full, waves, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestFinalBookendFullProof(t *testing.T) {
 	bookends := 0
 	redBookend := func(context.Context, string) (bool, error) { bookends++; return false, nil }
 
-	_, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", redBookend, greenWaves, nil, nil)
+	_, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", redBookend, greenWaves, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +368,7 @@ func TestLazyWorktreeLifecycle(t *testing.T) {
 	wtPaths := []string{clusterWT["wa"], clusterWT["wb"]}
 	green := func(context.Context, string) (bool, error) { return true, nil }
 
-	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, nil, nil)
+	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, nil, nil, nil)
 	if err != nil || !ok {
 		t.Fatalf("assembly: ok=%v err=%v", ok, err)
 	}
@@ -400,7 +400,7 @@ func TestConformanceGateFiresPreMerge(t *testing.T) {
 		return nil
 	}
 
-	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, conform, nil)
+	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, conform, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

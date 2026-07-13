@@ -38,6 +38,7 @@ func integrateEpic(
 	reprove func(ctx context.Context, dir string) (bool, error),
 	waveReprove WaveReprove,
 	conform func(cl decomposer.TaskCluster) error,
+	observed func(cl decomposer.TaskCluster) []string,
 	onPhase PhaseSink,
 ) (headDir string, ok bool, err error) {
 	accepted := map[string]bool{}
@@ -123,7 +124,15 @@ func integrateEpic(
 			// S1 (or-1lz): the cluster's declared file scope leases the merge; an undeclared scope
 			// leases the whole tree. (Within a wave scopes are disjoint by construction, so wave
 			// members could merge concurrently; the queue still serializes head advances.)
-			out, ierr := integ.Integrate(ctx, cl.Key, wt, cl.Key, clusterLeaseScope(cl))
+			// or-tcs.11: the integration lease prefers the OBSERVED scope (what
+			// the proven artifact actually wrote) over the declaration.
+			leaseScope := clusterLeaseScope(cl)
+			if observed != nil {
+				if obs := observed(cl); len(obs) > 0 {
+					leaseScope = obs
+				}
+			}
+			out, ierr := integ.Integrate(ctx, cl.Key, wt, cl.Key, leaseScope)
 			if ierr != nil {
 				return headDir, false, fmt.Errorf("integrate cluster %s: %w", cl.Key, ierr)
 			}

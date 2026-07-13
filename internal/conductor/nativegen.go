@@ -29,9 +29,9 @@ import (
 func NativeGenerator(provider llm.Provider, acct *budget.Accountant, store *contextstore.Store) Generator {
 	return func(ctx context.Context, gs sandbox.GenSpec, buildDir, feedback string) (sandbox.GeneratedArtifact, error) {
 		reg := tools.NewRegistry()
-		reg.Register(writeFileTool(buildDir)) // create files (greenfield main.go/go.mod)
-		reg.Register(editFileTool(buildDir))  // surgical str_replace for refinement fixes (existing files)
-		reg.Register(readFileTool(buildDir))  // read exact current bytes before an edit_file
+		reg.Register(leaseGuarded(writeFileTool(buildDir), gs.Lease)) // create files, lease-constrained (or-tcs.11)
+		reg.Register(leaseGuarded(editFileTool(buildDir), gs.Lease))  // surgical str_replace, lease-constrained
+		reg.Register(readFileTool(buildDir))                          // read exact current bytes before an edit_file
 		loop := harness.Loop{
 			Provider:   provider,
 			Tools:      reg,
