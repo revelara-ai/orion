@@ -75,6 +75,7 @@ func Open(dir string) (*Store, error) {
 		{"deliveries", "runbook", "TEXT NOT NULL DEFAULT '{}'"},
 		{"projects", "project_type", "TEXT NOT NULL DEFAULT 'http-service'"},
 		{"projects", "scale", "TEXT NOT NULL DEFAULT 'standard'"},
+		{"projects", "repo_target", "TEXT NOT NULL DEFAULT ''"},
 		{"escalations", "detail", "TEXT NOT NULL DEFAULT ''"},
 		{"escalations", "resolution", "TEXT NOT NULL DEFAULT ''"},
 		{"escalations", "resolved_at", "TEXT"},

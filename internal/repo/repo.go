@@ -23,6 +23,10 @@ import (
 type Intake struct {
 	Brownfield bool   // false = greenfield (init); true = clone Source
 	Source     string // brownfield only: path/URL of the target repo to clone
+	// Target is an optional GREENFIELD destination (or-045a.7): the ratified
+	// direction.repo_layout path where a distinct new project gets its OWN
+	// repo. Empty = the default <store>/repo. Never combined with Brownfield.
+	Target string
 }
 
 // Repo is the resolved managed git repo a project's worktrees branch off.
@@ -111,6 +115,16 @@ func currentBranch(ctx context.Context, dir string) (string, error) {
 // an existing valid repo at the path is reused unchanged.
 func Resolve(ctx context.Context, store *contextstore.Store, intake Intake) (Repo, error) {
 	path := filepath.Join(store.Dir(), "repo")
+	if intake.Target != "" {
+		if intake.Brownfield {
+			return Repo{}, fmt.Errorf("repo: a greenfield Target cannot combine with a brownfield Source — pick one")
+		}
+		t, err := validateTarget(store, intake.Target)
+		if err != nil {
+			return Repo{}, err
+		}
+		path = t
+	}
 	switch classify(ctx, path) {
 	case stateValidWorkTree:
 		base, err := currentBranch(ctx, path)
@@ -128,6 +142,33 @@ func Resolve(ctx context.Context, store *contextstore.Store, intake Intake) (Rep
 		return cloneBrownfield(ctx, path, intake.Source)
 	}
 	return initGreenfield(ctx, path)
+}
+
+// validateTarget rejects a greenfield target that would nest the new project
+// inside the store or inside the harness's working directory — exactly how
+// the mech-game dogfood ended up scaffolded into the Orion repo (or-045a.7).
+// A distinct project gets a distinct location.
+func validateTarget(store *contextstore.Store, target string) (string, error) {
+	abs, err := filepath.Abs(target)
+	if err != nil {
+		return "", fmt.Errorf("repo target %q: %w", target, err)
+	}
+	if inside(abs, store.Dir()) {
+		return "", fmt.Errorf("repo target %s is inside the context store — a new project needs a standalone path", abs)
+	}
+	if cwd, err := os.Getwd(); err == nil && inside(abs, cwd) {
+		return "", fmt.Errorf("repo target %s is inside the current working directory — a new project must not be scaffolded into the harness repo; pick a standalone path", abs)
+	}
+	return abs, nil
+}
+
+// inside reports whether path is p or nested under p.
+func inside(path, p string) bool {
+	rel, err := filepath.Rel(p, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (!strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel))
 }
 
 // initGreenfield creates a fresh managed repo on `main` with one empty initial

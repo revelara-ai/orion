@@ -515,6 +515,14 @@ func (c *Conductor) ApproveSpec(ctx context.Context) (spec.ExecutableSpec, error
 		if e := tx.Specs().SetAccepted(ctx, sp.ID, es.Hash, string(rcJSON)); e != nil {
 			return e
 		}
+		// or-045a.7: a path-shaped ratified repo layout is the project's own
+		// repo target — recorded on the project row for repo.Resolve to honor.
+		// "managed-repo" (the default/fallback) records nothing.
+		if target := repoTargetFromLayout(es.Decisions["direction.repo_layout"]); target != "" {
+			if e := tx.Projects().SetRepoTarget(ctx, proj.ID, target); e != nil {
+				return e
+			}
+		}
 		// or-gb1.8: the ratification IS a Gold label — same tx, zero extra
 		// human effort, producer provenance attached.
 		m, v := c.producerProvenance()
