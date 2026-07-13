@@ -88,6 +88,26 @@ func BuildAndProve(ctx context.Context, store *contextstore.Store, gen Generator
 // the prior single-Tasks[0] build (or-tcs.1.1); the generation⊥proof wall holds
 // per task. Sequential by design — clustering, worktree isolation, and bounded
 // parallelism are later slices.
+// directionBuildRefusal refuses a build whose ratified direction exceeds the
+// harness's Go/HTTP generation-and-proof capability today (or-hn15.5). The
+// generator and every proof mode are Go-toolchain-only, so a ratified
+// direction.language=cpp / engine=unreal / wire_protocol=grpc — accepted at
+// ratify under reduced proof — must NOT silently produce a Go artifact that
+// contradicts what was ratified. It refuses LOUDLY, naming the direction; the
+// language-honest reduced-proof build that would satisfy it is or-4rxw. A
+// Go/HTTP/none direction (or no direction at all) returns nil.
+func directionBuildRefusal(es spec.ExecutableSpec) error {
+	gaps := completeness.DirectionGaps(es.Decisions)
+	if len(gaps) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(gaps))
+	for _, g := range gaps {
+		parts = append(parts, fmt.Sprintf("%s=%s (harness proves: %s)", g.Key, g.Value, strings.Join(g.Provable, "/")))
+	}
+	return fmt.Errorf("cannot build: the ratified direction exceeds the harness's Go/HTTP generation today — %s. The reduced-proof build for a non-Go/non-HTTP direction is not yet implemented (tracked in or-4rxw); refusing rather than silently emitting a Go artifact that contradicts the ratified direction", strings.Join(parts, "; "))
+}
+
 func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink, outRoot string) (finalRes BuildResult, finalErr error) {
 	if gen == nil {
 		gen = func(_ context.Context, gs sandbox.GenSpec, dir, _ string) (sandbox.GeneratedArtifact, error) {
@@ -97,6 +117,12 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 
 	c := orchestrator.NewWithStore(store)
 	es, err := c.RecallSpec(ctx)
+	if err == nil {
+		if drerr := directionBuildRefusal(es); drerr != nil {
+			onPhase.emit("Decompose", PhaseFailed, drerr.Error())
+			return BuildResult{}, drerr
+		}
+	}
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("no accepted spec (ratify first): %w", err)
 	}
@@ -142,6 +168,10 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		Format:   es.ResponseContract.Format(), // anchored contract is the source of truth
 		TimeZone: es.ResponseContract.TimeZone,
 		Cases:    es.ResponseContract.Cases, // the behavioral contract the generator builds to
+		// or-hn15.5: carry the ratified direction so the generator can branch on
+		// it (a non-Go/non-HTTP direction is already refused above).
+		Language: es.Decisions["direction.language"],
+		Engine:   es.Decisions["direction.engine"],
 	}
 	// or-v9f.3: a spec whose cases are exec-shaped with no HTTP contract is a CLI
 	// build — the generator gets the run()/thin-main contract and the proof
