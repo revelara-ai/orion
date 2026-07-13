@@ -386,6 +386,22 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		}
 	}
 
+	// or-v9f.7: verify the backlog anchors — issues consumed at intake must
+	// still read the same; an external mid-run edit is a spec-amendment
+	// decision for the developer, never silent drift. (Emit OUTSIDE the tx.)
+	if root, isBeads := beadsWorkspace(ctx); isBeads {
+		if bdetail, bdrift := backlogDriftCheck(ctx, store, proj.ID, root); bdrift {
+			onPhase.emit("SystemValidate", PhaseWarn, bdetail)
+			withLock(&stateMu, func() {
+				_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
+					_, e := tx.Escalations().CreateDetailed(ctx, proj.ID, "",
+						"backlog drift (external issue edits mid-run)", bdetail)
+					return e
+				})
+			})
+		}
+	}
+
 	// or-v9f.5: the epic verdict stays honest (any failed task rejects it), but a
 	// proven, dependency-complete, WIRED subset is still deliverable — one failed
 	// task no longer suppresses its proven siblings. The bar and the PR speak for

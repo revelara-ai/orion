@@ -127,6 +127,14 @@ func registerBeadsTool(r *tools.Registry, c *orchestrator.Conductor) {
 				return "", fmt.Errorf("bd not found on PATH; beads tracking unavailable")
 			}
 			out, exit := bdRun(ctx, root, p.Args...)
+			// or-v9f.7: a successful `show <id>` is CONSUMPTION — anchor the
+			// issue's content hash to the active project (first read wins) so
+			// external mid-run edits surface as drift at system validation.
+			if exit == 0 && p.Args[0] == "show" && len(p.Args) > 1 && !strings.HasPrefix(p.Args[1], "-") {
+				if proj, _, perr := c.Store().CurrentProjectSpec(ctx); perr == nil {
+					recordBacklogAnchor(ctx, c.Store(), proj.ID, root, p.Args[1])
+				}
+			}
 			var b strings.Builder
 			fmt.Fprintf(&b, "bd %s (exit %d)\n", strings.Join(p.Args, " "), exit)
 			if s := strings.TrimSpace(out); s != "" {
