@@ -1,0 +1,22 @@
+name: Feature request
+description: A capability Orion should have.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can't you do today? Why does it matter?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: proof
+    attributes:
+      label: How would Orion PROVE this works?
+      description: Orion is proof-gated — a feature ships with the independent evidence that it works (see docs/MANIFESTO.md).
