@@ -365,13 +365,25 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		if haveAssembled {
 			driftProof = assembledReport
 		}
-		dr, drift := driftReport(es, driftProof, orphans)
+		untraced := untracedSurface(es, contract.EntrySymbol, intDir)
+		dr, drift := driftReport(es, driftProof, orphans, untraced)
 		driftLine = dr
 		status := PhaseDone
 		if drift {
 			status = PhaseWarn
 		}
 		onPhase.emit("SystemValidate", status, dr)
+		// or-hik: scope creep ESCALATES — an inbox row the developer must
+		// answer, not just a warn line in the phase stream.
+		if len(untraced) > 0 {
+			withLock(&stateMu, func() {
+				_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
+					_, e := tx.Escalations().CreateDetailed(ctx, proj.ID, "",
+						"scope creep (built not in spec)", dr)
+					return e
+				})
+			})
+		}
 	}
 
 	// or-v9f.5: the epic verdict stays honest (any failed task rejects it), but a
