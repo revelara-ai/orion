@@ -67,6 +67,9 @@ type Conductor struct {
 	// modelSynth drafts the candidate design-proof model (or-56c.2). nil =
 	// design-model synthesis is skipped.
 	modelSynth formal.Synthesizer
+	// fitEstimator sizes proposed modules at plan time (or-7et.3). nil = the
+	// context-fit gate is a no-op.
+	fitEstimator decomposer.FitEstimator
 
 	mu        sync.RWMutex
 	intent    string
@@ -76,6 +79,9 @@ type Conductor struct {
 // SetModuleProposer injects the semantic ModuleProposer (or-809). Safe to call
 // once at wiring time before a plan is built.
 func (c *Conductor) SetModuleProposer(mp decomposer.ModuleProposer) { c.proposer = mp }
+
+// SetModuleFitEstimator injects the plan-time module sizing (or-7et.3).
+func (c *Conductor) SetModuleFitEstimator(f decomposer.FitEstimator) { c.fitEstimator = f }
 
 // New returns an in-memory Conductor ready to accept an intent. It
 // self-instruments via the default structured logger (3 a.m. test) and an

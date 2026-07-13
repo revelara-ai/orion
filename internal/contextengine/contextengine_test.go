@@ -175,3 +175,59 @@ func firstIDc(items []memory.Item) string {
 	}
 	return items[0].ID
 }
+
+// TestAssembleStopsAtTokenBudget (or-7et.3 acceptance): retrieved cognition
+// is budgeted by ESTIMATED TOKENS, not item count — and pins/constraints are
+// never dropped regardless of budget (anti-erosion preserved).
+func TestAssembleStopsAtTokenBudget(t *testing.T) {
+	ctx := context.Background()
+	mem, err := memory.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = mem.Close() }()
+
+	big := strings.Repeat("reliability pattern content ", 40) // ~280 tokens each
+	for i := 0; i < 10; i++ {
+		if _, err := mem.Write(ctx, memory.Item{
+			Tier: memory.MTM, Kind: memory.KindPattern,
+			Content: fmt.Sprintf("%s #%d", big, i), TrustTier: memory.TrustProof, Heat: 1.0,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := mem.Write(ctx, memory.Item{
+		Tier: memory.MTM, Kind: memory.KindSpec,
+		Content: "PINNED CONSTRAINT: port 8080", TrustTier: memory.TrustHuman, Pinned: true, Heat: 1.0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Token budget fits ~2 of the big items; count-window would have taken 10.
+	eng := New(nil, mem).WithWindow(12).WithTokenBudget(600)
+	b, err := eng.Assemble(ctx, "", "reliability pattern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Trusted) == 0 || len(b.Trusted) > 3 {
+		t.Fatalf("token budget must stop assembly (~2 items), got %d trusted items", len(b.Trusted))
+	}
+	var pinned bool
+	for _, c := range b.Constraints {
+		if strings.Contains(c, "PINNED CONSTRAINT") {
+			pinned = true
+		}
+	}
+	if !pinned {
+		t.Fatal("pins are never dropped by the token budget (anti-erosion)")
+	}
+
+	// Without a token budget, the count window still governs (compat).
+	b2, err := New(nil, mem).WithWindow(3).Assemble(ctx, "", "reliability pattern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b2.Trusted) != 3 {
+		t.Fatalf("count-window path must be unchanged, got %d", len(b2.Trusted))
+	}
+}

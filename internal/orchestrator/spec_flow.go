@@ -33,7 +33,7 @@ func (c *Conductor) recordShadowPlan(ctx context.Context, projectID string, es s
 	// first-party background load must never starve the live plan path.
 	ctx = llmclient.WithTrafficClass(ctx, llmclient.ClassBackground)
 	floor := decomposer.DefaultFloor()
-	pe, err := decomposer.Propose(ctx, es, c.gate.ProjectType(), floor, c.proposer)
+	pe, err := decomposer.ProposeFit(ctx, es, c.gate.ProjectType(), floor, c.proposer, c.fitEstimator)
 	if err != nil {
 		c.log.WarnContext(ctx, "module proposer shadow: propose failed", "err", err)
 		return
@@ -94,7 +94,7 @@ func (c *Conductor) livePlanOrFallback(ctx context.Context, projectID string, es
 	c.recordShadowPlan(ctx, projectID, es, oracle)
 
 	floor := decomposer.DefaultFloor()
-	pe, err := decomposer.Propose(ctx, es, c.gate.ProjectType(), floor, c.proposer)
+	pe, err := decomposer.ProposeFit(ctx, es, c.gate.ProjectType(), floor, c.proposer, c.fitEstimator)
 	if err != nil {
 		c.log.WarnContext(ctx, "module proposer live: propose failed — oracle drives", "err", err)
 		return decomposer.Epic{}, false

@@ -25,10 +25,16 @@ func NativeModuleProposer(provider llm.Provider) decomposer.ModuleProposer {
 			Description: "Propose the semantic vertical-slice modules the build should produce for this spec.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"modules":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"title":{"type":"string"},"proof_obligation":{"type":"string"},"file_scope":{"type":"string"},"covers":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}}},"required":["key","title","proof_obligation","covers"]}}},"required":["modules"]}`),
 		}
+		task := renderModuleProposeTask(es, projectType, floor)
+		// or-7et.3: the context-fit retry carries an explicit split instruction.
+		if hint, ok := decomposer.SplitHintFrom(ctx); ok {
+			task += "\n\nSIZE VIOLATION — your previous proposal had modules whose generation context cannot fit the model window:\n" + hint +
+				"\nRe-propose with each oversized module SPLIT into smaller vertical slices (preserve coverage and dependencies)."
+		}
 		resp, err := provider.Chat(ctx, llm.ChatRequest{
 			System:   moduleProposerSystemPrompt,
 			Tools:    []llm.Tool{tool},
-			Messages: []llm.Message{llm.TextMessage(llm.RoleUser, renderModuleProposeTask(es, projectType, floor))},
+			Messages: []llm.Message{llm.TextMessage(llm.RoleUser, task)},
 		})
 		if err != nil {
 			return nil, err
@@ -48,7 +54,7 @@ func NativeModuleProposer(provider llm.Provider) decomposer.ModuleProposer {
 	}
 }
 
-const moduleProposerSystemPrompt = `You are Orion's module proposer. You receive a ratified, anchored spec and MUST propose the SEMANTIC VERTICAL-SLICE modules the build should produce.
+const moduleProposerSystemPrompt = `You are Orion's module proposer. You receive a ratified, anchored spec and MUST propose the SEMANTIC VERTICAL-SLICE modules the build should produce. SIZE RULE: every module must be buildable within one model context window — when in doubt, propose MORE, SMALLER vertical slices; a module that needs more context than the window is a planning failure.
 
 Rules:
 - Slice VERTICALLY (a feature end-to-end), never horizontally (never a "write all the handlers" layer).

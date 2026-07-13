@@ -41,6 +41,11 @@ type Engine struct {
 	store  *contextstore.Store // may be nil (memory-only assembly)
 	mem    *memory.Store
 	window int
+	// tokenBudget (or-7et.3): when >0, retrieved (non-pinned) cognition is
+	// budgeted by ESTIMATED TOKENS instead of item count — the V3 "per-step
+	// context is O(module)" invariant measured, not assumed. Constraints and
+	// pins are never dropped (anti-erosion).
+	tokenBudget int
 }
 
 // New returns an engine with a default window.
@@ -54,6 +59,26 @@ func (e *Engine) WithWindow(n int) *Engine {
 		e.window = n
 	}
 	return e
+}
+
+// WithTokenBudget switches retrieved-cognition budgeting from item count to
+// estimated tokens (or-7et.3). The conductor derives the budget from the
+// active provider's context window.
+func (e *Engine) WithTokenBudget(tokens int) *Engine {
+	if tokens > 0 {
+		e.tokenBudget = tokens
+	}
+	return e
+}
+
+// itemTokens estimates one memory item's token cost (chars/4, the
+// llm.EstimateTokens heuristic, without constructing a request per item).
+func itemTokens(content string) int {
+	n := len(content) / 4
+	if n < 1 {
+		n = 1
+	}
+	return n
 }
 
 // Assemble builds the generation-domain bundle for a task+query.
@@ -107,7 +132,23 @@ func (e *Engine) assemble(ctx context.Context, taskID, query string, domain Doma
 	if err != nil {
 		return Bundle{}, err
 	}
-	budget := e.window
+	countBudget := e.window
+	tokensLeft := e.tokenBudget
+	spend := func(it memory.Item) bool {
+		if e.tokenBudget > 0 {
+			cost := itemTokens(it.Content)
+			if cost > tokensLeft {
+				return false
+			}
+			tokensLeft -= cost
+			return true
+		}
+		if countBudget <= 0 {
+			return false
+		}
+		countBudget--
+		return true
+	}
 	for _, it := range retrieved {
 		if it.Pinned {
 			continue // already injected as a constraint
@@ -116,14 +157,18 @@ func (e *Engine) assemble(ctx context.Context, taskID, query string, domain Doma
 			if domain == DomainProof {
 				continue // Trust invariant 7: never feed generation memory to proof
 			}
+			// or-7et.3: untrusted cognition shares the same token budget — it
+			// rides gs.Context too; unbounded quarantine still overflows.
+			if e.tokenBudget > 0 && !spend(it) {
+				continue
+			}
 			b.Untrusted = append(b.Untrusted, it)
 			continue
 		}
-		if budget <= 0 {
+		if !spend(it) {
 			continue
 		}
 		b.Trusted = append(b.Trusted, it)
-		budget--
 	}
 
 	// or-vx8: record access ONCE on the items actually used in this GENERATION bundle — the
