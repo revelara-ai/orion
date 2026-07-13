@@ -51,3 +51,24 @@ func (s *Store) SpendByRole(ctx context.Context, projectID string) ([]SpendRow, 
 	}
 	return out, rows.Err()
 }
+
+// DominantModelByRun returns each run's most-token-heavy model_ref — the
+// stratification key for the longitudinal harness eval (or-gb1.2).
+func (s *Store) DominantModelByRun(ctx context.Context, projectID string) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT run_id, model_ref, SUM(tokens) AS t FROM spend_ledger WHERE project_id=? GROUP BY run_id, model_ref ORDER BY run_id, t ASC`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
+	for rows.Next() {
+		var runID, model string
+		var tokens int
+		if err := rows.Scan(&runID, &model, &tokens); err != nil {
+			return nil, err
+		}
+		out[runID] = model // ascending token order → the last write per run wins (dominant)
+	}
+	return out, rows.Err()
+}
