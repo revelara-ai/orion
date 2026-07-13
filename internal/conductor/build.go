@@ -262,9 +262,14 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	// not once at end-of-run.
 	drift := newDriftMonitor(c)
 	leaseByCluster := map[string][]string{}
+	clusterMembers := map[string][]string{}
 	for _, cl := range clusters {
 		leaseByCluster[cl.Key] = clusterLeaseScope(cl)
+		clusterMembers[cl.Key] = cl.Members
 	}
+	// or-v9f.26: milestone checkpoints — the proactive trajectory digest every
+	// k completed clusters (advisory by default; pause-for-ack gates dispatch).
+	cp := newCheckpointer(store, &stateMu, runProj.ID, runID, onPhase, requiredIDs, clusterMembers, drift.Count)
 	results, err := runClusterDAG(clusters, scheduleTasks, maxConc, func(task orchestrator.PlanTask, cache map[string]proof.Report) (taskResult, error) {
 		// or-7et.4c: the cluster worktree is created AT DISPATCH — an N-cluster
 		// plan holds ~maxConc checkouts, not N, and integrated waves free theirs.
@@ -279,6 +284,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		tr, terr := buildOneTask(ctx, store, gen, aligner, teeRunSink(safeSink, store, runProj.ID, runID, task.ID), es, model, gsTask, contract, requiredIDs, buildDir, cache, eng, mem, &stateMu, task)
 		if terr == nil {
 			drift.RecordAlignment(tr.Alignment)
+			cp.taskCompleted(ctx, task.ID, tr.Report) // or-v9f.26 milestone cadence
 		}
 		return tr, terr
 	}, func(clusterKey string) error {
@@ -286,6 +292,10 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 			return err
 		}
 		if err := budgetGate(c.Budget()); err != nil {
+			return err
+		}
+		// or-v9f.26 pause-for-ack: an unanswered checkpoint refuses dispatch.
+		if err := cp.preDispatch(ctx); err != nil {
 			return err
 		}
 		return drift.Check(ctx)

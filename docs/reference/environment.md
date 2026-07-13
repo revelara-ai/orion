@@ -60,6 +60,8 @@ Everything is optional; unset means the documented default. Variables marked
 | `ORION_MODEL_<ROLE>` | session brain | Per-role model routing (or-kzf.4): `ORION_MODEL_REVIEW=anthropic/claude-small` routes that role to a cheaper model. Roles: GENERATE, ALIGN, PROPOSE, GRILL, REVIEW, DISTILL, DESIGN. File equivalent: harness `models.yaml` (`roles:` map). Env wins; unbuildable falls back with a warning; routing is recorded per project. |
 | `ORION_AGENT` | fixture | Vendor coding agent, now an ordered failover chain: `claude,gemini,codex` — rate-limit/overload/quota/hang/refusal advances to the next entry with a visible notice. |
 | `ORION_AGENT_TURN_TIMEOUT` | 20m | Per-turn deadline for a vendor-agent generation turn — a hung agent can no longer wedge an unattended run. |
+| `ORION_CHECKPOINT_EVERY` / `ORION_CHECKPOINT_INTERVAL` | N/4 clusters / off | Milestone-checkpoint cadence: every k completed clusters and/or a wall-clock interval; each emits a trajectory digest (coverage-so-far vs schedule, concerns, escalations) as a Checkpoint phase + notify kind=checkpoint. |
+| `ORION_CHECKPOINT_MODE` | advisory | `pause-for-ack` files an inbox escalation at each checkpoint and refuses further dispatch until it is answered. |
 | `ORION_HARNESS_DIR` | `~/.orion/harness` | Externalized, reviewable harness config: `generation_preamble.tmpl`, `checklists.yaml`, `rules.md` — edits change behavior without a rebuild; invalid files warn + fall back (see `orion doctor`). |
 | `ORION_MEMORY_DISTILL` | off | `1` enables the LLM distillation pass: transferable rules from refinement trajectories, written as generation-tier candidates (opt-in). |
 | `ORION_MEMORY_EMBEDDER` | off | `gomlx` enables pure-Go semantic recall (opt-in). |

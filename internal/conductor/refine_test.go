@@ -363,3 +363,35 @@ func TestGenScopeEnforcedRejectsOutOfScopeArtifact(t *testing.T) {
 		t.Fatalf("the failure analysis must name the out-of-scope paths:\n%s", res.FailureAnalysis)
 	}
 }
+
+// TestCheckpointEmitsMidRunE2E (or-v9f.26 acceptance, full lane): a real DAG
+// run in advisory mode emits at least one Checkpoint phase event BEFORE the
+// run's terminal event — the proactive touchpoint exists on the live path.
+func TestCheckpointEmitsMidRunE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full DAG fixture run; skipped in -short")
+	}
+	t.Setenv("ORION_CHECKPOINT_EVERY", "1")
+	t.Setenv("ORION_CHECKPOINT_MODE", "advisory")
+	oc, ctx := ratifiedTimeService(t)
+	var seq []string
+	sink := func(e PhaseEvent) { seq = append(seq, e.Phase+":"+string(e.Status)) }
+	if _, err := BuildAndProve(ctx, oc.Store(), nil, nil, sink, ""); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	checkpointAt, runDoneAt := -1, -1
+	for i, s := range seq {
+		if strings.HasPrefix(s, "Checkpoint:") && checkpointAt == -1 {
+			checkpointAt = i
+		}
+		if s == "Run:done" {
+			runDoneAt = i
+		}
+	}
+	if checkpointAt == -1 {
+		t.Fatalf("a multi-cluster advisory run must emit a Checkpoint phase, got %v", seq)
+	}
+	if runDoneAt != -1 && checkpointAt > runDoneAt {
+		t.Fatal("the checkpoint must land MID-run, before the terminal event")
+	}
+}
