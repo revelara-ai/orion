@@ -37,18 +37,22 @@ type OrionAgent struct {
 
 	mu       sync.Mutex
 	sessions map[string][]llm.Message
-	tree     map[string]sessionNode // session forks: id → parent + fork turn (or-ykz.5)
-	changes  map[string]*changeSession                                  // brownfield change-flow state, per session
-	allowed  map[string]map[string]bool                                 // session → tool names the developer allow-always'd
-	starts   map[string]time.Time                                       // session → first-seen time (names the on-disk transcript)
-	model    string                                                     // current model ref (for /model) — ALWAYS a full "provider/model" ref
-	rebuild  func(currentRef, arg string) (llm.Provider, string, error) // rebuilds the provider for a new model, resolving a bare arg against currentRef's provider; returns the provider and its NORMALIZED full ref (nil = no switch)
-	list     func(ctx context.Context) []string                         // lists "provider/model" refs across configured providers (nil = no listing)
+	// or-08l: one mutex per session, held for a whole Prompt — same-session
+	// turns serialize so history read-modify-write + persist are atomic.
+	turnMu      map[string]*sync.Mutex
+	persistWarn sync.Once                                                  // a repeated transcript-write failure is logged ONCE
+	tree        map[string]sessionNode                                     // session forks: id → parent + fork turn (or-ykz.5)
+	changes     map[string]*changeSession                                  // brownfield change-flow state, per session
+	allowed     map[string]map[string]bool                                 // session → tool names the developer allow-always'd
+	starts      map[string]time.Time                                       // session → first-seen time (names the on-disk transcript)
+	model       string                                                     // current model ref (for /model) — ALWAYS a full "provider/model" ref
+	rebuild     func(currentRef, arg string) (llm.Provider, string, error) // rebuilds the provider for a new model, resolving a bare arg against currentRef's provider; returns the provider and its NORMALIZED full ref (nil = no switch)
+	list        func(ctx context.Context) []string                         // lists "provider/model" refs across configured providers (nil = no listing)
 }
 
 // NewOrionAgent builds the native agent over the given model provider.
 func NewOrionAgent(p llm.Provider, c *orchestrator.Conductor, role RoleTemplate) *OrionAgent {
-	a := &OrionAgent{provider: p, conductor: c, role: role, sessions: map[string][]llm.Message{}, changes: map[string]*changeSession{}, allowed: map[string]map[string]bool{}, starts: map[string]time.Time{}}
+	a := &OrionAgent{provider: p, conductor: c, role: role, sessions: map[string][]llm.Message{}, turnMu: map[string]*sync.Mutex{}, changes: map[string]*changeSession{}, allowed: map[string]map[string]bool{}, starts: map[string]time.Time{}}
 	if n, err := strconv.Atoi(os.Getenv("ORION_LOOP_BREAKER_TURNS")); err == nil && n > 0 {
 		a.breaker.Threshold = n
 	}
@@ -98,6 +102,22 @@ func (a *OrionAgent) Serve(ctx context.Context, r io.Reader, w io.Writer) error 
 // grills, and calls the spec tools until it ends the turn. Thoughts stream to the
 // Conversation pane; tool calls stream to Fleet; a ratified spec surfaces a plan
 // update.
+// turnLockFor returns the per-session turn mutex (or-08l), creating it on
+// first sight of the session id.
+func (a *OrionAgent) turnLockFor(sessionID string) *sync.Mutex {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.turnMu == nil {
+		a.turnMu = map[string]*sync.Mutex{}
+	}
+	m, ok := a.turnMu[sessionID]
+	if !ok {
+		m = &sync.Mutex{}
+		a.turnMu[sessionID] = m
+	}
+	return m
+}
+
 func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream func(acp.Update), ask acp.AskFunc) (acp.PromptResult, error) {
 	end := acp.PromptResult{StopReason: "end_turn"}
 
@@ -115,6 +135,14 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 	// loop, spec tools, build/change pipelines, and proof loops beneath this
 	// turn share a single anti-amplification ceiling.
 	ctx = withLLMGuards(ctx)
+
+	// or-08l: serialize same-session turns for the whole Prompt. Without this,
+	// concurrent turns lose updates (load-modify-store of the history isn't
+	// atomic) and race the transcript write. The breaker check stays ABOVE the
+	// lock so a dead provider refuses fast even while a turn is stuck.
+	turnLock := a.turnLockFor(sessionID)
+	turnLock.Lock()
+	defer turnLock.Unlock()
 
 	a.mu.Lock()
 	history := append([]llm.Message(nil), a.sessions[sessionID]...)
@@ -222,7 +250,17 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 	a.mu.Lock()
 	a.sessions[sessionID] = convo
 	a.mu.Unlock()
-	a.persistSession(sessionID, convo) // best-effort disk record so a failing session is recoverable
+	// or-08l: persist OFF the turn's return path. The goroutine re-acquires
+	// the turn lock and re-reads the FRESHEST history, so a slow write can
+	// never clobber a newer turn's transcript (monotonic, best-effort).
+	go func() {
+		turnLock.Lock()
+		defer turnLock.Unlock()
+		a.mu.Lock()
+		latest := append([]llm.Message(nil), a.sessions[sessionID]...)
+		a.mu.Unlock()
+		a.persistSession(sessionID, latest)
+	}()
 
 	// Feed the turn's outcome to the breaker; announce the open transition so the
 	// human hears the escalation ONCE, on the turn that tripped it.
