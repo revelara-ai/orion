@@ -100,7 +100,7 @@ func TestNativeGeneratorBuildsArbitraryService(t *testing.T) {
 	}}
 
 	dir := t.TempDir()
-	art, err := NativeGenerator(gen, nil)(context.Background(), gs, dir, "")
+	art, err := NativeGenerator(gen, nil, nil)(context.Background(), gs, dir, "")
 	if err != nil {
 		t.Fatalf("native generate: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestNativeGeneratorRejectsPathEscape(t *testing.T) {
 	}}
 	// The escape is rejected inside the loop (tool error); generation then ends with
 	// no files → ArtifactFromDir errors. Either way, nothing is written outside dir.
-	_, _ = NativeGenerator(gen, nil)(context.Background(), sandbox.GenSpec{Module: "orion-generated/svc", Route: "/x", Format: "json"}, dir, "")
+	_, _ = NativeGenerator(gen, nil, nil)(context.Background(), sandbox.GenSpec{Module: "orion-generated/svc", Route: "/x", Format: "json"}, dir, "")
 	if _, err := os.Stat(filepath.Join(dir, "..", "escape.go")); err == nil {
 		t.Fatal("write_file allowed a path escaping the build dir")
 	}

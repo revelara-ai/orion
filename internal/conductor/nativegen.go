@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/harness"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/internal/sandbox"
@@ -24,7 +25,7 @@ import (
 // template. The model never sees the proof corpus (it gets the contract — the
 // cases — not the harness-authored tests), so it still cannot grade its own
 // homework: the (independent) proof holds whatever it writes accountable.
-func NativeGenerator(provider llm.Provider, acct *budget.Accountant) Generator {
+func NativeGenerator(provider llm.Provider, acct *budget.Accountant, store *contextstore.Store) Generator {
 	return func(ctx context.Context, gs sandbox.GenSpec, buildDir, feedback string) (sandbox.GeneratedArtifact, error) {
 		reg := tools.NewRegistry()
 		reg.Register(writeFileTool(buildDir)) // create files (greenfield main.go/go.mod)
@@ -35,6 +36,13 @@ func NativeGenerator(provider llm.Provider, acct *budget.Accountant) Generator {
 			Tools:      reg,
 			System:     generationRole(gs),
 			Supervisor: harness.Supervisor{MaxIterations: 24, Budget: acct},
+		}
+		if store != nil {
+			// or-mvr.8: a provider outage mid-turn checkpoints the conversation
+			// (keyed by the cluster worktree, which survives the re-run) so the
+			// resumed attempt continues where it died instead of regenerating.
+			loop.Checkpoint = storeTurnCheckpoint{store: store}
+			loop.CheckpointKey = "gen:" + filepath.Base(buildDir)
 		}
 		userMsg := "Generate the program now: write each file with write_file (a complete go.mod and main.go), then end your turn."
 		if strings.TrimSpace(feedback) != "" {

@@ -369,7 +369,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			var gen Generator
 			var aligner Aligner
 			if provider != nil {
-				gen = NativeGenerator(provider, c.Budget())
+				gen = NativeGenerator(provider, c.Budget(), st)
 				aligner = NativeAligner(provider)
 				// or-809: give the plan path a semantic ModuleProposer (runs in
 				// SHADOW behind ORION_MODULE_PROPOSER; the oracle still drives).
