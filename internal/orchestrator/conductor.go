@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -34,6 +35,12 @@ type Confirmation struct {
 	Accepted      bool
 	Message       string
 	OpenDecisions []completeness.OpenDecision
+	// ProjectType + Scale surface the deterministic intent classification
+	// (or-045a.1): Unclassified means the conductor must propose a type and the
+	// developer confirm it (SetProjectType) before the spec can ratify; a large
+	// Scale selects the goals-first conversation.
+	ProjectType string
+	Scale       string
 }
 
 // Status is the situational-awareness snapshot the TUI's Conversation/Fleet
@@ -191,6 +198,7 @@ func (c *Conductor) Submit(ctx context.Context, intent string) (Confirmation, er
 	// right per-type task template. A clear CLI/library/worker signal switches it;
 	// otherwise the V2.0 http-service path is unchanged (or-3ba.2).
 	ptype := completeness.InferProjectType(trimmed)
+	scale := completeness.ClassifyScale(trimmed)
 
 	// Persist the intent as a project + draft spec so it survives a restart. The
 	// project + spec commit as one transaction (atomic intake). When a project is
@@ -213,6 +221,9 @@ func (c *Conductor) Submit(ctx context.Context, intent string) (Confirmation, er
 			if err != nil {
 				return err
 			}
+			if err := tx.Projects().SetScale(ctx, pid, scale); err != nil {
+				return err
+			}
 			projectID = pid
 			if queuedBehind != nil {
 				if err := tx.Projects().SetStatus(ctx, pid, "queued"); err != nil {
@@ -233,8 +244,10 @@ func (c *Conductor) Submit(ctx context.Context, intent string) (Confirmation, er
 		if queuedBehind != nil {
 			c.log.InfoContext(ctx, "intent queued", "intent", trimmed, "behind", queuedBehind.Intent, "position", position)
 			return Confirmation{
-				Intent:   trimmed,
-				Accepted: true,
+				Intent:      trimmed,
+				Accepted:    true,
+				ProjectType: ptype,
+				Scale:       scale,
 				Message: fmt.Sprintf("Queued (position %d): %q waits behind the active intent %q. Finish or abandon the active one (orion queue next / orion queue abandon) and it starts automatically.",
 					position, trimmed, queuedBehind.Intent),
 			}, nil
@@ -259,12 +272,55 @@ func (c *Conductor) Submit(ctx context.Context, intent string) (Confirmation, er
 	if len(open) > 0 {
 		msg = fmt.Sprintf("Before I build %q, I need %d decision(s) — see the questions below.", trimmed, len(open))
 	}
+	if ptype == completeness.Unclassified {
+		msg += " The intent carries no explicit software-type signal — propose a project type to the developer (service, CLI, game, pipeline, …), get their confirmation, and record it with set_project_type; the spec cannot ratify until the type is resolved."
+	}
 	return Confirmation{
 		Intent:        trimmed,
 		Accepted:      true,
 		Message:       msg,
 		OpenDecisions: open,
+		ProjectType:   ptype,
+		Scale:         scale,
 	}, nil
+}
+
+// projectTypeSlug validates a developer-ratified project type: a short
+// kebab/word slug. Deliberately permissive about VOCABULARY (game, pipeline,
+// ml-service, … — an unregistered type simply gets the universal reliability
+// checklist) but strict about shape, and never the unclassified sentinel.
+var projectTypeSlug = regexp.MustCompile(`^[a-z][a-z0-9-]{1,39}$`)
+
+// SetProjectType resolves the ACTIVE project's type after the developer
+// confirms the conductor's proposal (or-045a.1) — the deterministic verb
+// behind the set_project_type tool. It persists the type and swaps the
+// completeness gate to the resolved type's checklist. Refused for an invalid
+// slug or the unclassified sentinel; ratification stays blocked until this
+// (or an explicit-signal inference) resolves the type.
+func (c *Conductor) SetProjectType(ctx context.Context, projectType string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	pt := strings.ToLower(strings.TrimSpace(projectType))
+	if pt == completeness.Unclassified || !projectTypeSlug.MatchString(pt) {
+		return fmt.Errorf("set_project_type: %q is not a valid project type — a short lowercase slug naming what the software IS (e.g. http-service, cli, game, pipeline)", projectType)
+	}
+	if c.store != nil {
+		proj, _, err := c.store.CurrentProjectSpec(ctx)
+		if err != nil {
+			return fmt.Errorf("set_project_type: no active project: %w", err)
+		}
+		if err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+			return tx.Projects().SetProjectType(ctx, proj.ID, pt)
+		}); err != nil {
+			return err
+		}
+	}
+	c.mu.Lock()
+	c.gate = completeness.NewAnalyzer(pt)
+	c.mu.Unlock()
+	c.log.InfoContext(ctx, "project type resolved", "type", pt)
+	return nil
 }
 
 // Answer records a developer's answer to an open decision. Skeleton: validated

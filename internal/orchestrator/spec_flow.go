@@ -423,6 +423,15 @@ func (c *Conductor) ApproveSpec(ctx context.Context) (spec.ExecutableSpec, error
 	if err != nil {
 		return spec.ExecutableSpec{}, err
 	}
+	// Unresolved project type (or-045a.1): an unclassified project has only the
+	// universal checklist, so it could ratify with zero human input on WHAT the
+	// software even is (the or-ep1 vacuous-ratification trap). The conductor
+	// proposes a type, the developer confirms, set_project_type records it —
+	// only then can the spec ratify.
+	if c.gate.ProjectType() == completeness.Unclassified {
+		return spec.ExecutableSpec{}, fmt.Errorf(
+			"cannot ratify: the project type is unresolved — the intent carried no explicit software-type signal. Propose a type to the developer (service, CLI, game, pipeline, …) and record their confirmation with set_project_type first")
+	}
 	// Zero-case hard fail (or-8ti.1, the or-y9d false-pass class): a spec with
 	// nothing to execute would "prove" vacuously green. Ratification is where
 	// that stops — intermediate compiles (preview, decomposer) may pass through
