@@ -333,9 +333,16 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 	r.Register(tools.Tool{
 		Name:        "build_change",
 		Description: "Generate the change and PROVE it against the RATIFIED cases: regression gate (do-no-harm) + new-behavior proof (the ratified oracle) → commit on a review branch ONLY if both hold. Call after ratify_cases. Reports the verdict + per-obligation transcript; if NOT committed, read the do-no-harm transcript digest in the result, fix the defect it names, and call build_change again — failure→fix→retry is the expected loop (fresh worktree per attempt). Escalate to the developer only if the same defect survives two corrected attempts.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"force_rederive":{"type":"boolean","description":"skip reuse of an existing proven artifact and regenerate fresh (deliberate retry)"}}}`),
 		Safety:      tools.Safety{Destructive: true},
-		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct {
+				ForceRederive bool `json:"force_rederive"`
+			}
+			_ = json.Unmarshal(in, &p)
+			if p.ForceRederive {
+				ctx = WithForceRederive(ctx)
+			}
 			intent, cases, supersedes, ratified := cs.snapshot()
 			if !ratified {
 				return "", fmt.Errorf("build_change: ratify_cases first (the oracle must be locked before generation)")

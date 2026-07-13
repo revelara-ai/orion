@@ -25,19 +25,20 @@ import (
 
 // ChangeResult is the outcome of a brownfield change-proof.
 type ChangeResult struct {
-	Branch       string
-	Path         string // the worktree the change lives in
-	Regression   brownfield.RegressionResult
-	FilesChanged []string
-	NewBehavior  *truthalign.ModeResult // nil when no ratified cases were supplied
-	Committed    bool
-	Reason       string          // why not committed, if applicable
-	Tier         string          // reliability tier classified from the change worktree (or-v9f.15)
-	Delivery     string          // "deliver" | "escalate" — the same decision semantic as the greenfield bar
-	PR           PRResult        // PR-ready handoff over the review branch on deliver (or-v9f.15)
-	Landed       bool            // or-7fd: auto-landed post-proof under the standing opt-in
-	Alignment    AlignmentRecord // or-3p5.4: advisory intent-alignment audit of the proven change (log-only)
-	EscalationID string          // inbox escalation recorded on escalate (or-v9f.15)
+	Branch           string
+	Path             string // the worktree the change lives in
+	Regression       brownfield.RegressionResult
+	FilesChanged     []string
+	NewBehavior      *truthalign.ModeResult // nil when no ratified cases were supplied
+	Committed        bool
+	Reason           string          // why not committed, if applicable
+	Tier             string          // reliability tier classified from the change worktree (or-v9f.15)
+	Delivery         string          // "deliver" | "escalate" — the same decision semantic as the greenfield bar
+	PR               PRResult        // PR-ready handoff over the review branch on deliver (or-v9f.15)
+	Landed           bool            // or-7fd: auto-landed post-proof under the standing opt-in
+	ExistingArtifact bool            // or-mvs: an existing proven branch was recommended instead of re-deriving
+	Alignment        AlignmentRecord // or-3p5.4: advisory intent-alignment audit of the proven change (log-only)
+	EscalationID     string          // inbox escalation recorded on escalate (or-v9f.15)
 
 	// Reliability floor (or-uvw.8, log-only): corpus-sourced signals retrieved once in
 	// the trusted control plane, used twice — advisory generator context + lint checks.
@@ -72,6 +73,19 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	// (or-mvr.1) — kept if a turn above already installed one.
 	ctx = withLLMGuards(ctx)
 	sink = syncSink(sink)
+	// or-mvs: a prior run's PROVEN, still-fast-forwardable artifact beats
+	// re-deriving the same change — recommend landing it (override:
+	// force_rederive / ORION_REDERIVE=1).
+	if !forceRederive(ctx) {
+		if branch, ok := existingProvenArtifact(ctx, repoRoot, intent); ok {
+			sink.emit("reuse", PhaseDone, "existing proven artifact: "+branch)
+			return ChangeResult{
+				Branch:           branch,
+				ExistingArtifact: true,
+				Reason:           reuseRecommendation(branch),
+			}, nil
+		}
+	}
 	m := brownfield.ScanRepoMap(repoRoot)
 	mgr := worktree.New(repoRoot, store)
 

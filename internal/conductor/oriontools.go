@@ -469,12 +469,14 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			`"config_fail_re":{"type":"string","description":"regexp that must NOT match (config-load failure, or a mis-wire for 'file')"},` +
 			`"curate_golangci":{"type":"boolean","description":"for golangci-lint: vet the generated .golangci.yml into .orion-golangci.yml (reject plugins) before running; then pass --config .orion-golangci.yml"}` +
 			`},"required":["tool","args"]}}` +
+			`,"force_rederive":{"type":"boolean","description":"skip reuse of an existing proven artifact and regenerate fresh (deliberate retry)"}` +
 			`},"required":["intent"]}`),
 		Safety: tools.Safety{Destructive: true},
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
 			var p struct {
-				Intent string `json:"intent"`
-				Verify []struct {
+				Intent        string `json:"intent"`
+				ForceRederive bool   `json:"force_rederive"`
+				Verify        []struct {
 					Tool            string   `json:"tool"`
 					Args            []string `json:"args"`
 					MustExitZero    bool     `json:"must_exit_zero"`
@@ -489,6 +491,9 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			}
 			if strings.TrimSpace(p.Intent) == "" {
 				return "", fmt.Errorf("change_repo: intent is required")
+			}
+			if p.ForceRederive {
+				ctx = WithForceRederive(ctx)
 			}
 			if provider == nil {
 				return "", fmt.Errorf("changing the repo needs a model provider (offline mode cannot generate edits)")
