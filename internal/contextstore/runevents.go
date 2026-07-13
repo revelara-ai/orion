@@ -67,3 +67,28 @@ func (s *Store) LatestRunID(ctx context.Context, projectID string) (string, bool
 	}
 	return id, true, nil
 }
+
+// ListRunIDs returns the project's most recent run ids, newest first — the
+// drift comparison's axis (or-kzf.3).
+func (s *Store) ListRunIDs(ctx context.Context, projectID string, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT run_id, MAX(id) AS latest FROM run_events WHERE project_id=? GROUP BY run_id ORDER BY latest DESC LIMIT ?`,
+		projectID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var id string
+		var latest int64
+		if err := rows.Scan(&id, &latest); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
