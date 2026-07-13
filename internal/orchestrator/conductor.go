@@ -56,6 +56,12 @@ type Conductor struct {
 	gate   *completeness.Analyzer
 	budget *budget.Accountant
 
+	// Producer provenance for gold-label capture (or-gb1.8): which model +
+	// skill/prompt/checklist version produced what the human ratifies.
+	// "unknown" is the explicit default — an unversioned component never
+	// blocks capture.
+	provModel, provVersion string
+
 	// proposer is the injectable semantic ModuleProposer (or-809). nil = the
 	// deterministic template decomposer only (shadow/live disabled). Injected by
 	// the conductor tool wiring when an LLM provider is present, mirroring how the
@@ -296,4 +302,22 @@ func projectName(intent string) string {
 // same transactional rollback path as the reversibility gate.
 func (c *Conductor) Interrupt() {
 	c.log.Info("conductor interrupted")
+}
+
+// SetProducerProvenance records which model + producer version is driving
+// this conductor — stamped onto every captured gold label (or-gb1.8).
+func (c *Conductor) SetProducerProvenance(modelID, producerVersion string) {
+	c.provModel, c.provVersion = modelID, producerVersion
+}
+
+// producerProvenance returns the stamp, defaulting to the explicit "unknown".
+func (c *Conductor) producerProvenance() (string, string) {
+	m, v := c.provModel, c.provVersion
+	if m == "" {
+		m = "unknown"
+	}
+	if v == "" {
+		v = "unknown"
+	}
+	return m, v
 }

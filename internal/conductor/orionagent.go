@@ -70,6 +70,11 @@ func (a *OrionAgent) SetModel(model string, rebuild func(currentRef, arg string)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.model, a.rebuild, a.list = model, rebuild, list
+	// or-gb1.8: gold labels captured at ratification carry the model that
+	// produced what the human graded.
+	if a.conductor != nil {
+		a.conductor.SetProducerProvenance(model, "")
+	}
 }
 
 // currentProvider returns the active provider under lock (it can be swapped by /model).

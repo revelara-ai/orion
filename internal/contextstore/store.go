@@ -206,6 +206,7 @@ func (t *Tx) Worktrees() *WorktreeRepo               { return &WorktreeRepo{t.tx
 func (t *Tx) PolarisContext() *PolarisContextRepo    { return &PolarisContextRepo{t.tx} }
 func (t *Tx) Deliveries() *DeliveryRepo              { return &DeliveryRepo{t.tx} }
 func (t *Tx) Escalations() *EscalationRepo           { return &EscalationRepo{t.tx} }
+func (t *Tx) GoldLabels() *GoldLabelRepo             { return &GoldLabelRepo{t.tx} }
 
 // ── Store-level read helpers (read-model over the repositories) ──────────────
 
@@ -611,4 +612,25 @@ func (s *Store) TrackRecord(ctx context.Context, projectID string) (int, error) 
 	var n int
 	err := row.Scan(&n)
 	return n, err
+}
+
+// ListGoldLabels returns a project's captured ratification labels, newest
+// first — the read surface for future SkillEval/longitudinal consumers.
+func (s *Store) ListGoldLabels(ctx context.Context, projectID string) ([]GoldLabel, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, project_id, ratification_kind, outcome, spec_id, artifact_hash, model_id, producer_version, created_at
+		 FROM gold_labels WHERE project_id=? ORDER BY created_at DESC, id DESC`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []GoldLabel
+	for rows.Next() {
+		var g GoldLabel
+		if err := rows.Scan(&g.ID, &g.ProjectID, &g.RatificationKind, &g.Outcome, &g.SpecID, &g.ArtifactHash, &g.ModelID, &g.ProducerVersion, &g.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
 }

@@ -259,3 +259,21 @@ CREATE TABLE IF NOT EXISTS spend_ledger (
     recorded_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_spend_project ON spend_ledger(project_id);
+
+-- Gold labels (or-gb1.8): every developer ratification captured as a Gold-tier
+-- eval record at ZERO extra human effort — outcome + producer provenance
+-- (which model/skill/checklist produced the artifact the human graded).
+-- Capture only; consumers (SkillEval, autonomy ladder, longitudinal evals)
+-- stay in or-lrr. Trust: human-provenance ground truth — control-domain
+-- records, never proof inputs.
+CREATE TABLE IF NOT EXISTS gold_labels (
+    id                TEXT PRIMARY KEY,
+    project_id        TEXT NOT NULL,
+    ratification_kind TEXT NOT NULL, -- spec_ratification | assumption | escalation
+    outcome           TEXT NOT NULL, -- accept | amend | reject | resolved
+    spec_id           TEXT NOT NULL DEFAULT '',
+    artifact_hash     TEXT NOT NULL DEFAULT '',
+    model_id          TEXT NOT NULL DEFAULT 'unknown',
+    producer_version  TEXT NOT NULL DEFAULT 'unknown',
+    created_at        TEXT NOT NULL
+);

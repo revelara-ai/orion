@@ -1158,3 +1158,54 @@ func mustAffectOne(res sql.Result, entity string) error {
 	}
 	return nil
 }
+
+// ── GoldLabelRepo (or-gb1.8) ─────────────────────────────────────────────────
+
+// GoldLabelRepo persists ratification acts as Gold-tier eval records.
+type GoldLabelRepo struct{ tx *sql.Tx }
+
+// GoldLabel is one captured ratification with producer provenance.
+type GoldLabel struct {
+	ID, ProjectID, RatificationKind, Outcome string
+	SpecID, ArtifactHash                     string
+	ModelID, ProducerVersion, CreatedAt      string
+}
+
+// Create records one label. Empty provenance is stored as the EXPLICIT
+// "unknown" — unversioned components never block capture.
+func (r *GoldLabelRepo) Create(ctx context.Context, projectID, kind, outcome, specID, artifactHash, modelID, producerVersion string) (string, error) {
+	if modelID == "" {
+		modelID = "unknown"
+	}
+	if producerVersion == "" {
+		producerVersion = "unknown"
+	}
+	id := newID()
+	_, err := r.tx.ExecContext(ctx,
+		`INSERT INTO gold_labels (id, project_id, ratification_kind, outcome, spec_id, artifact_hash, model_id, producer_version, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?)`,
+		id, projectID, kind, outcome, specID, artifactHash, modelID, producerVersion, nowRFC3339())
+	if err != nil {
+		return "", fmt.Errorf("gold label: %w", err)
+	}
+	return id, nil
+}
+
+// ResolveEscalationGold resolves an escalation AND captures the Gold label in
+// the same transaction (or-gb1.8: frictionless + atomic). The label's project
+// comes from the escalation row itself.
+func (t *Tx) ResolveEscalationGold(ctx context.Context, escalationID, resolution, modelID, producerVersion string) error {
+	var projectID string
+	if err := t.tx.QueryRowContext(ctx,
+		`SELECT project_id FROM escalations WHERE id=?`, escalationID).Scan(&projectID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if err := t.Escalations().Resolve(ctx, escalationID, resolution); err != nil {
+		return err
+	}
+	_, err := t.GoldLabels().Create(ctx, projectID, "escalation", "resolved", "", escalationID, modelID, producerVersion)
+	return err
+}

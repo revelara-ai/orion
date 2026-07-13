@@ -111,6 +111,9 @@ func (a *OrionAgent) switchModel(arg string) (string, error) {
 		return "Couldn't switch to " + arg + ": " + err.Error(), nil
 	}
 	a.provider, a.model = p, ref
+	if a.conductor != nil {
+		a.conductor.SetProducerProvenance(ref, "") // or-gb1.8: /model swaps re-stamp provenance
+	}
 	// A model switch replaces the dependency the breaker accumulated evidence
 	// against — stale evidence must not refuse turns on the NEW provider.
 	a.breaker.Reset()
