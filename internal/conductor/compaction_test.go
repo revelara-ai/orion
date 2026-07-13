@@ -270,10 +270,12 @@ func TestReactiveCompactionFailureKeepsCleanSession(t *testing.T) {
 // after compaction is reported clearly (not re-sent into a re-overflow), and the
 // session is left compacted/clean rather than over-window.
 func TestReactiveGiantMessageSurfacesCleanly(t *testing.T) {
-	prov := &overflowThenCompactLLM{window: 8192}
+	// 32k: the conductor's system+tools floor (~8.5k) FITS — the or-hhq floor
+	// diagnostic stays quiet and the giant MESSAGE is what overflows.
+	prov := &overflowThenCompactLLM{window: 32768}
 	a := NewOrionAgent(prov, orchestrator.NewWithStore(openStore(t)), RoleTemplate{})
 	a.sessions["s"] = []llm.Message{llm.TextMessage(llm.RoleUser, "prior context")}
-	huge := strings.Repeat("word ", 20000) // ~25k tok, alone exceeds the 8192 window
+	huge := strings.Repeat("word ", 60000) // ~75k tok, alone exceeds the 32k window
 
 	var updates []acp.Update
 	_, err := a.Prompt(context.Background(), "s", huge,
@@ -451,5 +453,58 @@ func TestPromptReactivelyCompactsOnOverflow(t *testing.T) {
 	}
 	if prov.streamCalls < 2 {
 		t.Fatalf("expected a retried turn after reactive compaction, streamCalls=%d", prov.streamCalls)
+	}
+}
+
+// countingProvider spies exact-count calls for the cost-aware band test.
+type countingProvider struct {
+	ruleProvider
+	window int
+	count  int
+	calls  int
+}
+
+func (p *countingProvider) ContextWindow() int { return p.window }
+func (p *countingProvider) CountTokens(context.Context, llm.ChatRequest) (int, error) {
+	p.calls++
+	return p.count, nil
+}
+
+// TestFitsWindowCostAwareExactCount (or-hhq): the estimate decides when it is
+// clearly on one side of the guard (no network count); only the ambiguous
+// band pays for the exact count, and the exact count then decides.
+func TestFitsWindowCostAwareExactCount(t *testing.T) {
+	// Window 100k → GuardAt = 85k (0.85 fraction). Small convo → clearly fits,
+	// no exact call.
+	p := &countingProvider{window: 100_000, count: 1}
+	if !fitsWindow("sys", []llm.Message{llm.TextMessage(llm.RoleUser, "hi")}, nil, p) {
+		t.Fatal("a tiny convo clearly fits")
+	}
+	if p.calls != 0 {
+		t.Fatalf("a clear verdict must not pay for an exact count, calls=%d", p.calls)
+	}
+
+	// Ambiguous band: estimate ≈ GuardAt → the exact count decides, both ways.
+	amb := strings.Repeat("x", 4*85_000) // estimate ≈ 85k = GuardAt
+	p.count = 90_000                     // exact says: does NOT fit
+	if fitsWindow("", []llm.Message{llm.TextMessage(llm.RoleUser, amb)}, nil, p) {
+		t.Fatal("the exact count says over-guard — must not fit")
+	}
+	if p.calls != 1 {
+		t.Fatalf("the ambiguous band must consult the exact count once, calls=%d", p.calls)
+	}
+	p.count = 50_000 // exact says: fits fine
+	if !fitsWindow("", []llm.Message{llm.TextMessage(llm.RoleUser, amb)}, nil, p) {
+		t.Fatal("the exact count says under-guard — must fit")
+	}
+
+	// Clearly over: no exact call, immediate false.
+	callsBefore := p.calls
+	huge := strings.Repeat("x", 4*300_000)
+	if fitsWindow("", []llm.Message{llm.TextMessage(llm.RoleUser, huge)}, nil, p) {
+		t.Fatal("triple the window can never fit")
+	}
+	if p.calls != callsBefore {
+		t.Fatal("a clearly-over estimate must not pay for an exact count")
 	}
 }

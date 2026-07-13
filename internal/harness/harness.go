@@ -199,6 +199,11 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 	// a conservative default), so the same code bounds a 1M Anthropic brain and an
 	// 8K local one. Providers that can't report a window degrade gracefully.
 	policy := contextwindow.For(contextwindow.WindowOf(l.Provider, contextwindow.DefaultWindow))
+	// or-hhq: a window too small for the fixed system+tools floor can never
+	// fit ANY turn — say so precisely instead of a generic overflow error.
+	if floor := llm.EstimateTokens(llm.ChatRequest{System: l.System, Tools: toolSpecs}); floor > policy.GuardAt {
+		return convo, nil, fmt.Errorf("harness: the model window is too small for Orion's tools — system+tools floor ~%d tokens exceeds the usable window %d (practical minimum ~16-32K); use a larger-window model", floor, policy.GuardAt)
+	}
 	var stall stallTracker
 	var streak errStreakTracker
 	tally := map[string]int{} // or-mvr.14: tool-call counts for the cap-hit progress summary

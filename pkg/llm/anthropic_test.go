@@ -222,3 +222,76 @@ func TestAnthropicCachingOmitsEmpty(t *testing.T) {
 		t.Fatalf("empty system must be omitted: %+v", got.System)
 	}
 }
+
+// TestAnthropicCountTokens (or-hhq): the exact sensor — POST
+// /v1/messages/count_tokens with the Chat wire shape (no max_tokens), parsed
+// into the count CountOrEstimate prefers.
+func TestAnthropicCountTokens(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = w.Write([]byte(`{"input_tokens": 4242}`))
+	}))
+	defer srv.Close()
+	a := NewAnthropic("k", "claude-test")
+	a.baseURL = srv.URL
+
+	req := ChatRequest{System: "sys", Messages: []Message{TextMessage(RoleUser, "hello")}, Tools: []Tool{{Name: "t", Description: "d", InputSchema: json.RawMessage(`{}`)}}}
+	n, err := a.CountTokens(context.Background(), req)
+	if err != nil || n != 4242 {
+		t.Fatalf("count: %d %v", n, err)
+	}
+	if gotPath != "/v1/messages/count_tokens" {
+		t.Fatalf("wrong endpoint: %s", gotPath)
+	}
+	if _, has := gotBody["max_tokens"]; has {
+		t.Fatal("count_tokens must not carry max_tokens")
+	}
+	if gotBody["model"] != "claude-test" || gotBody["messages"] == nil || gotBody["tools"] == nil {
+		t.Fatalf("the count body must mirror the chat wire shape: %v", gotBody)
+	}
+
+	// And the capability plugs into CountOrEstimate.
+	if got := CountOrEstimate(context.Background(), a, req); got != 4242 {
+		t.Fatalf("CountOrEstimate must prefer the exact count, got %d", got)
+	}
+}
+
+// TestAnthropicContextEditsOptIn (or-hhq): the server-side context-management
+// beta rides the request ONLY when ORION_ANTHROPIC_CONTEXT_EDITS=1 — header
+// and body both; default off leaves the wire byte-identical.
+func TestAnthropicContextEditsOptIn(t *testing.T) {
+	var gotBeta string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBeta = r.Header.Get("anthropic-beta")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer srv.Close()
+	a := NewAnthropic("k", "claude-test")
+	a.baseURL = srv.URL
+	req := ChatRequest{Messages: []Message{TextMessage(RoleUser, "hi")}}
+
+	t.Setenv("ORION_ANTHROPIC_CONTEXT_EDITS", "")
+	if _, err := a.Chat(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if gotBeta != "" || gotBody["context_management"] != nil {
+		t.Fatal("default off must not send the beta header or body field")
+	}
+
+	t.Setenv("ORION_ANTHROPIC_CONTEXT_EDITS", "1")
+	if _, err := a.Chat(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if gotBeta != "context-management-2025-06-27" {
+		t.Fatalf("the beta header must be set when opted in, got %q", gotBeta)
+	}
+	cm, _ := gotBody["context_management"].(map[string]any)
+	if cm == nil {
+		t.Fatalf("context_management must ride the body when opted in: %v", gotBody)
+	}
+}

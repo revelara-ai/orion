@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/revelara-ai/orion/internal/budget"
@@ -73,5 +74,27 @@ func TestUnpricedModelBooksTokensOnly(t *testing.T) {
 	rs := acct.Snapshot().ByRole["generator"]
 	if rs.Tokens != 1200 || rs.Dollars != 0 || !rs.Unpriced {
 		t.Fatalf("unknown model → tokens counted, $0, UNPRICED flag: %+v", rs)
+	}
+}
+
+// tinyWindow reports a window too small for any real tool floor.
+type tinyWindow struct{ scriptedProvider }
+
+func (tinyWindow) ContextWindow() int { return 1000 }
+
+// TestWindowTooSmallDiagnostic (or-hhq): a floor bigger than the usable
+// window fails with the PRECISE diagnostic, not a generic overflow.
+func TestWindowTooSmallDiagnostic(t *testing.T) {
+	p := &tinyWindow{}
+	p.resp = []*llm.ChatResponse{endResp("never reached")}
+	l := &Loop{Provider: p, Tools: tools.NewRegistry(),
+		System:     string(make([]byte, 8000)), // ~2000-token floor > 850 usable
+		Supervisor: Supervisor{MaxIterations: 3}}
+	_, _, err := l.Run(context.Background(), []llm.Message{llm.TextMessage(llm.RoleUser, "go")}, nil)
+	if err == nil || !errors.Is(err, err) || !strings.Contains(err.Error(), "window is too small for Orion's tools") {
+		t.Fatalf("want the precise floor diagnostic, got %v", err)
+	}
+	if p.calls != 0 {
+		t.Fatal("a hopeless floor must fail BEFORE any provider call")
 	}
 }

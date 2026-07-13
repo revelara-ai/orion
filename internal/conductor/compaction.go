@@ -300,5 +300,17 @@ func dialogueDominates(convo []llm.Message, prov llm.Provider) bool {
 // can't shrink.
 func fitsWindow(system string, convo []llm.Message, tools []llm.Tool, prov llm.Provider) bool {
 	policy := contextwindow.For(contextwindow.WindowOf(prov, contextwindow.DefaultWindow))
-	return llm.EstimateTokens(llm.ChatRequest{System: system, Messages: convo, Tools: tools}) <= policy.GuardAt
+	req := llm.ChatRequest{System: system, Messages: convo, Tools: tools}
+	est := llm.EstimateTokens(req)
+	// or-hhq cost-aware exact counting: the chars/4 estimate decides when it
+	// is CLEARLY on one side of the guard; only the ambiguous band (±20%,
+	// wider than the 15% GuardAt margin the estimate/exact gap can eat) pays
+	// for the provider's exact count.
+	switch {
+	case float64(est) <= 0.8*float64(policy.GuardAt):
+		return true
+	case float64(est) > 1.2*float64(policy.GuardAt):
+		return false
+	}
+	return llm.CountOrEstimate(context.Background(), prov, req) <= policy.GuardAt
 }

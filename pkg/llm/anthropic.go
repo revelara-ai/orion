@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -148,7 +149,7 @@ func (a *Anthropic) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, e
 	if maxTok <= 0 {
 		maxTok = 4096
 	}
-	body, err := json.Marshal(a.toWire(req, model, maxTok))
+	body, err := json.Marshal(withContextEdits(a.toWire(req, model, maxTok)))
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: marshal request: %w", err)
 	}
@@ -166,6 +167,34 @@ type wireRequest struct {
 	Messages  []wireMessage     `json:"messages"`
 	Tools     []wireTool        `json:"tools,omitempty"`
 	Stream    bool              `json:"stream,omitempty"`
+	// ContextManagement (or-hhq, opt-in beta): server-side context edits —
+	// the Anthropic brain offloads tool-result clearing/compaction natively.
+	ContextManagement *wireContextManagement `json:"context_management,omitempty"`
+}
+
+type wireContextManagement struct {
+	Edits []wireContextEdit `json:"edits"`
+}
+
+type wireContextEdit struct {
+	Type string `json:"type"`
+}
+
+// contextEditsEnabled: ORION_ANTHROPIC_CONTEXT_EDITS=1 opts into the
+// server-side context-management beta (default off — provider-agnostic core
+// behavior is unchanged; live verification tracked on or-hhq's close notes).
+func contextEditsEnabled() bool { return os.Getenv("ORION_ANTHROPIC_CONTEXT_EDITS") == "1" }
+
+const contextManagementBeta = "context-management-2025-06-27"
+
+// withContextEdits decorates a wire request with the beta edits when enabled.
+func withContextEdits(w wireRequest) wireRequest {
+	if contextEditsEnabled() {
+		w.ContextManagement = &wireContextManagement{Edits: []wireContextEdit{
+			{Type: "clear_tool_uses_20250919"},
+		}}
+	}
+	return w
 }
 
 // wireCacheControl marks a prompt-caching breakpoint (or-4qkg). Everything
@@ -280,6 +309,9 @@ func (a *Anthropic) do(ctx context.Context, body []byte) (*ChatResponse, error) 
 	httpReq.Header.Set("content-type", "application/json")
 	httpReq.Header.Set("x-api-key", a.apiKey)
 	httpReq.Header.Set("anthropic-version", anthropicVersion)
+	if contextEditsEnabled() {
+		httpReq.Header.Set("anthropic-beta", contextManagementBeta)
+	}
 
 	resp, err := a.http.Do(httpReq)
 	if err != nil {
@@ -354,4 +386,49 @@ func truncate(s string, n int) string {
 		return s[:n] + "…"
 	}
 	return s
+}
+
+// CountTokens implements the optional llm.TokenCounter capability (or-hhq):
+// the EXACT input-token count via POST /v1/messages/count_tokens — the
+// accurate sensor CountOrEstimate prefers. Same wire shape as Chat minus
+// max_tokens; errors degrade to the estimate at the caller.
+func (a *Anthropic) CountTokens(ctx context.Context, req ChatRequest) (int, error) {
+	model := req.Model
+	if model == "" {
+		model = a.model
+	}
+	w := a.toWire(req, model, 1)
+	w.MaxTokens = 0 // count_tokens rejects max_tokens
+	body, err := json.Marshal(struct {
+		Model    string            `json:"model"`
+		System   []wireSystemBlock `json:"system,omitempty"`
+		Messages []wireMessage     `json:"messages"`
+		Tools    []wireTool        `json:"tools,omitempty"`
+	}{Model: w.Model, System: w.System, Messages: w.Messages, Tools: w.Tools})
+	if err != nil {
+		return 0, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/v1/messages/count_tokens", bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	httpReq.Header.Set("content-type", "application/json")
+	httpReq.Header.Set("x-api-key", a.apiKey)
+	httpReq.Header.Set("anthropic-version", anthropicVersion)
+	resp, err := a.http.Do(httpReq)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != 200 {
+		return 0, fmt.Errorf("anthropic count_tokens: status %d: %s", resp.StatusCode, truncate(string(rb), 120))
+	}
+	var out struct {
+		InputTokens int `json:"input_tokens"`
+	}
+	if err := json.Unmarshal(rb, &out); err != nil {
+		return 0, err
+	}
+	return out.InputTokens, nil
 }
