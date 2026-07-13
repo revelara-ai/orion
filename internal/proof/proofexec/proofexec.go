@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/revelara-ai/orion/internal/proof/prooflock"
 	"github.com/revelara-ai/orion/internal/proof/safeenv"
 	"github.com/revelara-ai/orion/internal/sandbox"
 )
@@ -104,6 +105,17 @@ func RunTool(ctx context.Context, workdir, tool string, args ...string) (stdout,
 	if tool == "go" && len(args) > 0 && goDeniedSubcommands[args[0]] {
 		return "", "", -1, fmt.Errorf("proofexec: `go %s` is not allowed (it runs arbitrary code)", args[0])
 	}
+	// or-7y68: ONE toolchain exec per machine — the same flock the brownfield
+	// regression gates hold (or-6wbl), so concurrent proof builds/tests (and a
+	// gate + a proof) queue instead of stampeding the CPU into false reds. The
+	// wait honors the CALLER's ctx (taken before the per-exec timeout below, so
+	// queueing never eats the exec's own budget). Fail-open: no lock, no queue,
+	// the proof still runs.
+	release, lerr := prooflock.Acquire(ctx)
+	if lerr != nil {
+		return "", "", -1, lerr
+	}
+	defer release()
 	// Bound every proof exec so generated code (an init() spin-loop, a hung tool) can't wedge.
 	ctx, cancel := context.WithTimeout(ctx, runToolTimeout)
 	defer cancel()
