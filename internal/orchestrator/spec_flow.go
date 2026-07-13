@@ -374,7 +374,7 @@ func (c *Conductor) assembleSpec(ctx context.Context) (contextstore.Project, con
 		}
 	}
 
-	open := c.gate.Analyze(proj.Intent, answers)
+	open := c.openDecisions(ctx, proj.Intent, answers)
 	var blocking []string
 	var fallbacks []fallbackKV
 	for _, od := range open {
@@ -514,7 +514,7 @@ func (c *Conductor) SpecView(ctx context.Context) (SpecView, error) {
 	if err != nil {
 		return SpecView{}, err
 	}
-	open := c.gate.Analyze(proj.Intent, answers)
+	open := c.openDecisions(ctx, proj.Intent, answers)
 	v := SpecView{
 		Intent:        proj.Intent,
 		Status:        sp.Status,
