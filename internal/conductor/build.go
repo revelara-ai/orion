@@ -565,9 +565,9 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 			}
 			if aerr != nil {
 				_ = os.RemoveAll(filepath.Join(buildDir, "cmd"))
-				onPhase.emit("Deliver", PhaseWarn, "investigation analyzer skipped: "+aerr.Error())
+				onPhase.emit("Analyzer", PhaseWarn, "investigation analyzer skipped: "+aerr.Error())
 			} else {
-				onPhase.emit("Deliver", PhaseDone, "investigation analyzer generated (cmd/analyze — go run ./cmd/analyze)")
+				onPhase.emit("Analyzer", PhaseDone, "investigation analyzer generated (cmd/analyze — go run ./cmd/analyze)")
 			}
 		}
 	}
@@ -583,14 +583,14 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		// or-v9f.14: the export + git delivery write into the DEVELOPER'S repo —
 		// exactly the outward actuation the red button exists to halt. The proven
 		// code stays in the build dir + store; nothing is lost, only withheld.
-		onPhase.emit("Deliver", PhaseWarn, gerr.Error())
+		onPhase.emit("Export", PhaseWarn, gerr.Error())
 	} else if outcome.barVerdict == truthalign.Accept && outRoot != "" {
 		dest := ServiceOutputDir(outRoot, es)
 		if files, eerr := ExportProvenCode(buildDir, dest, es); eerr != nil {
-			onPhase.emit("Deliver", PhaseWarn, "code proven but export failed: "+eerr.Error())
+			onPhase.emit("Export", PhaseWarn, "code proven but export failed: "+eerr.Error())
 		} else {
 			outputDir = dest
-			onPhase.emit("Deliver", PhaseDone, fmt.Sprintf("code written to %s (%d files)", dest, len(files)))
+			onPhase.emit("Export", PhaseDone, fmt.Sprintf("code written to %s (%d files)", dest, len(files)))
 		}
 		// Opt-in (ORION_GIT_DELIVERY): commit the proven code onto an Orion branch in a
 		// WORKTREE of the developer's repo — their working tree is untouched. Non-fatal:
@@ -598,10 +598,10 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		if GitDeliverEnabled() {
 			if root := GitRoot(ctx, "."); root != "" {
 				if d, gerr := GitDeliver(ctx, root, store, buildDir, es); gerr != nil {
-					onPhase.emit("Deliver", PhaseWarn, "git delivery failed: "+gerr.Error())
+					onPhase.emit("PR", PhaseWarn, "git delivery failed: "+gerr.Error())
 				} else {
 					gitDelivery = d
-					onPhase.emit("Deliver", PhaseDone, fmt.Sprintf("committed to branch %s (%s)", d.Branch, d.Commit))
+					onPhase.emit("PR", PhaseDone, fmt.Sprintf("committed to branch %s (%s)", d.Branch, d.Commit))
 					// or-tcs.7: PR handoff over the feature branch — but ONLY when the epic actually
 					// cleared the delivery bar. A proven-but-ESCALATED epic (e.g. the security gate
 					// caught a secret, or the red button is engaged) keeps its review branch but is not
@@ -610,19 +610,19 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 					if res.Decision == delivery.Deliver {
 						if pr, perr := PRHandoff(ctx, root, store.Dir(), d, es, outcome.barVerdict, driftLine, remainder, runbook); perr != nil {
 							prResult = pr // still carries the artifact + commands even if push/gh failed
-							onPhase.emit("Deliver", PhaseWarn, "PR handoff: "+perr.Error())
+							onPhase.emit("PR", PhaseWarn, "PR handoff: "+perr.Error())
 						} else {
 							prResult = pr
 							if pr.Opened {
-								onPhase.emit("Deliver", PhaseDone, "PR opened: "+pr.URL)
+								onPhase.emit("PR", PhaseDone, "PR opened: "+pr.URL)
 							} else {
-								onPhase.emit("Deliver", PhaseDone, fmt.Sprintf("PR-ready: branch %s + %s", pr.Branch, pr.ArtifactPath))
+								onPhase.emit("PR", PhaseDone, fmt.Sprintf("PR-ready: branch %s + %s", pr.Branch, pr.ArtifactPath))
 							}
 						}
 					}
 				}
 			} else {
-				onPhase.emit("Deliver", PhaseWarn, "git delivery requested but the working directory is not a git repo")
+				onPhase.emit("PR", PhaseWarn, "git delivery requested but the working directory is not a git repo")
 			}
 		}
 	}
