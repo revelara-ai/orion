@@ -732,8 +732,9 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	var failureAnalysis string
 	var feedback string
 	attempts := 0
-	var prevSnapshot refinementSnapshot // or-mvr.5: prior attempt's quality/security signals
-	traj := &buildTrajectory{}          // or-gb1.4: the harness-derived refinement story
+	var prevSnapshot refinementSnapshot
+	var passTrajectory []int   // passing-obligation count per failed attempt (or-tcs.4) // or-mvr.5: prior attempt's quality/security signals
+	traj := &buildTrajectory{} // or-gb1.4: the harness-derived refinement story
 	var lastHash string
 	var lastNarrative string // the latest attempt's agent self-report (or-7mr), quarantined on failure
 	for attempt := 1; attempt <= maxBuildAttempts; attempt++ {
@@ -862,6 +863,7 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		// artifact WORSE than the attempt it was refining terminates the loop —
 		// "keep prompting until it works" is not a control strategy.
 		passing, has := obligationSnapshot(report)
+		passTrajectory = append(passTrajectory, passing) // or-tcs.4: the diagnosis axis
 		cur := refinementSnapshot{PassingObligations: passing, hasObligations: has, ScanFindings: artifactScanFindings(buildDir)}
 		if attempt > 1 {
 			if regressed, why := refinementRegressed(prevSnapshot, cur); regressed {
@@ -959,6 +961,16 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	// escalation write never fails the build; the bar-time pass dedups via
 	// HasOpenForTask.
 	if string(report.Outcome.Verdict) != "Accept" {
+		// or-tcs.4: diagnose the at-fault step; a spec-level defect re-opens
+		// the spec (amendment draft) BEFORE the escalation tx so the row can
+		// name the draft. Separate txs — never nested.
+		faultStep := classifyFailureStep(passTrajectory)
+		reopenedSpecID := ""
+		if faultStep == "spec" {
+			if proj, _, perr := store.CurrentProjectSpec(ctx); perr == nil {
+				reopenedSpecID = reopenSpecForDefect(ctx, store, stateMu, proj.ID)
+			}
+		}
 		var escID string
 		withLock(stateMu, func() {
 			_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
@@ -973,8 +985,14 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 					failureCategory(report), clip(task.ProofObligation, 60), clip(failureSymptom(failureAnalysis), 80)); fe != nil {
 					return fe
 				}
-				id, e := tx.Escalations().CreateDetailed(ctx, proj.ID, taskID,
-					fmt.Sprintf("task failed proof after %d attempt(s)", attempts), failureAnalysis)
+				reason := fmt.Sprintf("task failed proof after %d attempt(s)", attempts)
+				if faultStep == "spec" {
+					reason = fmt.Sprintf("spec defect suspected (step-5): zero obligation progress across %d attempt(s) — re-coding is not converging on the contract", attempts)
+					if reopenedSpecID != "" {
+						reason += "; spec RE-OPENED as amendment draft " + reopenedSpecID + " — amend (record_answer / remove_requirement + add_requirement), re-ratify, re-run"
+					}
+				}
+				id, e := tx.Escalations().CreateDetailed(ctx, proj.ID, taskID, reason, failureAnalysis)
 				if e == nil {
 					escID = id
 				}
