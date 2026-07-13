@@ -299,7 +299,8 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	reprove := epicReprover(store, contract, model, es, requiredIDs, proj.ID, onPhase, func(r proof.Report) {
 		assembledReport, haveAssembled = r, true
 	})
-	intDir, integrated, ierr := integrateEpic(ctx, wtMgr, clusters, clusterWT, results, managed.Base, reprove, scopedWaveReprove(reprove), onPhase)
+	conform := conformanceGate(ctx, store, proj.ID, pv.Tasks, onPhase)
+	intDir, integrated, ierr := integrateEpic(ctx, wtMgr, clusters, clusterWT, results, managed.Base, reprove, scopedWaveReprove(reprove), conform, onPhase)
 	if ierr != nil {
 		return BuildResult{}, fmt.Errorf("epic integration: %w", ierr)
 	}
@@ -568,6 +569,12 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	if eng != nil {
 		withLock(stateMu, func() {
 			if bundle, aerr := eng.Assemble(ctx, taskID, es.Intent); aerr == nil {
+				// or-7et.5c: each direct dependency's EXTRACTED surface rides the
+				// always-injected constraints — deterministic lookup by task key,
+				// never heat-ranked recall (which evicts at 100-module scale).
+				if proj, _, perr := store.CurrentProjectSpec(ctx); perr == nil {
+					injectDepSurfaces(ctx, store, proj.ID, task.DependsOn, &bundle)
+				}
 				gs.Context = bundle.Render(contextengine.DomainGeneration)
 			}
 		})
@@ -852,6 +859,18 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		withLock(stateMu, func() {
 			memMaintenance(ctx, mem, taskID, buildDir, report, lastNarrative, failureAnalysis, traj)
 		})
+	}
+	// or-7et.5b: on Accept, persist the module's ACTUAL exported surface —
+	// extracted from the accepted artifact, keyed by task — for dependent
+	// injection and the pre-merge conformance gate. Best-effort.
+	if string(report.Outcome.Verdict) == "Accept" {
+		var projID string
+		withLock(stateMu, func() {
+			if proj, _, perr := store.CurrentProjectSpec(ctx); perr == nil {
+				projID = proj.ID
+			}
+		})
+		persistModuleSurface(ctx, store, stateMu, projID, taskID, extractModuleSurface(buildDir, task.FileScope))
 	}
 
 	return taskResult{

@@ -20,6 +20,12 @@ type ProposedModule struct {
 	FileScope       string   `json:"file_scope"`
 	Covers          []string `json:"covers"` // dimension keys AND behavioral case IDs this module owns
 	DependsOn       []string `json:"depends_on"`
+	// Provides/Requires (or-7et.5): the inter-module interface manifest.
+	// Requires is ADVISORY input from the (adversarial) proposer — the
+	// conformance gate checks it against EXTRACTED surfaces. Provides is never
+	// trusted from the proposer; the proof-time extraction is authoritative.
+	Provides []string `json:"provides,omitempty"`
+	Requires []string `json:"requires,omitempty"`
 }
 
 // ModuleProposer proposes the module set for an accepted spec. It is assumed
@@ -116,6 +122,7 @@ func bookendEpic(es spec.ExecutableSpec, floor []completeness.Dimension, mods []
 		tasks = append(tasks, Task{
 			Key: m.Key, Title: m.Title, ProofObligation: m.ProofObligation,
 			FileScope: m.FileScope, Covers: m.Covers, DependsOn: m.DependsOn,
+			Provides: m.Provides, Requires: m.Requires,
 		})
 		keys = append(keys, m.Key)
 	}

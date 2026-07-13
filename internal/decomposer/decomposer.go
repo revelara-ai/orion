@@ -26,6 +26,11 @@ type Task struct {
 	FileScope       string   // declared file scope (path leasing)
 	Covers          []string // spec requirement keys this task's obligation covers
 	DependsOn       []string // keys of prerequisite tasks
+	// Provides/Requires (or-7et.5): the inter-module interface manifest.
+	// Requires is checked pre-merge against deps' EXTRACTED surfaces;
+	// Provides here is the proposer's declaration, never the proof truth.
+	Provides []string
+	Requires []string
 }
 
 // Epic is the decomposed unit of delivery.
