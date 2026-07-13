@@ -48,6 +48,13 @@ func (m *driftMonitor) RecordAlignment(a AlignmentRecord) {
 	m.mu.Unlock()
 }
 
+// Count returns the accumulated concern count (or-v9f.26 checkpoint input).
+func (m *driftMonitor) Count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.concerns
+}
+
 // Check is the per-dispatch drift gate. It returns an error — refusing further
 // dispatch — when the spec anchor no longer verifies or the alignment
 // degradation threshold is breached.
