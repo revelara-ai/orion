@@ -55,7 +55,15 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			if err != nil {
 				return "", err
 			}
-			return asJSON(map[string]any{"message": conf.Message, "open_decisions": conf.OpenDecisions}), nil
+			out := asJSON(map[string]any{"message": conf.Message, "open_decisions": conf.OpenDecisions})
+			// or-tcs.5: brownfield grilling is grounded AUTOMATICALLY — the
+			// repo digest rides the submit result (and the project record),
+			// so citing real packages never depends on the model remembering
+			// to call read_codebase.
+			if g := codebaseGrounding(ctx, c); g != "" {
+				out += "\n\nCODEBASE GROUNDING (read from the repo — cite these REAL packages/APIs in your questions and the spec; do not invent structure):\n" + g
+			}
+			return out, nil
 		},
 	})
 
