@@ -9,6 +9,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/reliabilitytier"
 	"github.com/revelara-ai/orion/internal/worktree"
 )
 
@@ -21,10 +22,46 @@ import (
 //   - not opted in: the finish_change tool runs it after a SINGLE consolidated
 //     confirm (one destructive tool call = one approval), never two rounds.
 
-// postProofAutonomy reports the developer's standing opt-in. or-v9f.30 (the
-// earned-autonomy ladder) will feed this from delivery track record; today it
-// is an explicit env opt-in.
-func postProofAutonomy() bool { return os.Getenv("ORION_POST_PROOF") == "auto" }
+// postProofAutonomy reports the developer's standing opt-in — the explicit
+// override in BOTH directions: "auto" grants regardless of record, "confirm"
+// denies regardless of record (or-v9f.30 acceptance: opt-in/out remains the
+// explicit override). Unset defers to the earned ladder.
+func postProofAutonomy() (granted, explicit bool) {
+	switch os.Getenv("ORION_POST_PROOF") {
+	case "auto":
+		return true, true
+	case "confirm":
+		return false, true
+	}
+	return false, false
+}
+
+// earnedPostProofAutonomy (or-v9f.30 slice e): the ladder consumption — the
+// change flow's track record (brownfield holder project) earned the tier
+// policy's autonomy, so post-proof land+close+cleanup proceed without a
+// per-change prompt. Critical tier never earns; red-button gating happens at
+// the consumption site (AutonomousDeliverPermitted).
+func earnedPostProofAutonomy(ctx context.Context, store *contextstore.Store, tier string) bool {
+	if store == nil {
+		return false
+	}
+	var projID string
+	_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
+		id, err := tx.Projects().GetOrCreateReserved(ctx, contextstore.BrownfieldProjectName, "brownfield")
+		if err == nil {
+			projID = id
+		}
+		return err
+	})
+	if projID == "" {
+		return false
+	}
+	record, err := store.TrackRecord(ctx, projID)
+	if err != nil {
+		return false
+	}
+	return reliabilitytier.PolicyForRecord(reliabilitytier.Tier(tier), record).AutonomyAllowed
+}
 
 // LandProvenChange is the consolidated post-proof workflow for a PROVEN,
 // committed change branch: fast-forward it onto the developer's checked-out

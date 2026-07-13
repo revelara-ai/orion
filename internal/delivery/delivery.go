@@ -35,10 +35,15 @@ type OperatingEnvelope struct {
 
 // Result is the deployment-bar evaluation.
 type Result struct {
-	Decision       Decision           `json:"decision"`
-	HumanMergeable bool               `json:"human_mergeable"`
-	Envelope       *OperatingEnvelope `json:"operating_envelope"`
-	Reason         string             `json:"reason"`
+	// AutonomyPermitted (or-v9f.30): the earned-autonomy ladder cleared —
+	// Deliver decision + tier policy earned + red button clear. Consumers may
+	// act post-proof without a per-change prompt; the explicit opt-in/out
+	// still overrides.
+	AutonomyPermitted bool
+	Decision          Decision           `json:"decision"`
+	HumanMergeable    bool               `json:"human_mergeable"`
+	Envelope          *OperatingEnvelope `json:"operating_envelope"`
+	Reason            string             `json:"reason"`
 }
 
 // EvaluateBar decides delivery vs escalation against the tier policy. The bar is

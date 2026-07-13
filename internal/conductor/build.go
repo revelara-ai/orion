@@ -459,6 +459,15 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	}
 	res := delivery.EvaluateBar(outcome.barVerdict, barProof.PresentModes(), reliabilitytier.PolicyFor(tier), env, securityOK, missingOps)
 	res = delivery.ApplySupplyChain(res, osv.Summary(), len(osv.Findings))
+	// or-v9f.30: the earned-autonomy ladder — track record earns the tier
+	// policy's AutonomyAllowed; the red button must ALSO be clear (the
+	// permitting direction of AutonomousDeliverPermitted). Any escalation row
+	// resets the record — re-earned, never grandfathered.
+	if record, terr := store.TrackRecord(ctx, proj.ID); terr == nil {
+		earned := reliabilitytier.PolicyForRecord(tier, record)
+		res.AutonomyPermitted = earned.AutonomyAllowed &&
+			actuation.AutonomousDeliverPermitted(rb, string(res.Decision))
+	}
 	// Red Button (or-utm): while engaged, autonomy is revoked — never auto-deliver.
 	if res.Decision == delivery.Deliver && rb.AutonomyRevoked() {
 		res = delivery.Result{Decision: delivery.Escalate, Reason: "red button engaged: autonomy revoked, human delivery required"}

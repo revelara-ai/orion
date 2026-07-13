@@ -360,7 +360,11 @@ func finishChange(ctx context.Context, store *contextstore.Store, repoRoot strin
 			// close the cited issue, reclaim the branch — no per-change prompt.
 			// Red button always wins; any landing miss (stale base) falls through
 			// to the normal review/PR handoff instead.
-			if postProofAutonomy() {
+			granted, explicit := postProofAutonomy()
+			if !explicit {
+				granted = earnedPostProofAutonomy(ctx, store, res.Tier)
+			}
+			if granted {
 				rb := actuation.RedButton{Path: filepath.Join(store.Dir(), "red_button")}
 				if actuation.AutonomousDeliverPermitted(rb, res.Delivery) {
 					summary, lerr := LandProvenChange(ctx, repoRoot, store, rb, res.Branch, intent)

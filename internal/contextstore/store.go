@@ -593,3 +593,22 @@ func CanonicalKey(category, componentType, symptomClass string) string {
 }
 
 func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339Nano) }
+
+// TrackRecord is the earned-autonomy ladder's evidence (or-v9f.30, the
+// minimal or-lrr slice): the count of CONSECUTIVE deliveries for a project
+// since its last reset event. Any escalation row resets the ladder — and the
+// paths that matter all FILE one (a failed task, a bar refusal, a red-button
+// block each escalate), so "deliveries after the newest escalation" is the
+// whole reset semantic: autonomy is re-earned, never grandfathered.
+func (s *Store) TrackRecord(ctx context.Context, projectID string) (int, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM deliveries dl
+		 JOIN epics e ON dl.epic_id = e.id
+		 WHERE e.project_id = ?
+		   AND dl.created_at > COALESCE(
+		       (SELECT MAX(created_at) FROM escalations WHERE project_id = ?), '')`,
+		projectID, projectID)
+	var n int
+	err := row.Scan(&n)
+	return n, err
+}
