@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/revelara-ai/orion/internal/budget"
 	"github.com/revelara-ai/orion/internal/contextwindow"
@@ -184,6 +185,8 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 	policy := contextwindow.For(contextwindow.WindowOf(l.Provider, contextwindow.DefaultWindow))
 	var stall stallTracker
 	var streak errStreakTracker
+	tally := map[string]int{} // or-mvr.14: tool-call counts for the cap-hit progress summary
+	var tallyOrder []string
 	leakNudged := false
 	announceNudged := false
 	emptyNudged := false
@@ -314,6 +317,7 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 		var results []llm.ContentBlock
 		for _, tu := range resp.ToolUses() {
 			emit(Event{Kind: EventToolCall, Tool: tu.Name})
+			tallyAdd(tally, &tallyOrder, tu.Name) // or-mvr.14: the cap error reports where the budget went
 			// Stall detector (or-mvr adjunct): a model repeating the IDENTICAL
 			// call is in a loop the result will never break — nudge it off the
 			// track instead of executing, and cleanly stop the turn if it
@@ -371,7 +375,7 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 	if hint == "" {
 		hint = "progress is preserved in this session; send a follow-up (e.g. \"continue\") to resume with a fresh budget"
 	}
-	return convo, nil, fmt.Errorf("%w after %d iterations — %s", ErrMaxIterations, l.Supervisor.maxIter(), hint)
+	return convo, nil, fmt.Errorf("%w after %d iterations (%s) — %s", ErrMaxIterations, l.Supervisor.maxIter(), tallyString(tally, tallyOrder), hint)
 }
 
 func (l *Loop) dispatch(ctx context.Context, tu llm.ToolUse) (string, bool) {
@@ -390,4 +394,25 @@ func (l *Loop) dispatch(ctx context.Context, tu llm.ToolUse) (string, bool) {
 		}
 	}
 	return l.Tools.Dispatch(ctx, tu.Name, tu.Input)
+}
+
+// tallyAdd / tallyString render the cap-hit progress summary (or-mvr.14): a
+// bare "max iterations exceeded" reads as lost work — naming where the budget
+// went ("read_file×9, edit_file×3") makes the pause actionable.
+func tallyAdd(tally map[string]int, order *[]string, name string) {
+	if tally[name] == 0 {
+		*order = append(*order, name)
+	}
+	tally[name]++
+}
+
+func tallyString(tally map[string]int, order []string) string {
+	if len(order) == 0 {
+		return "no tool calls"
+	}
+	parts := make([]string, 0, len(order))
+	for _, n := range order {
+		parts = append(parts, fmt.Sprintf("%s×%d", n, tally[n]))
+	}
+	return "tool calls: " + strings.Join(parts, ", ")
 }
