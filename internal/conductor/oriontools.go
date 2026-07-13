@@ -370,29 +370,34 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			var gen Generator
 			var aligner Aligner
 			if provider != nil {
-				gen = NativeGenerator(provider, c.Budget(), st)
-				aligner = NativeAligner(AlignJudgeProvider(provider)) // or-kzf.1: independent judge model when configured
+				// or-kzf.4: every role resolves through the model router —
+				// frontier-for-hard, cheap-for-easy, commodity default. The
+				// effective routing is recorded on the project for audit.
+				genProv := RoleProvider("generate", provider)
+				gen = NativeGenerator(genProv, c.Budget(), st)
+				aligner = NativeAligner(AlignJudgeProvider(RoleProvider("align", provider))) // or-kzf.1 env keeps precedence
 				// or-809: give the plan path a semantic ModuleProposer (runs in
 				// SHADOW behind ORION_MODULE_PROPOSER; the oracle still drives).
-				c.SetModuleProposer(NativeModuleProposer(provider))
+				c.SetModuleProposer(NativeModuleProposer(RoleProvider("propose", provider)))
 				// or-7et.3: plan-time context-fit — a module that cannot fit
 				// the window is split or escalated, never built.
 				if es, eerr := c.RecallSpec(ctx); eerr == nil {
-					c.SetModuleFitEstimator(NewModuleFitEstimator(provider, es))
+					c.SetModuleFitEstimator(NewModuleFitEstimator(genProv, es))
 				}
-				SetGenerationWindow(contextwindow.WindowOf(provider, contextwindow.DefaultWindow))
+				SetGenerationWindow(contextwindow.WindowOf(genProv, contextwindow.DefaultWindow))
 				// or-794 (V3 Step 5): the open-ended grill drives elicitation
 				// behind ORION_ELICITATION=grill; the checklist floor never drops.
-				c.SetGrillAgent(NativeGrillAgent(provider))
+				c.SetGrillAgent(NativeGrillAgent(RoleProvider("grill", provider)))
 				// or-zn8: the adversarial issue-set reviewer rides the same brain;
 				// the deterministic gate (advisory→ORION_ISSUE_REVIEW=block) decides.
-				c.SetIssueReviewer(NativeIssueReviewer(provider))
+				c.SetIssueReviewer(NativeIssueReviewer(RoleProvider("review", provider)))
 				// or-gb1.4: the opt-in memory distillation pass rides the same
 				// brain — inert unless ORION_MEMORY_DISTILL=1.
-				SetDistillProvider(provider)
+				SetDistillProvider(RoleProvider("distill", provider))
 				// or-56c.2: the design-proof synthesis slot drafts a candidate
 				// formal model at plan time; a human ratifies before it counts.
-				c.SetModelSynthesizer(NativeModelSynthesizer(provider))
+				c.SetModelSynthesizer(NativeModelSynthesizer(RoleProvider("design", provider)))
+				RecordRoutingToStore(ctx, st)
 			}
 			res, err := BuildAndProve(ctx, st, gen, aligner, func(e PhaseEvent) {
 				phases = append(phases, e)

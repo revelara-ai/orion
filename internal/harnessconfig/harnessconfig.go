@@ -181,6 +181,12 @@ func Validate() []error {
 			errs = append(errs, fmt.Errorf("%s: %w", checklistFile, perr))
 		}
 	}
+	if raw, err := os.ReadFile(filepath.Join(dir, modelsFile)); err == nil {
+		var c modelsConfig
+		if perr := yaml.Unmarshal(raw, &c); perr != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", modelsFile, perr))
+		}
+	}
 	// Canary surfaces (or-mvr.6): a broken manifest or candidate must be
 	// caught in review/doctor — a canary that half-applies is the inc-u12 bug.
 	if raw, err := os.ReadFile(filepath.Join(dir, canaryManifest)); err == nil {
@@ -199,4 +205,27 @@ func Validate() []error {
 		}
 	}
 	return errs
+}
+
+// modelsFile is the per-role model routing map (or-kzf.4): reviewable,
+// versioned, canary-able like every harness config artifact.
+const modelsFile = "models.yaml"
+
+type modelsConfig struct {
+	Roles map[string]string `yaml:"roles"`
+}
+
+// RoleModel returns the configured model ref for a conductor role ("" =
+// unrouted → the session brain). Invalid file warns and routes nothing.
+func RoleModel(role string) string {
+	raw, err := os.ReadFile(configPath(modelsFile, role))
+	if err != nil {
+		return ""
+	}
+	var c modelsConfig
+	if err := yaml.Unmarshal(raw, &c); err != nil {
+		slog.Warn("harness config: models.yaml invalid — no role routing (run `orion doctor`)", "err", err)
+		return ""
+	}
+	return strings.TrimSpace(c.Roles[role])
 }
