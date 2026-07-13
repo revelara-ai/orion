@@ -37,6 +37,7 @@ func integrateEpic(
 	base string,
 	reprove func(ctx context.Context, dir string) (bool, error),
 	waveReprove WaveReprove,
+	conform func(cl decomposer.TaskCluster) error,
 	onPhase PhaseSink,
 ) (headDir string, ok bool, err error) {
 	accepted := map[string]bool{}
@@ -80,6 +81,14 @@ func integrateEpic(
 
 		merged := 0
 		for _, cl := range wave {
+			// or-7et.5d: the pre-merge conformance gate — an interface mismatch
+			// is caught HERE, named per symbol, before the expensive merge +
+			// re-proof, not as an epic-wide post-merge failure.
+			if conform != nil {
+				if cerr := conform(cl); cerr != nil {
+					return headDir, false, nil // named + escalated by the gate itself
+				}
+			}
 			wt := clusterWT[cl.Key]
 			// or-7et.4c: eager removal (below) or lazy allocation may have left no
 			// checkout — the BRANCH survives, so reattach it (or-d3w: never treat a

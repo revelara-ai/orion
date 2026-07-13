@@ -728,6 +728,16 @@ func persistEpicTx(ctx context.Context, tx *contextstore.Tx, projectID, specID, 
 			return "", nil, err
 		}
 		keyToID[task.Key] = tid
+		// or-7et.5a: the declared (advisory) Requires manifest persists keyed
+		// by the STORE task id — the conformance gate checks it against the
+		// proof-time extracted surfaces of the task's dependencies.
+		if len(task.Requires) > 0 {
+			if b, jerr := json.Marshal(task.Requires); jerr == nil {
+				if uerr := tx.PolarisContext().Upsert(ctx, projectID, contextstore.ModuleRequiresKind+tid, string(b), 0); uerr != nil {
+					return "", nil, uerr
+				}
+			}
+		}
 		if _, err := tx.ProofObligations().Create(ctx, tid, task.ProofObligation); err != nil {
 			return "", nil, err
 		}
