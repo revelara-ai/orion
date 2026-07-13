@@ -455,7 +455,14 @@ func (c *Conductor) ApproveSpec(ctx context.Context) (spec.ExecutableSpec, error
 				return e
 			}
 		}
-		return tx.Specs().SetAccepted(ctx, sp.ID, es.Hash, string(rcJSON))
+		if e := tx.Specs().SetAccepted(ctx, sp.ID, es.Hash, string(rcJSON)); e != nil {
+			return e
+		}
+		// or-gb1.8: the ratification IS a Gold label — same tx, zero extra
+		// human effort, producer provenance attached.
+		m, v := c.producerProvenance()
+		_, e := tx.GoldLabels().Create(ctx, proj.ID, "spec_ratification", "accept", sp.ID, es.Hash, m, v)
+		return e
 	}); err != nil {
 		return spec.ExecutableSpec{}, err
 	}
@@ -485,8 +492,13 @@ func (c *Conductor) ApproveAssumptions(ctx context.Context) ([]string, error) {
 	}
 	approved := make([]string, 0, len(fallbacks))
 	err = c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+		m, v := c.producerProvenance()
 		for _, f := range fallbacks {
 			if _, e := tx.Decisions().Create(ctx, proj.ID, sp.ID, f.key, f.value, "assumption_approved", false); e != nil {
+				return e
+			}
+			// or-gb1.8: each approved assumption is one Gold label.
+			if _, e := tx.GoldLabels().Create(ctx, proj.ID, "assumption", "accept", sp.ID, f.key+"="+f.value, m, v); e != nil {
 				return e
 			}
 			approved = append(approved, f.key+"="+f.value)

@@ -92,7 +92,9 @@ func cmdEscalations(args []string) int {
 			note = "resolved by developer"
 		}
 		err := store.WithTx(ctx, func(tx *contextstore.Tx) error {
-			return tx.Escalations().Resolve(ctx, args[1], note)
+			// or-gb1.8: the resolution is a Gold label, captured atomically.
+			// The CLI is the human's own hand — no model produced this act.
+			return tx.ResolveEscalationGold(ctx, args[1], note, "human/cli", "")
 		})
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "orion escalations resolve:", err)
