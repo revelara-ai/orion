@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/revelara-ai/orion/internal/promptguard"
 )
 
 // Discovery bounds (agentskills.io client guide): never runaway-scan a large tree, and never
@@ -82,6 +84,20 @@ func (r *Registry) scan(root string, trust Trust) (int, error) {
 		if perr != nil {
 			r.warnings = append(r.warnings, fmt.Sprintf("%s: %v", path, perr))
 			return nil
+		}
+		// or-ykz.10: an INGESTED (generation-trust) skill is untrusted external
+		// content — scan its instructions + description with the same
+		// threat-pattern battery as a package install; a hostile skill is
+		// rejected, never registered. Proof-trust built-ins are curated.
+		if sk.Trust != TrustProof {
+			if hits := promptguard.Detect(sk.Body+"\n"+sk.Description, promptguard.ScopeAll); len(hits) > 0 {
+				names := make([]string, 0, len(hits))
+				for _, h := range hits {
+					names = append(names, h.Pattern)
+				}
+				r.warnings = append(r.warnings, fmt.Sprintf("skill %q at %s REJECTED — threat patterns (promptguard v%s): %s", sk.Name, sk.Path, promptguard.Version, strings.Join(names, ", ")))
+				return nil
+			}
 		}
 		if existing, exists := r.skills[sk.Name]; exists {
 			// A proof-trust skill is immutable and cannot be shadowed by a generation skill of

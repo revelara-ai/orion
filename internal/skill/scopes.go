@@ -3,6 +3,7 @@ package skill
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Scope is one discovery root plus the trust tier the loader assigns to every skill found
@@ -27,6 +28,7 @@ func DefaultScopes(projectDir string) []Scope {
 		return []Scope{
 			{filepath.Join(base, ".agents", "skills"), TrustGeneration},
 			{filepath.Join(base, ".claude", "skills"), TrustGeneration},
+			{filepath.Join(base, ".codex", "skills"), TrustGeneration}, // or-ykz.10: cross-harness (Codex)
 			{filepath.Join(base, ".orion", "skills"), TrustGeneration},
 		}
 	}
@@ -35,6 +37,13 @@ func DefaultScopes(projectDir string) []Scope {
 	}
 	if projectDir != "" {
 		scopes = append(scopes, add(projectDir)...)
+	}
+	// or-ykz.10: configured import paths (ORION_SKILL_DIRS, os.PathListSeparator-
+	// joined) load as ingested generation-domain skills too.
+	for _, p := range filepath.SplitList(os.Getenv("ORION_SKILL_DIRS")) {
+		if p = filepath.Clean(strings.TrimSpace(p)); p != "" && p != "." {
+			scopes = append(scopes, Scope{Root: p, Trust: TrustGeneration})
+		}
 	}
 	return scopes
 }
