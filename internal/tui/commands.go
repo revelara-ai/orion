@@ -34,6 +34,10 @@ func builtinCommands() []Command {
 		{Name: "compact", Help: "summarize history to reduce context"},
 		{Name: "context", Help: "show token usage this session"},
 		{Name: "model", Help: "show or switch the model (/model <id>)"},
+		{Name: "fork", Help: "branch this conversation from a prior turn (/fork [turn])"},
+		{Name: "clone", Help: "branch a full copy of this conversation"},
+		{Name: "tree", Help: "show the session branch tree"},
+		{Name: "switch", Help: "jump to another branch (/switch <id>)"},
 		{Name: "exit", Help: "quit Orion"},
 	}
 }
@@ -71,6 +75,14 @@ func (m *Conversation) handleCommand(text string) tea.Cmd {
 		m.msgs = append(m.msgs, msg{role: "you", text: text})
 		m.render()
 		return m.controlCmd("model", strings.TrimSpace(arg))
+	// Tree-structured sessions (or-ykz.5): forwarded as control ops; a
+	// "SESSION:<id>" result switches the active branch in Update.
+	case "fork", "clone", "tree", "switch":
+		_, arg, _ := strings.Cut(strings.TrimPrefix(text, "/"), " ")
+		m.input.Reset()
+		m.msgs = append(m.msgs, msg{role: "you", text: text})
+		m.render()
+		return m.controlCmd(strings.ToLower(strings.TrimSpace(name)), strings.TrimSpace(arg))
 	}
 	m.input.Reset()
 	m.msgs = append(m.msgs, msg{role: "you", text: text})
