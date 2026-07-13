@@ -117,6 +117,22 @@ func (a *OrionAgent) switchModel(arg string) (string, error) {
 	// A model switch replaces the dependency the breaker accumulated evidence
 	// against — stale evidence must not refuse turns on the NEW provider.
 	a.breaker.Reset()
+	// or-1aw3(1): re-probe tool capability on the NEW model — a switch to a
+	// tool-incapable model otherwise fails mysteriously on the next turn.
+	// Advertised-capable models (Anthropic/Gemini listings) skip the live
+	// probe; a transport error stays silent (unreachable ≠ incapable).
+	warn := ""
+	pctx, pcancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer pcancel()
+	bare := ref
+	if i := strings.IndexByte(bare, '/'); i >= 0 {
+		bare = bare[i+1:]
+	}
+	if p != nil && !llm.AdvertisesTools(pctx, p, bare) {
+		if capable, perr := llm.Probe(pctx, p); perr == nil && !capable {
+			warn = "\nWARNING: " + ref + " did not demonstrate native tool calling — the conductor's tools may not work on this model; consider switching back."
+		}
+	}
 	// The result carries a MODEL: sentinel the TUI parses to update its brain label.
-	return "MODEL:" + ref + " · switched to " + ref, nil
+	return "MODEL:" + ref + " · switched to " + ref + warn, nil
 }
