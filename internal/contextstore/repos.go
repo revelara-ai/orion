@@ -21,8 +21,11 @@ type Project struct {
 	Scale       string // standard | large — the intent's stated scale class (or-045a.1)
 	RepoTarget  string // ratified greenfield repo path ('' = the default managed repo, or-045a.7)
 	Status      string // queued | active | delivered | abandoned — single-active invariant (or-v9f.1)
-	CreatedAt   string
-	UpdatedAt   string
+	// ParentProjectID marks a sub-spec child of a spec-of-specs ('' = ordinary
+	// flat project, or-045a.4). A parent delivers only when every child has.
+	ParentProjectID string
+	CreatedAt       string
+	UpdatedAt       string
 }
 
 type Spec struct {
@@ -122,7 +125,7 @@ func (r *ProjectRepo) Create(ctx context.Context, name, intent, projectType stri
 	}
 	id, now := newID(), nowRFC3339()
 	_, err := r.tx.ExecContext(ctx,
-		`INSERT INTO projects (id, name, intent, project_type, scale, repo_target, status, created_at, updated_at) VALUES (?,?,?,?,'standard','','active',?,?)`,
+		`INSERT INTO projects (id, name, intent, project_type, scale, repo_target, status, parent_project_id, created_at, updated_at) VALUES (?,?,?,?,'standard','','active','',?,?)`,
 		id, name, intent, projectType, now, now)
 	if err != nil {
 		return "", fmt.Errorf("create project: %w", err)
@@ -130,8 +133,37 @@ func (r *ProjectRepo) Create(ctx context.Context, name, intent, projectType stri
 	return id, nil
 }
 
+// CreateChild creates a SUB-SPEC project under parentID (or-045a.4): queued —
+// never a second active — feature-sized (standard scale) and typed like its
+// parent, so the reconstructed completeness gate asks the right questions.
+func (r *ProjectRepo) CreateChild(ctx context.Context, parentID, name, intent, projectType string) (string, error) {
+	if projectType == "" {
+		projectType = "http-service"
+	}
+	id, now := newID(), nowRFC3339()
+	_, err := r.tx.ExecContext(ctx,
+		`INSERT INTO projects (id, name, intent, project_type, scale, repo_target, status, parent_project_id, created_at, updated_at) VALUES (?,?,?,?,'standard','','queued',?,?,?)`,
+		id, name, intent, projectType, parentID, now, now)
+	if err != nil {
+		return "", fmt.Errorf("create child project: %w", err)
+	}
+	return id, nil
+}
+
+// ChildrenOf lists a project's sub-spec children in creation order ([] for a
+// flat project).
+func (r *ProjectRepo) ChildrenOf(ctx context.Context, parentID string) ([]Project, error) {
+	rows, err := r.tx.QueryContext(ctx,
+		`SELECT id, name, intent, project_type, scale, repo_target, status, parent_project_id, created_at, updated_at FROM projects WHERE parent_project_id=? ORDER BY created_at ASC, id ASC`, parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanProjects(rows)
+}
+
 func (r *ProjectRepo) Get(ctx context.Context, id string) (Project, error) {
-	return r.one(ctx, `SELECT id, name, intent, project_type, scale, repo_target, status, created_at, updated_at FROM projects WHERE id=?`, id)
+	return r.one(ctx, `SELECT id, name, intent, project_type, scale, repo_target, status, parent_project_id, created_at, updated_at FROM projects WHERE id=?`, id)
 }
 
 // BrownfieldProjectName is the reserved holder project that project-less
@@ -155,7 +187,7 @@ func (r *ProjectRepo) GetOrCreateReserved(ctx context.Context, name, projectType
 	}
 	id, now := newID(), nowRFC3339()
 	if _, err := r.tx.ExecContext(ctx,
-		`INSERT INTO projects (id, name, intent, project_type, scale, repo_target, status, created_at, updated_at) VALUES (?,?,?,?,'standard','','delivered',?,?)`,
+		`INSERT INTO projects (id, name, intent, project_type, scale, repo_target, status, parent_project_id, created_at, updated_at) VALUES (?,?,?,?,'standard','','delivered','',?,?)`,
 		id, name, name, projectType, now, now); err != nil {
 		return "", fmt.Errorf("create reserved project: %w", err)
 	}
@@ -164,19 +196,19 @@ func (r *ProjectRepo) GetOrCreateReserved(ctx context.Context, name, projectType
 
 // Latest returns the most recently created project.
 func (r *ProjectRepo) Latest(ctx context.Context) (Project, error) {
-	return r.one(ctx, `SELECT id, name, intent, project_type, scale, repo_target, status, created_at, updated_at FROM projects ORDER BY created_at DESC, id DESC LIMIT 1`)
+	return r.one(ctx, `SELECT id, name, intent, project_type, scale, repo_target, status, parent_project_id, created_at, updated_at FROM projects ORDER BY created_at DESC, id DESC LIMIT 1`)
 }
 
 // Active returns the single in-flight project (status='active'). The queue
 // semantics keep at most one row active; ties (a corrupted invariant) resolve
 // to the most recent so reads stay deterministic.
 func (r *ProjectRepo) Active(ctx context.Context) (Project, error) {
-	return r.one(ctx, `SELECT id, name, intent, project_type, scale, repo_target, status, created_at, updated_at FROM projects WHERE status='active' ORDER BY created_at DESC, id DESC LIMIT 1`)
+	return r.one(ctx, `SELECT id, name, intent, project_type, scale, repo_target, status, parent_project_id, created_at, updated_at FROM projects WHERE status='active' ORDER BY created_at DESC, id DESC LIMIT 1`)
 }
 
 // OldestQueued returns the FIFO head of the intent queue.
 func (r *ProjectRepo) OldestQueued(ctx context.Context) (Project, error) {
-	return r.one(ctx, `SELECT id, name, intent, project_type, scale, repo_target, status, created_at, updated_at FROM projects WHERE status='queued' ORDER BY created_at ASC, id ASC LIMIT 1`)
+	return r.one(ctx, `SELECT id, name, intent, project_type, scale, repo_target, status, parent_project_id, created_at, updated_at FROM projects WHERE status='queued' ORDER BY created_at ASC, id ASC LIMIT 1`)
 }
 
 // LatestByStatus returns the most recently created project in the given status
@@ -184,13 +216,13 @@ func (r *ProjectRepo) OldestQueued(ctx context.Context) (Project, error) {
 // DELIVERED project — whose proven code is on disk but which has left the active
 // slot (or-v9f.1) — for read/report paths like `show_code`.
 func (r *ProjectRepo) LatestByStatus(ctx context.Context, status string) (Project, error) {
-	return r.one(ctx, `SELECT id, name, intent, project_type, scale, repo_target, status, created_at, updated_at FROM projects WHERE status=? ORDER BY created_at DESC, id DESC LIMIT 1`, status)
+	return r.one(ctx, `SELECT id, name, intent, project_type, scale, repo_target, status, parent_project_id, created_at, updated_at FROM projects WHERE status=? ORDER BY created_at DESC, id DESC LIMIT 1`, status)
 }
 
 // ListByStatus returns projects with the given status, oldest first (queue order).
 func (r *ProjectRepo) ListByStatus(ctx context.Context, status string) ([]Project, error) {
 	rows, err := r.tx.QueryContext(ctx,
-		`SELECT id, name, intent, project_type, scale, repo_target, status, created_at, updated_at FROM projects WHERE status=? ORDER BY created_at ASC, id ASC`, status)
+		`SELECT id, name, intent, project_type, scale, repo_target, status, parent_project_id, created_at, updated_at FROM projects WHERE status=? ORDER BY created_at ASC, id ASC`, status)
 	if err != nil {
 		return nil, err
 	}
@@ -238,6 +270,22 @@ func (r *ProjectRepo) SetProjectType(ctx context.Context, id, projectType string
 
 // SetStatus moves a project through the queue lifecycle (queued|active|delivered|abandoned).
 func (r *ProjectRepo) SetStatus(ctx context.Context, id, status string) error {
+	// Roll-up delivery gate (or-045a.4): a spec-of-specs parent delivers only
+	// when EVERY sub-spec child has delivered — each is a full feature without
+	// which the main spec is unfulfilled (an abandoned child blocks too; abandon
+	// the parent instead if the split itself is dead). Flat projects (no
+	// children) count zero and pass unchanged. Enforced at the single status
+	// chokepoint so no caller — build, CLI, tool — can bypass it.
+	if status == "delivered" {
+		var undelivered int
+		if err := r.tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM projects WHERE parent_project_id=? AND status <> 'delivered'`, id).Scan(&undelivered); err != nil {
+			return fmt.Errorf("roll-up gate: %w", err)
+		}
+		if undelivered > 0 {
+			return fmt.Errorf("cannot deliver: %d undelivered sub-spec project(s) remain — a spec-of-specs delivers only when every child has delivered", undelivered)
+		}
+	}
 	res, err := r.tx.ExecContext(ctx, `UPDATE projects SET status=?, updated_at=? WHERE id=?`, status, nowRFC3339(), id)
 	if err != nil {
 		return fmt.Errorf("set project status: %w", err)
@@ -251,7 +299,7 @@ func (r *ProjectRepo) SetStatus(ctx context.Context, id, status string) error {
 func (r *ProjectRepo) one(ctx context.Context, query string, args ...any) (Project, error) {
 	var p Project
 	err := r.tx.QueryRowContext(ctx, query, args...).
-		Scan(&p.ID, &p.Name, &p.Intent, &p.ProjectType, &p.Scale, &p.RepoTarget, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+		Scan(&p.ID, &p.Name, &p.Intent, &p.ProjectType, &p.Scale, &p.RepoTarget, &p.Status, &p.ParentProjectID, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Project{}, ErrNotFound
 	}
@@ -260,7 +308,7 @@ func (r *ProjectRepo) one(ctx context.Context, query string, args ...any) (Proje
 
 func (r *ProjectRepo) List(ctx context.Context) ([]Project, error) {
 	rows, err := r.tx.QueryContext(ctx,
-		`SELECT id, name, intent, project_type, scale, repo_target, status, created_at, updated_at FROM projects ORDER BY created_at DESC, id`)
+		`SELECT id, name, intent, project_type, scale, repo_target, status, parent_project_id, created_at, updated_at FROM projects ORDER BY created_at DESC, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +320,7 @@ func scanProjects(rows *sql.Rows) ([]Project, error) {
 	var out []Project
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.Intent, &p.ProjectType, &p.Scale, &p.RepoTarget, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Intent, &p.ProjectType, &p.Scale, &p.RepoTarget, &p.Status, &p.ParentProjectID, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
