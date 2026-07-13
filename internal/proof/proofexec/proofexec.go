@@ -147,8 +147,8 @@ func RunTool(ctx context.Context, workdir, tool string, args ...string) (stdout,
 		if lerr != nil {
 			return "", "", -1, fmt.Errorf("proofexec: %q not found on host: %w", tool, lerr)
 		}
-		if real, serr := filepath.EvalSymlinks(bin); serr == nil {
-			bin = real
+		if resolved, serr := filepath.EvalSymlinks(bin); serr == nil {
+			bin = resolved
 		}
 		roBinds = append(roBinds, bin)
 		argv = append([]string{bin}, args...)

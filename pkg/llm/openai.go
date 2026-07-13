@@ -58,11 +58,14 @@ func NewOpenAI(cfg OpenAIConfig) *OpenAI {
 	}
 }
 
+// Name identifies the provider.
 func (o *OpenAI) Name() string { return o.cfg.Name }
 
 // ContextWindow / MaxOutputTokens implement the optional capabilities from
 // config values (0 = unknown → callers fall back).
-func (o *OpenAI) ContextWindow() int   { return o.cfg.ContextWindow }
+func (o *OpenAI) ContextWindow() int { return o.cfg.ContextWindow }
+
+// MaxOutputTokens is the configured per-response output cap.
 func (o *OpenAI) MaxOutputTokens() int { return o.cfg.MaxOutput }
 
 // ── wire types (OpenAI chat-completions shape) ───────────────────────────────
@@ -327,7 +330,7 @@ func (o *OpenAI) post(ctx context.Context, path string, body []byte) ([]byte, er
 	if err != nil {
 		return nil, &llmclient.Retryable{Err: fmt.Errorf("%s: cannot reach %s (is it running?): %w", o.cfg.Name, o.cfg.BaseURL, err)}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	switch {
 	case resp.StatusCode == 429:
@@ -358,7 +361,7 @@ func (o *OpenAI) Models(ctx context.Context) ([]ModelInfo, error) {
 		if err != nil {
 			return nil, &llmclient.Retryable{Err: fmt.Errorf("%s: cannot reach %s (is it running?): %w", o.cfg.Name, o.cfg.BaseURL, err)}
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		switch {
 		case resp.StatusCode == 429:

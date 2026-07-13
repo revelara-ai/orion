@@ -64,7 +64,7 @@ func runCase(ctx context.Context, backend sandbox.Backend, bin string, c spec.Be
 	if err != nil {
 		return false, "scratch dir: " + err.Error()
 	}
-	defer os.RemoveAll(scratch)
+	defer func() { _ = os.RemoveAll(scratch) }()
 	for _, s := range c.Exec.Seed {
 		p := filepath.Join(scratch, s.Path)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {

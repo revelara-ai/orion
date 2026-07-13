@@ -51,7 +51,7 @@ func (s *TokenStore) Path() string { return filepath.Join(s.dir, "credentials.js
 
 // Save writes the token with 0600 perms (owner read/write only).
 func (s *TokenStore) Save(t Token) error {
-	b, err := json.Marshal(t)
+	b, err := json.Marshal(t) // #nosec G117 -- this IS the credential store (0600 file, outside sandbox binds)
 	if err != nil {
 		return err
 	}

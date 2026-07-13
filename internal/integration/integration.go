@@ -249,7 +249,7 @@ func cleanPrefix(p string) string {
 // gitAt runs `git -C dir args...` and returns combined output, exit code, and a launch error
 // (nil for a clean run or a non-zero exit; non-nil only when git couldn't start).
 func gitAt(ctx context.Context, dir string, args ...string) (string, int, error) {
-	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).CombinedOutput() // #nosec G204 -- fixed binary; harness-built args
 	if err == nil {
 		return string(out), 0, nil
 	}

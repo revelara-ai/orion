@@ -118,7 +118,7 @@ func (m *Manager) PathFor(issueID string) string {
 func (m *Manager) git(args ...string) (string, error) { return runGit(m.repoDir, args...) }
 
 func runGit(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...) // #nosec G204 -- fixed binary; harness-built args
 	cmd.Env = append(os.Environ(), "GIT_LFS_SKIP_SMUDGE=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -250,11 +250,11 @@ func (m *Manager) Status(issueID string) (Status, error) {
 
 	ahead := 0
 	if out, err := runGit(path, "rev-list", "--count", m.base+"..HEAD"); err == nil {
-		fmt.Sscanf(strings.TrimSpace(out), "%d", &ahead)
+		_, _ = fmt.Sscanf(strings.TrimSpace(out), "%d", &ahead)
 	}
 	behind := 0
 	if out, err := runGit(path, "rev-list", "--count", "HEAD.."+m.base); err == nil {
-		fmt.Sscanf(strings.TrimSpace(out), "%d", &behind)
+		_, _ = fmt.Sscanf(strings.TrimSpace(out), "%d", &behind)
 	}
 	return Status{Uncommitted: uncommitted, Ahead: ahead, Behind: behind, Clean: !uncommitted && ahead == 0}, nil
 }
@@ -344,6 +344,7 @@ func (m *Manager) Remove(ctx context.Context, issueID string, opts RemoveOpts) e
 // Reconcile makes the filesystem the source of truth (spec §7): prune deleted
 // worktrees, reap incomplete/empty dirs, and repair Context Store drift. Runs on
 // startup and before allocation.
+
 // RemoveWithBranch (or-kt5) tears down a change worktree AND its branch in
 // one safety-gated step — raw `git branch -d` fails with "used by worktree"
 // while the checkout exists, so teardown removes the worktree first (all of

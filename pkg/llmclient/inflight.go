@@ -5,7 +5,7 @@ import (
 	"errors"
 )
 
-// ErrShedBackground: a background-class call was shed because the shared
+// ErrShedBackground reports a background-class call shed because the shared
 // in-flight cap is full (or-mvr.3). Background work retries later or is
 // skipped; it never queues against interactive work.
 var ErrShedBackground = errors.New("llmclient: background call shed under load")
@@ -15,9 +15,9 @@ var ErrShedBackground = errors.New("llmclient: background call shed under load")
 type TrafficClass int
 
 const (
-	// ClassInteractive: developer-facing work — waits for a slot.
+	// ClassInteractive is developer-facing work — waits for a slot.
 	ClassInteractive TrafficClass = iota
-	// ClassBackground: shadow runs, speculative work — shed when the cap is
+	// ClassBackground is shadow runs / speculative work — shed when the cap is
 	// full, FIRST, so first-party background traffic can never starve the
 	// interactive path (inc-qdi: internal traffic bypassed the overload
 	// controls external traffic was subject to).
@@ -34,11 +34,11 @@ type InflightGate struct {
 
 // NewInflightGate returns a gate admitting at most cap concurrent calls
 // (cap < 1 is coerced to 1).
-func NewInflightGate(cap int) *InflightGate {
-	if cap < 1 {
-		cap = 1
+func NewInflightGate(limit int) *InflightGate {
+	if limit < 1 {
+		limit = 1
 	}
-	return &InflightGate{sem: make(chan struct{}, cap)}
+	return &InflightGate{sem: make(chan struct{}, limit)}
 }
 
 // Acquire takes a slot, honoring the class policy. It returns a release

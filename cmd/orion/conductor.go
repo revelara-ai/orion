@@ -47,7 +47,7 @@ func cmdConductor(args []string) int {
 			fmt.Fprintln(os.Stderr, "orion conductor acp:", err)
 			return 1
 		}
-		defer store.Close()
+		defer func() { _ = store.Close() }()
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		ca := conductor.NewConductorAgent(conductor.RoleTemplate{Project: "orion"}, orchestrator.NewWithStore(store))
@@ -163,7 +163,7 @@ func attachRun() int {
 		fmt.Fprintln(os.Stderr, "orion conductor attach:", err)
 		return 1
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

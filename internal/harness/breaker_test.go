@@ -46,8 +46,8 @@ func TestBreakerGoodTurnResetsTheStreak(t *testing.T) {
 
 func TestBreakerIgnoresNonProviderFailures(t *testing.T) {
 	b := Breaker{Threshold: 1}
-	b.Observe(errors.New("proof rejected the artifact")) // not the dependency's fault
-	b.Observe(context.Canceled)                          // user interrupt
+	b.Observe(errors.New("proof rejected the artifact"))                 // not the dependency's fault
+	b.Observe(context.Canceled)                                          // user interrupt
 	b.Observe(fmt.Errorf("%w: %w", ErrProvider, llm.ErrContextOverflow)) // overflow is a sizing problem, not a dead dependency
 	if err := b.Allow(); err != nil {
 		t.Fatalf("non-provider failures must not trip the breaker: %v", err)

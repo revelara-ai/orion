@@ -78,7 +78,7 @@ func Spawn(parent context.Context, cfg SpawnConfig, reaper *proc.Reaper) (*Spawn
 	}
 
 	argv := cfg.Preset.LaunchArgs()
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) // #nosec G204 -- operator-configured agent runtime command (their harness, their machine)
 	cmd.Dir = dir
 	cmd.Env = env
 	cmd.SysProcAttr = proc.SandboxSysProcAttr()

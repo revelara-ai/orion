@@ -15,7 +15,7 @@ import (
 
 func oaSseServer(t *testing.T, events []string) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "text/event-stream")
 		for _, e := range events {
 			w.Write([]byte("data: " + e + "\n\n"))

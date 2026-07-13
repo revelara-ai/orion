@@ -46,7 +46,7 @@ func (m *LifecycleManager) Start(startedAt string) error {
 	if err := os.MkdirAll(m.Dir, 0o700); err != nil {
 		return err
 	}
-	cmd := exec.Command(m.Command[0], m.Command[1:]...)
+	cmd := exec.Command(m.Command[0], m.Command[1:]...) // #nosec G204 -- operator-configured lifecycle hook (their own command, their machine)
 	cmd.SysProcAttr = proc.SandboxSysProcAttr()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("conductor: spawn: %w", err)

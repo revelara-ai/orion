@@ -24,7 +24,7 @@ func cmdTrace(args []string) int {
 		fmt.Fprintln(os.Stderr, "orion trace:", err)
 		return 1
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	ctx := context.Background()
 
 	proj, _, err := store.CurrentOrLastDeliveredProjectSpec(ctx)

@@ -70,12 +70,12 @@ type Supervisor struct {
 // re-reading files it had already edited); the front half stays clean so
 // normal turns carry no noise.
 func (s Supervisor) paceHint(iter int) string {
-	max := s.maxIter()
-	remaining := max - iter - 1
-	if remaining*2 >= max {
+	maxIters := s.maxIter()
+	remaining := maxIters - iter - 1
+	if remaining*2 >= maxIters {
 		return ""
 	}
-	return fmt.Sprintf("\n\n[budget: %d of %d tool turns remain — be economical: no re-reads after edits, batch what you can, finish and end your turn]", remaining, max)
+	return fmt.Sprintf("\n\n[budget: %d of %d tool turns remain — be economical: no re-reads after edits, batch what you can, finish and end your turn]", remaining, maxIters)
 }
 
 func (s Supervisor) maxIter() int {
@@ -154,8 +154,8 @@ func (l *Loop) desiredMaxTokens() int {
 	// Never request more output than the model actually allows — the provider
 	// rejects an over-cap max_tokens with an unrecoverable 400. Providers that don't
 	// report a cap use a safe default.
-	if cap := providerMaxOutput(l.Provider); cap < desired {
-		desired = cap
+	if limit := providerMaxOutput(l.Provider); limit < desired {
+		desired = limit
 	}
 	return desired
 }

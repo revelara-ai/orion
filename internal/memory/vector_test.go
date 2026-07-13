@@ -231,7 +231,7 @@ func TestVecSemanticRecallBeatsKeyword(t *testing.T) {
 	if dir == "" {
 		dir = "/tmp/embedspike/models/bge"
 	}
-	if _, err := os.Stat(filepath.Join(dir, "model.onnx")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "model.onnx")); err != nil { // #nosec G703 -- test fixture path under a test-owned dir
 		t.Skipf("bge model not provisioned at %s — skipping real-model semantic recall test", dir)
 	}
 	e, err := embed.NewGoMLX(embed.Config{Provider: "local", Model: "bge-base-en-v1.5", ModelPath: dir})

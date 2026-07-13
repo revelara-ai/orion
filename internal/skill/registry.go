@@ -101,18 +101,18 @@ func (r *Registry) scan(root string, trust Trust) (int, error) {
 
 // readCapped reads at most max bytes from path, erroring if the file is larger (so an
 // oversized untrusted SKILL.md cannot be slurped wholesale into memory).
-func readCapped(path string, max int64) ([]byte, error) {
+func readCapped(path string, limit int64) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	content, err := io.ReadAll(io.LimitReader(f, max+1))
+	content, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(content)) > max {
-		return nil, fmt.Errorf("SKILL.md exceeds %d bytes", max)
+	if int64(len(content)) > limit {
+		return nil, fmt.Errorf("SKILL.md exceeds %d bytes", limit)
 	}
 	return content, nil
 }

@@ -37,10 +37,10 @@ type Config struct {
 func Default() Config {
 	return Config{
 		Providers: map[string]Provider{
-			"anthropic": {Type: "anthropic", APIKeyEnv: "ANTHROPIC_API_KEY"},
+			"anthropic": {Type: "anthropic", APIKeyEnv: "ANTHROPIC_API_KEY"}, // #nosec G101 -- env-var NAME, not a credential
 			"ollama":    {Type: "openai", BaseURL: "http://localhost:11434/v1"},
 			"lmstudio":  {Type: "openai", BaseURL: "http://localhost:1234/v1"},
-			"gemini":    {Type: "gemini", APIKeyEnv: "GEMINI_API_KEY"},
+			"gemini":    {Type: "gemini", APIKeyEnv: "GEMINI_API_KEY"}, // #nosec G101 -- env-var NAME, not a credential
 		},
 	}
 }

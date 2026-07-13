@@ -30,7 +30,7 @@ func cmdEscalations(args []string) int {
 		fmt.Fprintln(os.Stderr, "orion escalations:", err)
 		return 1
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	ctx := context.Background()
 
 	switch args[0] {

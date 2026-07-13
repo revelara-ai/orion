@@ -57,8 +57,8 @@ type Task struct {
 	// changed in a reconciled amendment — proof memo reuse is bypassed until a
 	// fresh proof lands.
 	ReproofRequired bool
-	CreatedAt string
-	UpdatedAt string
+	CreatedAt       string
+	UpdatedAt       string
 }
 
 // Attempt is a recorded task attempt with its idempotency key and the agent's
@@ -191,7 +191,7 @@ func (r *ProjectRepo) ListByStatus(ctx context.Context, status string) ([]Projec
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanProjects(rows)
 }
 
@@ -223,7 +223,7 @@ func (r *ProjectRepo) List(ctx context.Context) ([]Project, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanProjects(rows)
 }
 
@@ -334,7 +334,7 @@ func (r *SpecRepo) ForProject(ctx context.Context, projectID string) ([]Spec, er
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Spec
 	for rows.Next() {
 		s, err := scanSpec(rows)
@@ -377,7 +377,7 @@ func (r *DecisionRepo) ListForSpec(ctx context.Context, specID string) ([]Decisi
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	latest := map[string]Decision{}
 	var order []string
 	for rows.Next() {
@@ -504,7 +504,7 @@ func (r *ProofObligationRepo) ListForTask(ctx context.Context, taskID string) ([
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []string
 	for rows.Next() {
 		var c string
@@ -564,7 +564,6 @@ func (r *TaskRepo) AddDep(ctx context.Context, taskID, dependsOn string) error {
 	return nil
 }
 
-// ListByEpic returns an epic's tasks in creation order.
 // SetReproofRequired marks/clears the amendment-invalidation flag (or-7et.2
 // slice 2): a marked task must be freshly proven — the memo cannot vouch for a
 // task whose covered spec surface changed.
@@ -587,7 +586,7 @@ func (r *TaskRepo) ListByEpic(ctx context.Context, epicID string) ([]Task, error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Task
 	for rows.Next() {
 		var t Task
@@ -607,7 +606,7 @@ func (r *TaskRepo) DepsOf(ctx context.Context, taskID string) ([]string, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []string
 	for rows.Next() {
 		var d string
@@ -682,7 +681,7 @@ func (r *AttemptRepo) List(ctx context.Context, taskID string) ([]Attempt, error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Attempt
 	for rows.Next() {
 		var a Attempt
@@ -784,7 +783,7 @@ func (r *ArtifactRepo) ListByTask(ctx context.Context, taskID string) ([]Artifac
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Artifact
 	for rows.Next() {
 		var a Artifact
@@ -845,7 +844,7 @@ func (r *FailureModeRepo) ListForProject(ctx context.Context, projectID string) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []FailureMode
 	for rows.Next() {
 		var f FailureMode
@@ -973,7 +972,7 @@ func (r *EscalationRepo) ListOpen(ctx context.Context) ([]Escalation, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Escalation
 	for rows.Next() {
 		var e Escalation
@@ -1135,7 +1134,7 @@ func (r *WorktreeRepo) List(ctx context.Context) ([]WorktreeRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []WorktreeRecord
 	for rows.Next() {
 		var w WorktreeRecord

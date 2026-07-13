@@ -32,7 +32,7 @@ func cmdQueue(args []string) int {
 		fmt.Fprintln(os.Stderr, "orion queue:", err)
 		return 1
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	ctx := context.Background()
 
 	switch args[0] {

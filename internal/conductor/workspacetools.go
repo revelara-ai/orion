@@ -45,7 +45,7 @@ func registerWorkspaceTools(r *tools.Registry, c *orchestrator.Conductor) {
 			}
 			cctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 			defer cancel()
-			cmd := exec.CommandContext(cctx, "bash", "-c", p.Command)
+			cmd := exec.CommandContext(cctx, "bash", "-c", p.Command) // #nosec G204 -- the bash tool IS arbitrary exec by contract — approval-gated + red-button-gated upstream
 			cmd.Env = scrubbedEnv()
 			out, err := cmd.CombinedOutput()
 			exit := 0

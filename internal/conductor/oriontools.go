@@ -664,7 +664,7 @@ func phaseStatusToActivity(s PhaseStatus) string {
 // turning a non-zero exit into a Go error — the `git` tool reports a failed op (e.g. a merge
 // that isn't a fast-forward) back to the brain as readable output, not a tool error.
 func gitRun(ctx context.Context, dir string, args ...string) (string, int) {
-	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).CombinedOutput() // #nosec G204 -- fixed binary; gitPolicy allowlists the verbs before dispatch
 	if err == nil {
 		return string(out), 0
 	}

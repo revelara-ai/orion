@@ -18,7 +18,7 @@ always assertion NoDoubleDispatch:
     state != "double"
 `
 
-func ratifiedSTPA(t *testing.T, c *Conductor, ctx context.Context, controllers []string) string {
+func ratifiedSTPA(t *testing.T, ctx context.Context, c *Conductor, controllers []string) string {
 	t.Helper()
 	proj, _, err := c.Store().CurrentProjectSpec(ctx)
 	if err != nil {
@@ -52,7 +52,7 @@ func TestPlanDraftsDesignModelForConcurrentStructure(t *testing.T) {
 	if _, err := c.ApproveSpec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	pid := ratifiedSTPA(t, c, ctx, []string{"scheduler", "worker"})
+	pid := ratifiedSTPA(t, ctx, c, []string{"scheduler", "worker"})
 	if _, err := c.PlanView(ctx); err != nil {
 		t.Fatalf("a design-model draft must never block the plan: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestPlanDraftsNothingForStatelessStructure(t *testing.T) {
 	if _, err := c.ApproveSpec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	pid := ratifiedSTPA(t, c, ctx, []string{"api"})
+	pid := ratifiedSTPA(t, ctx, c, []string{"api"})
 	if _, err := c.PlanView(ctx); err != nil {
 		t.Fatalf("plan: %v", err)
 	}

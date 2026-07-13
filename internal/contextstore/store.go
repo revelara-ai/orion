@@ -24,7 +24,7 @@ import (
 	"path/filepath"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // registers the pure-Go sqlite driver
 )
 
 //go:embed schema.sql
@@ -309,7 +309,7 @@ func (s *Store) ShadowPlans(ctx context.Context, projectID string) ([]ShadowReco
 		if e != nil {
 			return e
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		for rows.Next() {
 			var r ShadowRecord
 			var sup, fl, cov int

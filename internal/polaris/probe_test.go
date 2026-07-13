@@ -18,13 +18,13 @@ func fakeMCP(t *testing.T, mode string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch mode {
 		case "no-org":
-			http.Error(w, `{"error":"no organization context"}`, 403)
+			http.Error(w, `{"error":"no organization context"}`, http.StatusForbidden)
 			return
 		case "denied":
-			http.Error(w, `{"error":"forbidden"}`, 403)
+			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 			return
 		case "unauthorized":
-			http.Error(w, `{"error":"invalid token"}`, 401)
+			http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 			return
 		}
 		var req struct {

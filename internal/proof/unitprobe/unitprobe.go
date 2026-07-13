@@ -78,7 +78,7 @@ func runCase(ctx context.Context, backend sandbox.Backend, driverBin string, cs 
 	if err != nil {
 		return false, "scratch dir: " + err.Error()
 	}
-	defer os.RemoveAll(scratch)
+	defer func() { _ = os.RemoveAll(scratch) }()
 	for seg := 0; seg < testsynth.UnitSegments(cs); seg++ {
 		cctx, cancel := context.WithTimeout(ctx, segmentTimeout)
 		res, rerr := backend.Run(cctx, sandbox.Spec{

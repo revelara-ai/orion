@@ -28,7 +28,7 @@ func withStore(fn func(context.Context, *orchestrator.Conductor) int) int {
 		fmt.Fprintln(os.Stderr, "orion: open context store:", err)
 		return 1
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	return fn(context.Background(), orchestrator.NewWithStore(store))
 }
 

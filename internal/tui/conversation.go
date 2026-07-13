@@ -850,15 +850,15 @@ func (m Conversation) toolPermCard(mm msg) string {
 }
 
 // truncRunes clips s to at most max display runes, marking the cut with an ellipsis.
-func truncRunes(s string, max int) string {
+func truncRunes(s string, limit int) string {
 	r := []rune(s)
-	if len(r) <= max {
+	if len(r) <= limit {
 		return s
 	}
-	if max < 1 {
+	if limit < 1 {
 		return ""
 	}
-	return string(r[:max-1]) + "…"
+	return string(r[:limit-1]) + "…"
 }
 
 // colorizeReport tints the status glyph at the start of each phase line (✓ green,
@@ -1154,8 +1154,8 @@ func Run(oc *orchestrator.Conductor, bannerReport health.Report, bannerID Identi
 	// read loop already blocked in net.Pipe.Read (the loop only checks ctx between
 	// Scans) — only Close frees it. Without these defers an early handshake error
 	// would leak both read-loop goroutines.
-	defer clientEnd.Close()
-	defer agentEnd.Close()
+	defer func() { _ = clientEnd.Close() }()
+	defer func() { _ = agentEnd.Close() }()
 
 	// Brain selection (SPEC §0 amendment): a native LLM "Orion" agent when an API
 	// key is present, else the deterministic conductor (offline/CI fallback). Both

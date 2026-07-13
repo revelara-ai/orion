@@ -60,6 +60,7 @@ func NewGemini(cfg GeminiConfig) *Gemini {
 	}
 }
 
+// Name identifies the provider.
 func (g *Gemini) Name() string { return g.cfg.Name }
 
 // ContextWindow prefers the config override, else a WHITELIST of known 1M
@@ -388,7 +389,7 @@ func (g *Gemini) post(ctx context.Context, path string, body []byte) ([]byte, er
 	if err != nil {
 		return nil, &llmclient.Retryable{Err: fmt.Errorf("%s: request: %w", g.cfg.Name, err)}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	switch {
 	case resp.StatusCode == 429:
@@ -417,7 +418,7 @@ func (g *Gemini) Models(ctx context.Context) ([]ModelInfo, error) {
 		if err != nil {
 			return nil, &llmclient.Retryable{Err: fmt.Errorf("%s: list models: %w", g.cfg.Name, err)}
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		switch {
 		case resp.StatusCode == 429:

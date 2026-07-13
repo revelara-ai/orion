@@ -45,7 +45,7 @@ func gitID() []string {
 
 // git runs `git -C dir args...` (LFS smudge skipped), returning combined output.
 func git(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...) // #nosec G204 -- fixed binary; harness-built args
 	cmd.Env = append(os.Environ(), "GIT_LFS_SKIP_SMUDGE=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

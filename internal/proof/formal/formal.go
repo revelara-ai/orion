@@ -88,17 +88,17 @@ func (f *FizzBee) Check(ctx context.Context, modelPath string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	defer os.RemoveAll(work)
+	defer func() { _ = os.RemoveAll(work) }()
 	workModel := filepath.Join(work, "model.fizz")
-	if err := os.WriteFile(workModel, model, 0o600); err != nil {
+	if err := os.WriteFile(workModel, model, 0o600); err != nil { // #nosec G703 -- workModel is a harness-built path in the proof workdir
 		return Result{}, err
 	}
 
 	var cmd *exec.Cmd
 	if bw, berr := exec.LookPath("bwrap"); berr == nil && !f.noSandbox {
-		cmd = exec.CommandContext(ctx, bw, bwrapArgs(dir, work)...)
+		cmd = exec.CommandContext(ctx, bw, bwrapArgs(dir, work)...) // #nosec G204 -- resolved bwrap binary; harness-built args
 	} else {
-		cmd = exec.CommandContext(ctx, filepath.Join(dir, "fizz"), workModel)
+		cmd = exec.CommandContext(ctx, filepath.Join(dir, "fizz"), workModel) // #nosec G204 -- pinned fizzbee binary in the harness toolchain dir
 		cmd.Env = scrubbedEnv()
 	}
 	cmd.Dir = work
@@ -180,7 +180,7 @@ func (Apalache) Check(ctx context.Context, modelPath string) (Result, error) {
 	if err != nil {
 		return Result{Skipped: "apalache-mc not installed (TLA+ escape hatch; used for liveness/deadlock cases FizzBee does not cover)"}, nil
 	}
-	cmd := exec.CommandContext(ctx, bin, "check", modelPath)
+	cmd := exec.CommandContext(ctx, bin, "check", modelPath) // #nosec G204 -- pinned checker binary; harness-built model path
 	cmd.Env = scrubbedEnv()
 	out, runErr := cmd.CombinedOutput()
 	res := Result{Output: string(out)}

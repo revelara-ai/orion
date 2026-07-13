@@ -16,7 +16,7 @@ import (
 
 // assertOpenEscalationContains fails unless an open inbox escalation's reason
 // contains sub.
-func assertOpenEscalationContains(t *testing.T, oc *orchestrator.Conductor, ctx context.Context, sub string) {
+func assertOpenEscalationContains(t *testing.T, ctx context.Context, oc *orchestrator.Conductor, sub string) {
 	t.Helper()
 	found := false
 	if err := oc.Store().WithTx(ctx, func(tx *contextstore.Tx) error {
@@ -63,7 +63,7 @@ func TestAlignGateBlocksCorroboratedHigh(t *testing.T) {
 	// The block must reach the operator: an escalation carrying the alignment
 	// concern is in the inbox (a regression that blocks the verdict but drops the
 	// escalation must fail here).
-	assertOpenEscalationContains(t, oc, ctx, "alignment(high)")
+	assertOpenEscalationContains(t, ctx, oc, "alignment(high)")
 }
 
 // TestAlignGateDowngradesUncorroboratedHigh (or-809 G5): a high verdict the
@@ -91,7 +91,7 @@ func TestAlignGateDowngradesUncorroboratedHigh(t *testing.T) {
 		t.Fatalf("an uncorroborated high must downgrade to medium and SHIP, got %+v", res)
 	}
 	// A medium align-review escalation must be in the inbox (surface-to-human).
-	assertOpenEscalationContains(t, oc, ctx, "alignment review")
+	assertOpenEscalationContains(t, ctx, oc, "alignment review")
 }
 
 // TestAlignGateNeverCalledOnReject (or-809 G1): the aligner is never consulted

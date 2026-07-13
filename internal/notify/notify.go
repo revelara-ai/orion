@@ -50,12 +50,12 @@ func notify(ctx context.Context, e Event, webhook string, client *http.Client) e
 	}
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(cctx, http.MethodPost, webhook, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(cctx, http.MethodPost, webhook, bytes.NewReader(body)) // #nosec G704 -- the operator configures their own webhook URL (ORION_NOTIFY_WEBHOOK)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) // #nosec G704 -- operator-configured webhook (see above)
 	if err != nil {
 		slog.Warn("orion notification delivery failed", "kind", e.Kind, "err", err)
 		return err

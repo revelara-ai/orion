@@ -32,7 +32,7 @@ var arithmeticSwaps = map[token.Token]token.Token{
 // String-concat '+' is skipped when a string literal is visible on either side;
 // anything that still fails to compile is discarded by the caller's build check
 // (a broken mutant must never count as killed). Returns at most cap mutants.
-func astMutants(src string, cap int) []mutant {
+func astMutants(src string, limit int) []mutant {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "main.go", src, parser.ParseComments)
 	if err != nil {
@@ -48,7 +48,7 @@ func astMutants(src string, cap int) []mutant {
 	}
 
 	ast.Inspect(file, func(n ast.Node) bool {
-		if len(out) >= cap {
+		if len(out) >= limit {
 			return false
 		}
 		switch node := n.(type) {

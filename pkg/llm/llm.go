@@ -18,6 +18,7 @@ import (
 // Role of a conversation message.
 type Role string
 
+// Message roles.
 const (
 	RoleUser      Role = "user"
 	RoleAssistant Role = "assistant"
@@ -26,6 +27,7 @@ const (
 // BlockType discriminates a content block.
 type BlockType string
 
+// Block types.
 const (
 	BlockText       BlockType = "text"
 	BlockToolUse    BlockType = "tool_use"
@@ -76,6 +78,7 @@ type Tool struct {
 // BEFORE reading content (a refusal is an HTTP 200 with empty content).
 type StopReason string
 
+// Stop reasons.
 const (
 	StopEndTurn   StopReason = "end_turn"
 	StopToolUse   StopReason = "tool_use" // drives the agent loop

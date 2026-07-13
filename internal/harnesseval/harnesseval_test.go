@@ -62,8 +62,8 @@ func seedRun(t *testing.T, store *contextstore.Store, projID, runID, model strin
 // the audit substrate and derives the metrics exactly.
 func TestHarnessEvalAggregatesFromAuditTrail(t *testing.T) {
 	store, projID := evalStore(t)
-	seedRun(t, store, projID, "r1", "m1", 3, 1, true, false)  // 0.75 pass, drift
-	seedRun(t, store, projID, "r2", "m1", 4, 0, false, true)  // 1.00 pass, escalation
+	seedRun(t, store, projID, "r1", "m1", 3, 1, true, false) // 0.75 pass, drift
+	seedRun(t, store, projID, "r2", "m1", 4, 0, false, true) // 1.00 pass, escalation
 	sigs, err := Collect(context.Background(), store, projID)
 	if err != nil {
 		t.Fatal(err)

@@ -29,7 +29,7 @@ func cmdTracker(args []string) int {
 		fmt.Fprintln(os.Stderr, "orion tracker project:", err)
 		return 1
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	ctx := context.Background()
 
 	proj, _, err := store.CurrentProjectSpec(ctx)

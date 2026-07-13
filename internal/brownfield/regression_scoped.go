@@ -293,7 +293,7 @@ func scopeDirsForChange(paths []string, m RepoMap) []string {
 // runs here, so the host env is fine — untrusted code only runs under BaselineScoped). ---
 
 func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).CombinedOutput() // #nosec G204 -- fixed binary; harness-built args
 	return string(out), err
 }
 

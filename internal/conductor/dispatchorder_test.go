@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/decomposer"
+	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/proof"
 )
 

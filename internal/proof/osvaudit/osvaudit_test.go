@@ -81,7 +81,7 @@ func TestAuditFindsKnownVulnerableDep(t *testing.T) {
 
 // Offline OSV yields a visible SKIP — never findings, never a hard error.
 func TestAuditOfflineSkipsVisibly(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 	srv.Close() // now unreachable
 	t.Setenv("ORION_OSV_URL", srv.URL)
 	res := Audit(context.Background(), modRoot(t, twoDeps))

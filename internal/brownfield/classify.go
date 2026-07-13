@@ -17,6 +17,7 @@ import (
 // surgical diffs; the spec is created vs edited; the proof adds vs preserves+adds).
 type Mode string
 
+// Workspace modes: greenfield has no existing source; brownfield does.
 const (
 	Greenfield Mode = "greenfield"
 	Brownfield Mode = "brownfield"

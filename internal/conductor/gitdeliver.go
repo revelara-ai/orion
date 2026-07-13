@@ -35,7 +35,7 @@ type GitDelivery struct {
 // COMMIT is run with --no-verify so a target repo's hooks never execute during
 // delivery, and with an explicit Orion identity so it works in a fresh/unconfigured repo.
 func gitIn(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...) // #nosec G204 -- fixed binary; callers pass vetted git verbs
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))

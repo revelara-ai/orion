@@ -37,11 +37,11 @@ func chainReg(t *testing.T) *Registry {
 	})
 	r.Register(Tool{
 		Name: "approve_me", Safety: Safety{RequiresApproval: true},
-		Run:  func(context.Context, json.RawMessage) (string, error) { return "acted", nil },
+		Run: func(context.Context, json.RawMessage) (string, error) { return "acted", nil },
 	})
 	r.Register(Tool{
 		Name: "boom", Safety: Safety{ReadOnly: true},
-		Run:  func(context.Context, json.RawMessage) (string, error) { return "", fmt.Errorf("kaput") },
+		Run: func(context.Context, json.RawMessage) (string, error) { return "", fmt.Errorf("kaput") },
 	})
 	RegisterChain(r)
 	return r

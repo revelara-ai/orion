@@ -37,7 +37,7 @@ func cmdRun(args []string) int {
 		fmt.Fprintln(os.Stderr, "orion run:", err)
 		return 1
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	ctx := context.Background()
 
 	// One-shot build→prove→deliver, shared with the native Orion agent's
@@ -97,7 +97,7 @@ func cmdProof(args []string) int {
 		fmt.Fprintln(os.Stderr, "orion proof show:", err)
 		return 1
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	p, err := store.ProofByTaskMode(context.Background(), *task, *mode)
 	if err != nil {

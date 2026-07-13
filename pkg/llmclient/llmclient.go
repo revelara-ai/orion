@@ -115,7 +115,7 @@ func New(cfg Config) *Client {
 		cfg.sleep = time.Sleep
 	}
 	if cfg.rng == nil {
-		cfg.rng = rand.New(rand.NewSource(1))
+		cfg.rng = rand.New(rand.NewSource(1)) // #nosec G404 -- retry jitter, not cryptography
 	}
 	return &Client{
 		cfg: cfg,

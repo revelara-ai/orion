@@ -118,7 +118,7 @@ func spendSummary() string {
 	if err != nil {
 		return "0 tok · $0.00"
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	ctx := context.Background()
 	proj, _, err := store.CurrentOrLastDeliveredProjectSpec(ctx)
 	if err != nil {

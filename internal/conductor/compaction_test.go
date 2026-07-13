@@ -73,7 +73,7 @@ func (p *recordingWindowLLM) Chat(_ context.Context, req llm.ChatRequest) (*llm.
 	}
 	return endTurn(p.summary), nil
 }
-func (p *recordingWindowLLM) ChatStream(ctx context.Context, req llm.ChatRequest, onText func(string)) (*llm.ChatResponse, error) {
+func (p *recordingWindowLLM) ChatStream(ctx context.Context, req llm.ChatRequest, _ func(string)) (*llm.ChatResponse, error) {
 	return p.Chat(ctx, req)
 }
 
@@ -90,7 +90,7 @@ func (p *overflowThenCompactLLM) Name() string                                  
 func (p *overflowThenCompactLLM) ContextWindow() int                              { return p.window }
 func (p *overflowThenCompactLLM) Models(context.Context) ([]llm.ModelInfo, error) { return nil, nil }
 func (p *overflowThenCompactLLM) Ping(context.Context) error                      { return nil }
-func (p *overflowThenCompactLLM) Chat(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+func (p *overflowThenCompactLLM) Chat(_ context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
 	return endTurn("BRIEF: the earlier conversation, summarized."), nil
 }
 func (p *overflowThenCompactLLM) ChatStream(_ context.Context, req llm.ChatRequest, onText func(string)) (*llm.ChatResponse, error) {

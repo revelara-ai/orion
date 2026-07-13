@@ -61,12 +61,18 @@ func (EvidenceClaim) Trusted() bool { return false }
 
 // MarshalRequest / UnmarshalRequest round-trip the immutable payload.
 func MarshalRequest(r Request) ([]byte, error) { return json.Marshal(r) }
+
+// UnmarshalRequest decodes a dispatch request envelope.
 func UnmarshalRequest(b []byte) (Request, error) {
 	var r Request
 	err := json.Unmarshal(b, &r)
 	return r, err
 }
+
+// MarshalClaim encodes an evidence claim envelope.
 func MarshalClaim(c EvidenceClaim) ([]byte, error) { return json.Marshal(c) }
+
+// UnmarshalClaim decodes an evidence claim envelope.
 func UnmarshalClaim(b []byte) (EvidenceClaim, error) {
 	var c EvidenceClaim
 	err := json.Unmarshal(b, &c)

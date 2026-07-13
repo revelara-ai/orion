@@ -138,13 +138,13 @@ func bannerGlyph(s health.Status) string {
 	}
 }
 
-func truncateBanner(s string, max int) string {
-	if lipgloss.Width(s) <= max {
+func truncateBanner(s string, limit int) string {
+	if lipgloss.Width(s) <= limit {
 		return s
 	}
 	r := []rune(s)
-	if max > 1 && len(r) > max-1 {
-		return string(r[:max-1]) + "…"
+	if limit > 1 && len(r) > limit-1 {
+		return string(r[:limit-1]) + "…"
 	}
 	return s
 }

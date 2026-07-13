@@ -92,7 +92,7 @@ func baselineSkip(ctx context.Context, repoDir string, skip []string, progress P
 // 10-minute gate is indistinguishable from a hang). total>0 renders an n/total
 // counter (scoped runs know their package count); 0 renders "(n done)".
 func runTests(ctx context.Context, repoDir string, argv []string, progress Progress, step string, total int) (string, error) {
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) // #nosec G204 -- detected toolchain command (go/npm/etc), argv built by the harness
 	cmd.Dir = repoDir
 	cmd.Env = regressionTestEnv() // untrusted repo code never sees host secrets
 	if progress == nil {
@@ -102,8 +102,8 @@ func runTests(ctx context.Context, repoDir string, argv []string, progress Progr
 	pr, pw := io.Pipe()
 	cmd.Stdout, cmd.Stderr = pw, pw
 	if err := cmd.Start(); err != nil {
-		pw.Close()
-		pr.Close()
+		_ = pw.Close()
+		_ = pr.Close()
 		return "", err
 	}
 	var buf strings.Builder
@@ -133,7 +133,7 @@ func runTests(ctx context.Context, repoDir string, argv []string, progress Progr
 		_, _ = io.Copy(io.Discard, pr)
 	}()
 	err := cmd.Wait()
-	pw.Close()
+	_ = pw.Close()
 	<-done
 	return buf.String(), err
 }

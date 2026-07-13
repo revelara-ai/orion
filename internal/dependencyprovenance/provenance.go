@@ -34,7 +34,7 @@ type Policy struct {
 	MinPopularity int
 }
 
-// DefaultPolicy: a brand-new, unknown package is treated as anomalous.
+// DefaultPolicy treats a brand-new, unknown package as anomalous.
 func DefaultPolicy() Policy { return Policy{MinAgeDays: 30, MinPopularity: 5} }
 
 // Verdict is the provenance decision.
@@ -82,7 +82,7 @@ func (pr *ProxyResolver) Resolve(ctx context.Context, pkg string) (Info, error) 
 	if err != nil {
 		return Info{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return Info{Exists: false}, fmt.Errorf("proxy %s: status %d", mod, resp.StatusCode)
 	}

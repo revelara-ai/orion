@@ -21,8 +21,7 @@ const modulePath = "github.com/revelara-ai/orion"
 // Previously re-closed: or-b73 wired memory + contextengine into Conductor context
 // assembly; or-y0z exposed tracker via `orion tracker project`; or-uvw.8 wired
 // reliabilityfloor into ChangeAndProve.
-var deferredOrphans = map[string]string{
-}
+var deferredOrphans = map[string]string{}
 
 // goListInternal returns the set of internal/ packages emitted by `go list <args>`.
 func goListInternal(t *testing.T, args ...string) map[string]bool {

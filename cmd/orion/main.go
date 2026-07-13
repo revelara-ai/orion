@@ -130,7 +130,7 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "orion: open context store:", err)
 		return 1
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Install SIGINT/SIGTERM cleanup: cancel in-flight work and reap sandbox
 	// process groups before exit (no orphaned children).
@@ -167,7 +167,7 @@ func run(args []string) int {
 // context and, later, tokens).
 func resolveDataDir() (string, error) {
 	if d := os.Getenv("ORION_DATA_DIR"); d != "" {
-		return d, os.MkdirAll(d, 0o700)
+		return d, os.MkdirAll(d, 0o700) // #nosec G703 -- the developer's own CLI-provided path
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

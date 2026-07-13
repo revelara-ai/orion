@@ -96,7 +96,7 @@ func TestUnamendedReapprovalKeepsPlanFresh(t *testing.T) {
 }
 
 // TestLegacyEpicWithoutHashIsGrandfathered: epics created before the
-// spec_hash migration carry '' — they must keep reading (an additive
+// spec_hash migration carry ” — they must keep reading (an additive
 // migration must not brick existing projects); only a RECORDED hash that
 // mismatches is stale.
 func TestLegacyEpicWithoutHashIsGrandfathered(t *testing.T) {

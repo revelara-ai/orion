@@ -53,13 +53,14 @@ type Registry struct {
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry { return &Registry{tools: map[string]Tool{}} }
 
-// Register adds (or replaces) a tool.
-// Intercept, when set, runs before every Dispatch: it may rewrite the input
+// SetIntercept installs the pre-dispatch hook: it may rewrite the input
+// or block the call (or-ykz.2 hook bus). Generation-domain registries only. it may rewrite the input
 // or block the call (or-ykz.2 hook bus). Generation-domain registries only.
 func (r *Registry) SetIntercept(f func(name string, input json.RawMessage) (json.RawMessage, bool, string)) {
 	r.Intercept = f
 }
 
+// Register adds (or replaces) a tool.
 func (r *Registry) Register(t Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

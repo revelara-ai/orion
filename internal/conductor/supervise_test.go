@@ -26,7 +26,7 @@ func TestSuperviseRestartsCrashedConductor(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- m.Supervise(ctx, SuperviseOpts{MaxRestarts: 5, Window: time.Minute, Backoff: 20 * time.Millisecond, Poll: 30 * time.Millisecond},
-			func(kind, detail string) {
+			func(kind, _ string) {
 				events = append(events, kind)
 				if kind == "conductor.restarted" {
 					cancel() // observed the full crash→restart cycle

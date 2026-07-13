@@ -57,7 +57,7 @@ func TestReservedProjectIsIdempotentAndQueueInvisible(t *testing.T) {
 	// A real active project created afterward is the in-flight work item; the
 	// holder never shadowed it.
 	if err := store.WithTx(ctx, func(tx *Tx) error {
-		real, e := tx.Projects().Create(ctx, "real", "build a real service", "http-service")
+		realID, e := tx.Projects().Create(ctx, "realID", "build a realID service", "http-service")
 		if e != nil {
 			return e
 		}
@@ -65,8 +65,8 @@ func TestReservedProjectIsIdempotentAndQueueInvisible(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		if active.ID != real {
-			t.Errorf("the real project must be active, got holder=%v", active.ID == id1)
+		if active.ID != realID {
+			t.Errorf("the realID project must be active, got holder=%v", active.ID == id1)
 		}
 		return nil
 	}); err != nil {

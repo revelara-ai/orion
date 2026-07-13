@@ -11,6 +11,7 @@ import (
 // PhaseStatus is the outcome glyph of a build phase.
 type PhaseStatus string
 
+// Phase outcome vocabulary.
 const (
 	PhaseRunning PhaseStatus = "running" // started, not yet finished
 	PhaseDone    PhaseStatus = "done"    // completed green
