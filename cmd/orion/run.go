@@ -21,7 +21,12 @@ import (
 // generate the service into a build dir, run multi-modal proof
 // (behavioral + empirical), record the verdicts, and close the task only if the
 // converged verdict is Accept (verification-gated done).
-func cmdRun(_ []string) int {
+func cmdRun(args []string) int {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	mode := fs.String("mode", "text", "output mode: text | json (typed JSONL event stream)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 	dir, err := resolveDataDir()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion run:", err)
@@ -46,12 +51,20 @@ func cmdRun(_ []string) int {
 	if brain := llmsetup.Select(); brain.Provider != nil {
 		aligner = conductor.NativeAligner(conductor.AlignJudgeProvider(brain.Provider))
 	}
-	res, err := conductor.BuildAndProve(ctx, store, generateService, aligner, func(e conductor.PhaseEvent) { fmt.Printf("run: %s %s %s\n", e.Status, e.Phase, e.Detail) }, conductor.OutputRoot())
+	sink := func(e conductor.PhaseEvent) { fmt.Printf("run: %s %s %s\n", e.Status, e.Phase, e.Detail) }
+	if *mode == "json" {
+		sink = jsonSink(os.Stdout)
+	}
+	res, err := conductor.BuildAndProve(ctx, store, generateService, aligner, sink, conductor.OutputRoot())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion run:", err)
 		return 1
 	}
-	fmt.Printf("run: task %s verdict=%s closed=%v tier=%s delivery=%s\n", res.TaskID, res.Verdict, res.Closed, res.Tier, res.Delivery)
+	if *mode == "json" {
+		emitRunResult(res)
+	} else {
+		fmt.Printf("run: task %s verdict=%s closed=%v tier=%s delivery=%s\n", res.TaskID, res.Verdict, res.Closed, res.Tier, res.Delivery)
+	}
 	// or-v9f.17: the end-of-run notification now fires inside BuildDAG itself, so
 	// every entry point (this CLI, the TUI's build_service, headless) inherits it.
 	return 0

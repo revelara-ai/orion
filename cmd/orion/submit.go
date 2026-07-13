@@ -55,8 +55,12 @@ func cmdInit(_ []string) int {
 func cmdSubmit(args []string) int {
 	fs := flag.NewFlagSet("submit", flag.ContinueOnError)
 	nonInteractive := fs.Bool("non-interactive", false, "read intent from stdin and emit JSON")
+	mode := fs.String("mode", "", "output mode: json emits a typed JSONL event stream (implies --non-interactive)")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if *mode == "json" {
+		*nonInteractive = true
 	}
 	if !*nonInteractive {
 		fmt.Fprintln(os.Stderr, "orion submit: interactive submit is the TUI; use --non-interactive for headless mode")
@@ -77,6 +81,10 @@ func cmdSubmit(args []string) int {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "orion submit:", err)
 			return 1
+		}
+		if *mode == "json" {
+			// or-ykz.4: typed event stream, one JSONL object per event.
+			return emitEvents(submitEvents(conf))
 		}
 		out := struct {
 			Intent        string                      `json:"intent"`
