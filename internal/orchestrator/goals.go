@@ -58,7 +58,7 @@ func (c *Conductor) ProposeGoals(ctx context.Context, doc GoalsDoc) error {
 	if c.store == nil {
 		return errNoStore
 	}
-	proj, _, err := c.store.CurrentProjectSpec(ctx)
+	proj, _, err := c.activeProjectSpec(ctx)
 	if err != nil {
 		return fmt.Errorf("propose_goals: no active project: %w", err)
 	}
@@ -85,7 +85,7 @@ func (c *Conductor) RatifyGoals(ctx context.Context) (string, error) {
 	if c.store == nil {
 		return "", errNoStore
 	}
-	proj, _, err := c.store.CurrentProjectSpec(ctx)
+	proj, _, err := c.activeProjectSpec(ctx)
 	if err != nil {
 		return "", fmt.Errorf("ratify_goals: no active project: %w", err)
 	}
@@ -117,7 +117,7 @@ func (c *Conductor) Goals(ctx context.Context) (GoalsDoc, string, string, error)
 	if c.store == nil {
 		return GoalsDoc{}, "", "", errNoStore
 	}
-	proj, _, err := c.store.CurrentProjectSpec(ctx)
+	proj, _, err := c.activeProjectSpec(ctx)
 	if err != nil {
 		return GoalsDoc{}, "", "", err
 	}

@@ -119,14 +119,17 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 
 	r.Register(tools.Tool{
 		Name:        "check_completeness",
-		Description: "List the spec decisions still open. Those with no fallback are BLOCKING — they must be answered before ratifying.",
+		Description: "List the spec decisions still open for the ACTIVE project (named in the result). Those with no fallback are BLOCKING — they must be answered before ratifying.",
 		Safety:      tools.Safety{ReadOnly: true},
 		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
 			sv, err := c.SpecView(ctx)
 			if err != nil {
 				return "", err
 			}
-			return asJSON(map[string]any{"status": sv.Status, "open_decisions": sv.OpenDecisions}), nil
+			// or-hn15.3: name the project the decisions belong to, so the agent
+			// can't mistake a stale active project's checklist for its own
+			// (the mech-game dogfood served an HTTP checklist to a game intake).
+			return asJSON(map[string]any{"project": sv.Intent, "status": sv.Status, "open_decisions": sv.OpenDecisions}), nil
 		},
 	})
 
