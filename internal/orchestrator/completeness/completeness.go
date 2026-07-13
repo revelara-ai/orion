@@ -11,6 +11,7 @@
 package completeness
 
 import (
+	"github.com/revelara-ai/orion/internal/harnessconfig"
 	"regexp"
 	"strings"
 )
@@ -155,6 +156,18 @@ func checklistFor(projectType string) []RequiredDecision {
 // questions it may not have). This is the registry that generalizes the front door —
 // add a case (gRPC, worker, CLI, library) to elicit that type's functional spec.
 func functionalDecisions(projectType string) []RequiredDecision {
+	// or-kzf.2: an externalized checklist for THIS projectType replaces the
+	// compiled entry (other types keep their defaults; absent/invalid config
+	// falls back to the registry below).
+	if c, ok := harnessconfig.LoadChecklists(); ok {
+		key := projectType
+		if key == "" {
+			key = "http-service"
+		}
+		if ds, present := c.Functional[key]; present {
+			return fromConfig(ds)
+		}
+	}
 	switch projectType {
 	case "http-service", "": // "" defaults to http-service (the V2.0 greenfield path)
 		return []RequiredDecision{
@@ -170,6 +183,11 @@ func functionalDecisions(projectType string) []RequiredDecision {
 // universalDecisions are the cross-cutting reliability dimensions EVERY project must
 // resolve regardless of type. They are domain-neutral (no HTTP/time assumptions).
 func universalDecisions() []RequiredDecision {
+	// or-kzf.2: a non-empty externalized universal list replaces the compiled
+	// dimensions (reviewable in a PR, no rebuild).
+	if c, ok := harnessconfig.LoadChecklists(); ok && len(c.Universal) > 0 {
+		return fromConfig(c.Universal)
+	}
 	return []RequiredDecision{
 		{"scale_profile", DimScale, "What is the expected traffic/throughput (work over a window + per-unit weight)?", "fallback preset: low | medium | high"},
 		{"observability_signals", DimObservability, "Which signals are required (traces/metrics/logs) and where are they exported?", "tier-default signal set"},
@@ -179,6 +197,15 @@ func universalDecisions() []RequiredDecision {
 		{"security_model", DimSecurity, "What is the authn/z model and data classification?", "untrusted input, no regulated data"},
 		{"dependencies", DimDependencies, "Which external services/APIs does it call, and their failure modes?", "none"},
 	}
+}
+
+// fromConfig converts externalized checklist decisions to the gate's type.
+func fromConfig(ds []harnessconfig.ChecklistDecision) []RequiredDecision {
+	out := make([]RequiredDecision, 0, len(ds))
+	for _, d := range ds {
+		out = append(out, RequiredDecision{Key: d.Key, Dimension: Dimension(d.Dimension), Question: d.Question, Fallback: d.Fallback})
+	}
+	return out
 }
 
 // Deterministic intent matchers: only resolve a decision when the intent states

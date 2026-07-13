@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/revelara-ai/orion/internal/harnessconfig"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,6 +89,17 @@ func doctorChecks(dir string, lookPath func(string) (string, error), agentEnv st
 	out := make([]doctorCheck, 0, len(rep.Pipeline)+len(rep.Subsystems))
 	for _, c := range rep.All() {
 		out = append(out, doctorCheck{Name: c.Name, Status: checkStatus(c.Status), Detail: c.Detail})
+	}
+	// or-kzf.2: validate the externalized harness config (prompts/checklists).
+	// Absent files are fine (compiled defaults); an INVALID file is a FAIL here
+	// even though runtime degrades to defaults — the whole point is that a bad
+	// edit is caught in review/doctor, not discovered as silent drift.
+	if verrs := harnessconfig.Validate(); len(verrs) > 0 {
+		for _, e := range verrs {
+			out = append(out, doctorCheck{Name: "harness-config", Status: statusFail, Detail: e.Error()})
+		}
+	} else {
+		out = append(out, doctorCheck{Name: "harness-config", Status: statusOK, Detail: "externalized config valid (or absent → compiled defaults)"})
 	}
 	return out
 }
