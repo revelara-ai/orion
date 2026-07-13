@@ -96,14 +96,73 @@ func cmdConductor(args []string) int {
 		fmt.Println("conductor: restarted")
 		return 0
 	case "attach":
-		if running, pid := m.Status(); running {
-			fmt.Printf("conductor: running (pid %d) — attach/observe not yet implemented (V2.0)\n", pid)
-			return 0
-		}
-		fmt.Fprintln(os.Stderr, "conductor: not running")
-		return 1
+		// or-v9f.16: attach is a STORE-TAIL reader — the run persists every
+		// phase event, so any terminal (this one or a new one after a crash)
+		// can follow the run's progress. WAL readers never block the writer.
+		return attachRun()
 	default:
 		fmt.Fprintln(os.Stderr, "orion conductor: unknown subcommand:", args[0])
 		return 2
+	}
+}
+
+// attachRun tails the latest run's persisted phase events for the current
+// project, printing each as it lands, until the run's terminal event (or
+// Ctrl-C). Works from any process — the store's WAL mode lets readers follow
+// a live writer.
+func attachRun() int {
+	dir, err := resolveDataDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "orion conductor attach:", err)
+		return 1
+	}
+	store, err := contextstore.Open(dir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "orion conductor attach:", err)
+		return 1
+	}
+	defer store.Close()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	proj, _, err := store.CurrentOrLastDeliveredProjectSpec(ctx)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "orion conductor attach: no project:", err)
+		return 1
+	}
+	runID, ok, err := store.LatestRunID(ctx, proj.ID)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "orion conductor attach:", err)
+		return 1
+	}
+	if !ok {
+		fmt.Println("no persisted runs for this project yet — start one with `orion run`")
+		return 0
+	}
+	fmt.Printf("attached to %s (project %s) — Ctrl-C detaches, the run keeps going\n", runID, proj.Name)
+	var after int64
+	for {
+		events, err := store.ListRunEventsAfter(ctx, runID, after)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "orion conductor attach:", err)
+			return 1
+		}
+		for _, e := range events {
+			after = e.ID
+			task := ""
+			if e.TaskID != "" {
+				task = " [" + e.TaskID + "]"
+			}
+			fmt.Printf("%s%s %s: %s\n", e.Phase, task, e.Status, e.Detail)
+			if e.Phase == "Run" && (e.Status == "done" || e.Status == "failed") {
+				return 0
+			}
+		}
+		select {
+		case <-ctx.Done():
+			fmt.Println("detached (the run keeps going)")
+			return 0
+		case <-time.After(800 * time.Millisecond):
+		}
 	}
 }

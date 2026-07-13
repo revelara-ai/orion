@@ -289,3 +289,45 @@ func TestRememberOutcomeContent(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildPersistsRunEvents (or-v9f.16): a real build leaves its full phase
+// trail in the store — run start/end plus per-cluster attributed events — so
+// attach/resume outlive the terminal.
+func TestBuildPersistsRunEvents(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles + proves a service; skipped in -short")
+	}
+	oc, ctx := ratifiedTimeService(t)
+	if _, err := BuildAndProve(ctx, oc.Store(), nil, nil, nil, ""); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	proj, _, err := oc.Store().CurrentOrLastDeliveredProjectSpec(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, ok, err := oc.Store().LatestRunID(ctx, proj.ID)
+	if err != nil || !ok {
+		t.Fatalf("a build must record its run: ok=%v err=%v", ok, err)
+	}
+	events, err := oc.Store().ListRunEventsAfter(ctx, runID, 0)
+	if err != nil || len(events) == 0 {
+		t.Fatalf("no persisted run events (%v)", err)
+	}
+	if events[0].Phase != "Run" || events[0].Status != "running" {
+		t.Fatalf("the first event must open the run, got %+v", events[0])
+	}
+	last := events[len(events)-1]
+	if last.Phase != "Run" || last.Status != "done" {
+		t.Fatalf("the last event must close the run, got %+v", last)
+	}
+	var attributed bool
+	for _, e := range events {
+		if e.TaskID != "" {
+			attributed = true
+			break
+		}
+	}
+	if !attributed {
+		t.Fatal("per-cluster events must carry task attribution")
+	}
+}

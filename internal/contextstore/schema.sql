@@ -228,3 +228,19 @@ WHEN NEW.status IN ('proven','done')
 BEGIN
     SELECT RAISE(ABORT, 'done-gate: task requires proof_id with verdict=Accept');
 END;
+
+-- Run/phase survivability (or-v9f.16): every build-phase event persists as the
+-- run progresses, so a dying terminal loses NOTHING — attach is a store-tail
+-- reader, resume tooling reads the last persisted phase per cluster.
+CREATE TABLE IF NOT EXISTS run_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL,
+    run_id     TEXT NOT NULL,
+    task_id    TEXT NOT NULL DEFAULT '',
+    phase      TEXT NOT NULL,
+    status     TEXT NOT NULL,
+    detail     TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, id);
+CREATE INDEX IF NOT EXISTS idx_run_events_project ON run_events(project_id, id);
