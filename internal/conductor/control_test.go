@@ -137,3 +137,34 @@ func TestSwitchModelBareIDResolvesAgainstCurrentProvider(t *testing.T) {
 		t.Errorf("MODEL: sentinel for bare-id switch = %q, want full normalized ref prov2/y", msg)
 	}
 }
+
+// or-1aw3(1): switching to a model that cannot demonstrate tool calling
+// WARNS in the switch result; a tool-capable model switches clean.
+func TestSwitchModelProbesToolCapability(t *testing.T) {
+	// Incapable: the probe's Chat comes back as prose, never a tool_use.
+	prose := &fakeLLM{resp: []*llm.ChatResponse{endTurn("I cannot call tools, sorry.")}}
+	a := NewOrionAgent(nil, nil, RoleTemplate{})
+	a.SetModel("m1", func(_, arg string) (llm.Provider, string, error) { return prose, arg, nil }, nil)
+	msg, err := a.switchModel("lmstudio/tiny-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(msg, "MODEL:lmstudio/tiny-model") {
+		t.Fatalf("sentinel must survive the warn: %q", msg)
+	}
+	if !strings.Contains(msg, "WARNING") || !strings.Contains(msg, "tool calling") {
+		t.Fatalf("tool-incapable switch must warn: %q", msg)
+	}
+
+	// Capable: the probe sees a well-formed echo tool_use → no warning.
+	capable := &fakeLLM{resp: []*llm.ChatResponse{tuResp("1", "echo", `{"text":"ping"}`)}}
+	a2 := NewOrionAgent(nil, nil, RoleTemplate{})
+	a2.SetModel("m1", func(_, arg string) (llm.Provider, string, error) { return capable, arg, nil }, nil)
+	msg, err = a2.switchModel("lmstudio/big-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(msg, "WARNING") {
+		t.Fatalf("tool-capable switch must not warn: %q", msg)
+	}
+}
