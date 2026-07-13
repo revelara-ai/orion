@@ -3,6 +3,7 @@ package conductor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -264,8 +265,20 @@ func TestRememberOutcomeContent(t *testing.T) {
 
 	// The candidate → learned skill path carries the trajectory, and the old
 	// contentless template phrase is gone (acceptance: grep -L "approach converged").
+	// or-gb1.5: promotion fails closed without eval evidence — attach passing
+	// deterministic evidence to every candidate first.
+	cands, cerr := mem.ListCandidates(ctx)
+	if cerr != nil || len(cands) == 0 {
+		t.Fatalf("candidates: %v (%d)", cerr, len(cands))
+	}
+	for _, c := range cands {
+		ev := fmt.Sprintf(`{"candidate_id":%q,"happy":[{"name":"h","input":"i","output":"ok","predicate":{"kind":"contains","arg":"ok"}}]}`, c.ID)
+		if _, werr := mem.Write(ctx, memory.Item{Tier: memory.MTM, Kind: selfevolve.EvalEvidenceKind, Content: ev, TrustTier: memory.TrustProof, Heat: 1.0}); werr != nil {
+			t.Fatal(werr)
+		}
+	}
 	skillsDir := t.TempDir()
-	names, err := selfevolve.PromoteCandidates(ctx, mem, skillsDir)
+	names, _, err := selfevolve.PromoteCandidates(ctx, mem, skillsDir)
 	if err != nil || len(names) == 0 {
 		t.Fatalf("promote candidates: %v (%d)", err, len(names))
 	}

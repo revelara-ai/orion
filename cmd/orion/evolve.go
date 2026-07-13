@@ -33,10 +33,15 @@ func cmdEvolve(_ []string) int {
 	defer func() { _ = mem.Close() }()
 
 	skillsDir := filepath.Join(dir, "skills")
-	promoted, err := selfevolve.PromoteCandidates(context.Background(), mem, skillsDir)
+	promoted, rejected, err := selfevolve.PromoteCandidates(context.Background(), mem, skillsDir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion evolve:", err)
 		return 1
+	}
+	// or-gb1.5: the SkillEval gate — rejected candidates are surfaced with
+	// the failing predicate named, never silently skipped.
+	for _, r := range rejected {
+		fmt.Printf("rejected %s: %s\n", r.CandidateID, r.Reason)
 	}
 	if len(promoted) == 0 {
 		fmt.Println("orion evolve: no candidates to promote")
