@@ -56,7 +56,7 @@ type PreambleData struct {
 // prompt. ok=false means "use the compiled default" (file absent, or invalid
 // after a loud warning).
 func GenerationPreamble(data PreambleData) (string, bool) {
-	raw, err := os.ReadFile(filepath.Join(Dir(), preambleFile))
+	raw, err := os.ReadFile(configPath(preambleFile, data.Module))
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", false
 	}
@@ -89,8 +89,8 @@ func renderPreamble(raw string, data PreambleData) (string, error) {
 
 // Rules returns the extra rule/instruction text appended to the generation
 // prompt ("" when absent/invalid).
-func Rules() string {
-	raw, err := os.ReadFile(filepath.Join(Dir(), rulesFile))
+func Rules(siteKey string) string {
+	raw, err := os.ReadFile(configPath(rulesFile, siteKey))
 	if err != nil {
 		return ""
 	}
@@ -122,8 +122,8 @@ var validDimensions = map[string]bool{
 
 // LoadChecklists reads the externalized checklists. ok=false means "use the
 // compiled defaults" (absent, or invalid after a loud warning).
-func LoadChecklists() (Checklists, bool) {
-	raw, err := os.ReadFile(filepath.Join(Dir(), checklistFile))
+func LoadChecklists(siteKey string) (Checklists, bool) {
+	raw, err := os.ReadFile(configPath(checklistFile, siteKey))
 	if errors.Is(err, fs.ErrNotExist) {
 		return Checklists{}, false
 	}
@@ -179,6 +179,23 @@ func Validate() []error {
 	if raw, err := os.ReadFile(filepath.Join(dir, checklistFile)); err == nil {
 		if _, perr := parseChecklists(raw); perr != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", checklistFile, perr))
+		}
+	}
+	// Canary surfaces (or-mvr.6): a broken manifest or candidate must be
+	// caught in review/doctor — a canary that half-applies is the inc-u12 bug.
+	if raw, err := os.ReadFile(filepath.Join(dir, canaryManifest)); err == nil {
+		if _, perr := parseCanary(raw); perr != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", canaryManifest, perr))
+		}
+	}
+	if raw, err := os.ReadFile(filepath.Join(dir, candidateDir, preambleFile)); err == nil {
+		if _, rerr := renderPreamble(string(raw), PreambleData{Module: "sample/mod", Entry: "handle", Format: "json"}); rerr != nil {
+			errs = append(errs, fmt.Errorf("%s/%s: %w", candidateDir, preambleFile, rerr))
+		}
+	}
+	if raw, err := os.ReadFile(filepath.Join(dir, candidateDir, checklistFile)); err == nil {
+		if _, perr := parseChecklists(raw); perr != nil {
+			errs = append(errs, fmt.Errorf("%s/%s: %w", candidateDir, checklistFile, perr))
 		}
 	}
 	return errs

@@ -159,7 +159,7 @@ func functionalDecisions(projectType string) []RequiredDecision {
 	// or-kzf.2: an externalized checklist for THIS projectType replaces the
 	// compiled entry (other types keep their defaults; absent/invalid config
 	// falls back to the registry below).
-	if c, ok := harnessconfig.LoadChecklists(); ok {
+	if c, ok := harnessconfig.LoadChecklists(projectType); ok {
 		key := projectType
 		if key == "" {
 			key = "http-service"
@@ -185,7 +185,7 @@ func functionalDecisions(projectType string) []RequiredDecision {
 func universalDecisions() []RequiredDecision {
 	// or-kzf.2: a non-empty externalized universal list replaces the compiled
 	// dimensions (reviewable in a PR, no rebuild).
-	if c, ok := harnessconfig.LoadChecklists(); ok && len(c.Universal) > 0 {
+	if c, ok := harnessconfig.LoadChecklists("universal"); ok && len(c.Universal) > 0 {
 		return fromConfig(c.Universal)
 	}
 	return []RequiredDecision{
