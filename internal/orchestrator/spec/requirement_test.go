@@ -86,7 +86,7 @@ func TestCompileRejectsUnprovableRequirement(t *testing.T) {
 		{Text: "no cases"}, // zero cases
 		{Text: "unknown kind", Cases: []BehavioralCase{{Request: RequestShape{Method: "GET", Path: "/t"}, Expect: ExpectShape{Status: 200, ContentType: "application/json", Assertions: []BodyAssertion{{Kind: "bogus"}}}}}},
 		{Text: "bad zone", Cases: []BehavioralCase{{Request: RequestShape{Method: "GET", Path: "/t"}, Expect: ExpectShape{Status: 200, ContentType: "application/json", Assertions: []BodyAssertion{{Kind: AssertJSONKeyInTZ, Key: "time", Value: "Not/AZone"}}}}}},
-		{Text: "xml", Cases: []BehavioralCase{{Request: RequestShape{Method: "GET", Path: "/t"}, Expect: ExpectShape{Status: 200, ContentType: "application/xml"}}}},
+		{Text: "yaml", Cases: []BehavioralCase{{Request: RequestShape{Method: "GET", Path: "/t"}, Expect: ExpectShape{Status: 200, ContentType: "application/yaml"}}}},
 	}
 	for _, r := range bad {
 		if _, err := Compile("intent", fullAnswers(), nil, checklist, []Requirement{r}); err == nil {

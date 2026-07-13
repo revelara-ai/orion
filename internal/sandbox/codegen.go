@@ -25,7 +25,7 @@ type GenSpec struct {
 	Lease    []string
 	Route    string // e.g. "/time"
 	Port     int    // e.g. 8080
-	Format   string // "json" | "text"
+	Format   string // "json" | "text" | "xml"
 	TimeZone string // "UTC" | IANA name
 	// Cases are the behavioral cases the generated program must satisfy (the
 	// contract). The native LLM generator builds arbitrary code to these; the
@@ -171,6 +171,8 @@ func {{.Entry}}(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().In(location())
 {{if eq .Format "text"}}	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte(now.Format(time.RFC3339)))
+{{else if eq .Format "xml"}}	w.Header().Set("Content-Type", "application/xml")
+	_, _ = w.Write([]byte("<time>" + now.Format(time.RFC3339) + "</time>"))
 {{else}}	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"time": now.Format(time.RFC3339)})
 {{end}}}

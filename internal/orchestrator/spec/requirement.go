@@ -191,9 +191,9 @@ func validateCase(c BehavioralCase) error {
 		return fmt.Errorf("status %d is not a valid HTTP status", c.Expect.Status)
 	}
 	switch c.Expect.ContentType {
-	case "application/json", "text/plain":
+	case "application/json", "text/plain", "application/xml":
 	default:
-		return fmt.Errorf("content_type %q is not provable (use application/json or text/plain)", c.Expect.ContentType)
+		return fmt.Errorf("content_type %q is not provable (use application/json, application/xml, or text/plain)", c.Expect.ContentType)
 	}
 	for _, a := range c.Expect.Assertions {
 		if !knownAssertionKinds[a.Kind] {

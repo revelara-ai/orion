@@ -10,6 +10,7 @@ package empirical
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net"
@@ -395,6 +396,21 @@ func probeContract(addr string, c testsynth.Contract) ProbeResult {
 		// Content-type only — the body is NOT assumed to be a timestamp.
 		if !strings.Contains(ct, "text/plain") {
 			pr.Detail = "content-type " + ct
+			return pr
+		}
+		pr.ResponseContractSatisfied = true
+		pr.Detail = "ok"
+		return pr
+	}
+	if strings.ToLower(c.Format) == "xml" {
+		// Content-type + well-formedness (or-hbc) — mirrors the behavioral
+		// channel so both proof channels judge the same world.
+		if !strings.Contains(ct, "application/xml") {
+			pr.Detail = "content-type " + ct
+			return pr
+		}
+		if xml.Unmarshal(body, new(struct{})) != nil {
+			pr.Detail = "body not well-formed XML"
 			return pr
 		}
 		pr.ResponseContractSatisfied = true

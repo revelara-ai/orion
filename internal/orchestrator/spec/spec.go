@@ -200,6 +200,9 @@ func buildResponseContract(a map[string]string) (ResponseContract, error) {
 			"$schema": "https://json-schema.org/draft/2020-12/schema",
 			"type":    "object",
 		}
+	case "xml":
+		rc.ContentType = "application/xml"
+		rc.Schema = map[string]any{"type": "string", "contentMediaType": "application/xml"}
 	default: // "text"
 		rc.ContentType = "text/plain"
 		rc.Schema = map[string]any{"type": "string"}
@@ -214,22 +217,24 @@ func buildResponseContract(a map[string]string) (ResponseContract, error) {
 // exact `== "text"` check and silently generates JSON). The contract is the
 // single source of format truth.
 func (rc ResponseContract) Format() string {
-	if rc.ContentType == "text/plain" {
+	switch rc.ContentType {
+	case "text/plain":
 		return "text"
+	case "application/xml":
+		return "xml"
 	}
 	return "json"
 }
 
 // normalizeResponseFormat maps a free-text format answer to a canonical token in
-// the PROVABLE set ("json" | "text"), or returns an error. A human or LLM may
-// phrase the same intent many ways ("json", "JSON", "application/json", "JSON
-// format", "plain text", "text/plain") — these collapse. It NEVER silently
-// defaults: unrecognized, ambiguous (more than one format named — e.g. "no json,
-// xml only"), and not-yet-supported (xml) all fail loud, so a contract that
-// contradicts the stated format can never be assembled. xml is detected only to
-// reject it explicitly — the codegen+proof pipeline cannot yet produce/validate
-// XML, so anchoring an application/xml contract would be an unprovable (worse,
-// falsely-provable-against-JSON) spec.
+// the PROVABLE set ("json" | "xml" | "text"), or returns an error. A human or
+// LLM may phrase the same intent many ways ("json", "JSON", "application/json",
+// "JSON format", "plain text", "text/plain") — these collapse. It NEVER silently
+// defaults: unrecognized and ambiguous (more than one format named — e.g. "no
+// json, xml only") fail loud, so a contract that
+// contradicts the stated format can never be assembled. xml is a first-class
+// format (or-hbc): codegen emits application/xml and both proof channels
+// validate content-type + well-formedness, so an xml contract is provable.
 func normalizeResponseFormat(raw string) (string, error) {
 	v := strings.ToLower(strings.TrimSpace(raw))
 	if v == "" {
@@ -240,18 +245,18 @@ func normalizeResponseFormat(raw string) (string, error) {
 	textM := strings.Contains(v, "plain") || v == "text" || v == "text/plain"
 	switch b2i(jsonM) + b2i(xmlM) + b2i(textM) {
 	case 0:
-		return "", fmt.Errorf("response_format %q is not a recognized format (use JSON or plain text)", strings.TrimSpace(raw))
+		return "", fmt.Errorf("response_format %q is not a recognized format (use JSON, XML, or plain text)", strings.TrimSpace(raw))
 	case 1:
 		switch {
 		case jsonM:
 			return "json", nil
 		case textM:
 			return "text", nil
-		default: // xml only — detected, explicitly rejected
-			return "", fmt.Errorf("response_format %q (XML) is not yet supported by the proof pipeline; use JSON or plain text", strings.TrimSpace(raw))
+		default:
+			return "xml", nil
 		}
 	default: // names more than one format — ambiguous, never guess
-		return "", fmt.Errorf("response_format %q names more than one format; state exactly one (JSON or plain text)", strings.TrimSpace(raw))
+		return "", fmt.Errorf("response_format %q names more than one format; state exactly one (JSON, XML, or plain text)", strings.TrimSpace(raw))
 	}
 }
 
