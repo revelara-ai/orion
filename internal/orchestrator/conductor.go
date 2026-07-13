@@ -90,6 +90,11 @@ type Conductor struct {
 	mu        sync.RWMutex
 	intent    string
 	projectID string
+	// pendingQueuedID is the id of an intent THIS session submitted that
+	// enqueued behind a different active project (or-hn15.3). While set and
+	// still queued, every spec-flow tool would silently target the active
+	// (stale) project — so the targeting guard refuses, naming both.
+	pendingQueuedID string
 }
 
 // SetModuleProposer injects the semantic ModuleProposer (or-809). Safe to call
@@ -133,16 +138,72 @@ func (c *Conductor) ProjectID() string {
 // the http-service default (or-3ba.5). Every spec-flow load path goes through here
 // rather than calling the store directly.
 func (c *Conductor) currentProjectSpec(ctx context.Context) (contextstore.Project, contextstore.Spec, error) {
-	proj, sp, err := c.store.CurrentProjectSpec(ctx)
+	proj, sp, err := c.activeProjectSpec(ctx)
 	if err != nil {
 		return proj, sp, err
 	}
-	if pt := proj.ProjectType; pt != "" && pt != c.gate.ProjectType() {
+	if pt := effectiveProjectType(proj); pt != "" && pt != c.gate.ProjectType() {
 		c.mu.Lock()
 		c.gate = completeness.NewAnalyzer(pt)
 		c.mu.Unlock()
 	}
 	return proj, sp, err
+}
+
+// activeProjectSpec resolves the strict-active project + spec and enforces the
+// targeting guard (or-hn15.3) WITHOUT rebuilding the completeness gate — the
+// drop-in for spec-flow methods that manage the gate themselves. Every mutation
+// that resolves the active project must go through this (or currentProjectSpec)
+// so a session's queued-behind-stale intent can never silently edit the wrong
+// project.
+func (c *Conductor) activeProjectSpec(ctx context.Context) (contextstore.Project, contextstore.Spec, error) {
+	proj, sp, err := c.store.CurrentProjectSpec(ctx)
+	if err != nil {
+		return proj, sp, err
+	}
+	if cerr := c.targetingConflict(ctx, proj); cerr != nil {
+		return proj, sp, cerr
+	}
+	return proj, sp, nil
+}
+
+// effectiveProjectType is the type the gate should use for a project, demoting a
+// STALE legacy default (or-hn15.3): a row typed "http-service" whose intent
+// carries no HTTP signal was classified by the pre-or-045a.1 default (which
+// misclassified every vague intent as an HTTP service). Re-inferring returns
+// Unclassified, so the gate asks the universal checklist and ratification blocks
+// on the type — instead of resurrecting the fossil's port/route questions. A row
+// whose intent DOES signal http-service (or any other explicit type) is
+// unaffected.
+func effectiveProjectType(proj contextstore.Project) string {
+	if proj.ProjectType == "http-service" && completeness.InferProjectType(proj.Intent) == completeness.Unclassified {
+		return completeness.Unclassified
+	}
+	return proj.ProjectType
+}
+
+// targetingConflict refuses when THIS session's submitted intent is still queued
+// behind a DIFFERENT active project (or-hn15.3): otherwise every spec-flow tool
+// silently targets the active (stale) project, as in the mech-game dogfood where
+// the game's goals landed on a fossil http-service project. Naming both, it
+// points at the queue controls. Clears itself once the pending intent activates
+// or is abandoned.
+func (c *Conductor) targetingConflict(ctx context.Context, active contextstore.Project) error {
+	c.mu.RLock()
+	pending := c.pendingQueuedID
+	c.mu.RUnlock()
+	if pending == "" || pending == active.ID {
+		return nil
+	}
+	var q contextstore.Project
+	if err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+		var e error
+		q, e = tx.Projects().Get(ctx, pending)
+		return e
+	}); err != nil || q.Status != "queued" {
+		return nil // the pending intent vanished or already activated — no conflict
+	}
+	return fmt.Errorf("your intent %q is QUEUED behind the active intent %q — spec-flow tools target the ACTIVE project, so acting now would edit the wrong one. Finish or abandon the active intent (orion queue next / orion queue abandon) so %q starts, then retry", q.Intent, active.Intent, q.Intent)
 }
 
 // currentOrDeliveredProjectSpec is currentProjectSpec for READ/REPORT paths: it
@@ -156,7 +217,7 @@ func (c *Conductor) currentOrDeliveredProjectSpec(ctx context.Context) (contexts
 	if err != nil {
 		return proj, sp, err
 	}
-	if pt := proj.ProjectType; pt != "" && pt != c.gate.ProjectType() {
+	if pt := effectiveProjectType(proj); pt != "" && pt != c.gate.ProjectType() {
 		c.mu.Lock()
 		c.gate = completeness.NewAnalyzer(pt)
 		c.mu.Unlock()
@@ -270,6 +331,9 @@ func (c *Conductor) submitClassified(ctx context.Context, intent, verbatim strin
 			return Confirmation{}, fmt.Errorf("persist intent: %w", err)
 		}
 		if queuedBehind != nil {
+			c.mu.Lock()
+			c.pendingQueuedID = projectID // remember it so tools don't mistarget the active one
+			c.mu.Unlock()
 			c.log.InfoContext(ctx, "intent queued", "intent", trimmed, "behind", queuedBehind.Intent, "position", position)
 			return Confirmation{
 				Intent:      trimmed,
@@ -334,7 +398,7 @@ func (c *Conductor) SetProjectType(ctx context.Context, projectType string) erro
 		return fmt.Errorf("set_project_type: %q is not a valid project type — a short lowercase slug naming what the software IS (e.g. http-service, cli, game, pipeline)", projectType)
 	}
 	if c.store != nil {
-		proj, _, err := c.store.CurrentProjectSpec(ctx)
+		proj, _, err := c.activeProjectSpec(ctx)
 		if err != nil {
 			return fmt.Errorf("set_project_type: no active project: %w", err)
 		}
@@ -375,7 +439,7 @@ func (c *Conductor) SetScale(ctx context.Context, scale string) error {
 	if c.store == nil {
 		return errNoStore
 	}
-	proj, sp, err := c.store.CurrentProjectSpec(ctx)
+	proj, sp, err := c.activeProjectSpec(ctx)
 	if err != nil {
 		return fmt.Errorf("set_scale: no active project: %w", err)
 	}
