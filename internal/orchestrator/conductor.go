@@ -259,7 +259,7 @@ func (c *Conductor) Submit(ctx context.Context, intent string) (Confirmation, er
 
 	c.mu.Lock()
 	c.intent = trimmed
-	c.gate = completeness.NewAnalyzer(ptype)
+	c.gate = completeness.NewAnalyzerScaled(ptype, scale)
 	c.mu.Unlock()
 
 	// Run the deterministic completeness gate. Unresolved dimensions become open
@@ -316,8 +316,14 @@ func (c *Conductor) SetProjectType(ctx context.Context, projectType string) erro
 			return err
 		}
 	}
+	scale := completeness.ScaleStandard
+	if c.store != nil {
+		if proj, _, err := c.store.CurrentProjectSpec(ctx); err == nil {
+			scale = proj.Scale
+		}
+	}
 	c.mu.Lock()
-	c.gate = completeness.NewAnalyzer(pt)
+	c.gate = completeness.NewAnalyzerScaled(pt, scale)
 	c.mu.Unlock()
 	c.log.InfoContext(ctx, "project type resolved", "type", pt)
 	return nil
