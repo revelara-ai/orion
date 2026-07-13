@@ -9,10 +9,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/revelara-ai/orion/internal/promptguard"
 	"github.com/revelara-ai/orion/internal/tools"
 )
 
@@ -68,6 +70,15 @@ func fetchURL(ctx context.Context, httpc *http.Client, raw string) (string, erro
 	}
 	if isBlockedHost(u.Hostname()) {
 		return "", fmt.Errorf("web_fetch: refusing to fetch a link-local / cloud-metadata address (%s)", u.Hostname())
+	}
+	// or-ykz.17: the versioned SSRF guard widens the denial to private ranges,
+	// loopback, and the full metadata-host list (union with isBlockedHost).
+	// ORION_WEBFETCH_ALLOW_LOCAL=1 re-opens loopback/private for local dev and
+	// tests — an explicit, greppable opt-out, never the default.
+	if os.Getenv("ORION_WEBFETCH_ALLOW_LOCAL") != "1" {
+		if err := promptguard.URLSafe(u.String()); err != nil {
+			return "", fmt.Errorf("web_fetch: %w", err)
+		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
