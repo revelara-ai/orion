@@ -136,6 +136,11 @@ func TestChangeDeliversPRArtifact(t *testing.T) {
 	if !strings.Contains(string(body), "Brownfield change") || !strings.Contains(string(body), "golangci") {
 		t.Errorf("PR body missing change provenance:\n%s", body)
 	}
+	// or-ykz.12 Done-when: a brownfield change produces a before/after empirical
+	// report attached to the deliverable.
+	if !strings.Contains(string(body), "Before/after empirical evidence") {
+		t.Errorf("PR body missing the before/after evidence section:\n%s", body)
+	}
 	joined := strings.Join(res.PR.Commands, "\n")
 	if !strings.Contains(joined, "push -u origin") || !strings.Contains(joined, res.Branch) {
 		t.Errorf("PR handoff must record the push command for the review branch, got: %v", res.PR.Commands)
