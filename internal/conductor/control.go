@@ -15,6 +15,16 @@ func (a *OrionAgent) Control(ctx context.Context, sessionID, op, arg string) (st
 		return a.compact(ctx, sessionID)
 	case "model":
 		return a.switchModel(arg)
+	// Tree-structured sessions (or-ykz.5): branch/clone/navigate without ever
+	// touching the source branch.
+	case "fork":
+		return a.fork(sessionID, arg)
+	case "clone":
+		return a.cloneSession(sessionID)
+	case "tree":
+		return a.treeView(sessionID)
+	case "switch":
+		return a.switchSession(sessionID, arg)
 	default:
 		return "", fmt.Errorf("unknown control op %q", op)
 	}

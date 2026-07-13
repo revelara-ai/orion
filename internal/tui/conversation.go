@@ -315,6 +315,15 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.brain = "native · " + id
 			txt = disp
 		}
+		// A "SESSION:<id> · <text>" result (/fork, /clone, /switch) moves the TUI
+		// onto that branch — subsequent prompts go to the new session (or-ykz.5).
+		if rest, ok := strings.CutPrefix(txt, "SESSION:"); ok {
+			id, disp, _ := strings.Cut(rest, " · ")
+			if id = strings.TrimSpace(id); id != "" {
+				m.sid = id
+			}
+			txt = disp
+		}
 		m.msgs = append(m.msgs, msg{role: "orion", kind: "command", text: txt})
 		m.render()
 		return m, nil

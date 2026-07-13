@@ -37,6 +37,7 @@ type OrionAgent struct {
 
 	mu       sync.Mutex
 	sessions map[string][]llm.Message
+	tree     map[string]sessionNode // session forks: id → parent + fork turn (or-ykz.5)
 	changes  map[string]*changeSession                                  // brownfield change-flow state, per session
 	allowed  map[string]map[string]bool                                 // session → tool names the developer allow-always'd
 	starts   map[string]time.Time                                       // session → first-seen time (names the on-disk transcript)
