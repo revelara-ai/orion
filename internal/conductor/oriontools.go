@@ -377,6 +377,9 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				// or-zn8: the adversarial issue-set reviewer rides the same brain;
 				// the deterministic gate (advisory→ORION_ISSUE_REVIEW=block) decides.
 				c.SetIssueReviewer(NativeIssueReviewer(provider))
+				// or-gb1.4: the opt-in memory distillation pass rides the same
+				// brain — inert unless ORION_MEMORY_DISTILL=1.
+				SetDistillProvider(provider)
 			}
 			res, err := BuildAndProve(ctx, st, gen, aligner, func(e PhaseEvent) {
 				phases = append(phases, e)

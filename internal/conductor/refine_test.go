@@ -12,10 +12,12 @@ import (
 	"testing"
 
 	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/memory"
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/internal/proof"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 	"github.com/revelara-ai/orion/internal/sandbox"
+	"github.com/revelara-ai/orion/internal/selfevolve"
 )
 
 // brokenTimeService compiles + runs (so the proof can execute it) and exposes the
@@ -206,5 +208,84 @@ func TestBuildAndProveStopsWhenGeneratorCannotRefine(t *testing.T) {
 	}
 	if kinds["escalated"] == 0 {
 		t.Errorf("the end-of-run escalate must notify out-of-band, got events: %v", kinds)
+	}
+}
+
+// TestRememberOutcomeContent (or-gb1.4 acceptance): after a two-attempt
+// fixture build (fail then pass), the MTM pattern item carries the overcome
+// failure analysis and the inter-attempt change summary — and `orion evolve`
+// on that store emits a learned-* skill whose body is the procedure
+// trajectory, not the old contentless template.
+func TestRememberOutcomeContent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles + proves a service twice; skipped in -short")
+	}
+	oc, ctx := ratifiedTimeService(t)
+
+	gen := func(_ context.Context, gs sandbox.GenSpec, dir, feedback string) (sandbox.GeneratedArtifact, error) {
+		if feedback == "" {
+			return writeBrokenTimeService(dir, gs) // attempt 1: broken → Reject
+		}
+		return sandbox.GenerateTimeServiceFixture(dir, gs) // attempt 2 → Accept
+	}
+	res, err := BuildAndProve(ctx, oc.Store(), gen, nil, nil, "")
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if res.Attempts != 2 || res.Verdict != "Accept" {
+		t.Fatalf("fixture must converge on attempt 2: %+v", res)
+	}
+
+	mem, err := memory.Open(filepath.Join(oc.Store().Dir(), "memory"))
+	if err != nil {
+		t.Fatalf("reopen memory: %v", err)
+	}
+	defer func() { _ = mem.Close() }()
+
+	items, err := mem.Retrieve(ctx, "Proven task", memory.MTM)
+	if err != nil {
+		t.Fatalf("retrieve: %v", err)
+	}
+	var pattern string
+	for _, it := range items {
+		if it.Kind == memory.KindPattern && strings.Contains(it.Content, "Proven task") {
+			pattern = it.Content
+			break
+		}
+	}
+	if pattern == "" {
+		t.Fatalf("no pattern item found in MTM (%d items)", len(items))
+	}
+	for _, want := range []string{"converged on attempt 2", "overcame:", "passing attempt changed:", "modified"} {
+		if !strings.Contains(pattern, want) {
+			t.Fatalf("the pattern item must carry %q (or-gb1.4), got:\n%s", want, pattern)
+		}
+	}
+
+	// The candidate → learned skill path carries the trajectory, and the old
+	// contentless template phrase is gone (acceptance: grep -L "approach converged").
+	skillsDir := t.TempDir()
+	names, err := selfevolve.PromoteCandidates(ctx, mem, skillsDir)
+	if err != nil || len(names) == 0 {
+		t.Fatalf("promote candidates: %v (%d)", err, len(names))
+	}
+	var body string
+	for _, name := range names {
+		b, rerr := os.ReadFile(filepath.Join(skillsDir, name, "SKILL.md"))
+		if rerr == nil && strings.Contains(string(b), "procedure trajectory") {
+			body = string(b)
+			break
+		}
+	}
+	if body == "" {
+		t.Fatalf("no learned skill carries the procedure trajectory (promoted: %v)", names)
+	}
+	if strings.Contains(body, "approach converged") {
+		t.Fatalf("the contentless template phrase must be gone from emitted skills:\n%s", body)
+	}
+	for _, want := range []string{"attempt 1 failed:", "passing fix:"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the learned skill must carry the trajectory step %q, got:\n%s", want, body)
+		}
 	}
 }

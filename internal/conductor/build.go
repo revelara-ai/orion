@@ -584,6 +584,7 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	var feedback string
 	attempts := 0
 	var prevSnapshot refinementSnapshot // or-mvr.5: prior attempt's quality/security signals
+	traj := &buildTrajectory{}          // or-gb1.4: the harness-derived refinement story
 	var lastHash string
 	var lastNarrative string // the latest attempt's agent self-report (or-7mr), quarantined on failure
 	for attempt := 1; attempt <= maxBuildAttempts; attempt++ {
@@ -620,6 +621,7 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 			onPhase.emit("Diagnose", PhaseWarn, fmt.Sprintf("%d diagnostic(s) — refining before proof", len(diag.Diagnostics)))
 			failureAnalysis = diag.Feedback()
 			feedback = failureAnalysis
+			traj.recordFailure(failureAnalysis, buildDir) // or-gb1.4
 			report = proof.Report{}
 			report.Outcome.Verdict = truthalign.Inconclusive
 			if attempt < maxBuildAttempts {
@@ -678,12 +680,14 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 			}
 			onPhase.emit("Prove", PhaseDone, d)
 			failureAnalysis = ""
+			traj.finish(buildDir) // or-gb1.4: the passing attempt closes the trajectory
 			break
 		}
 
 		// Reject/Inconclusive → causal analysis becomes the next attempt's feedback.
 		failureAnalysis = analyzeFailure(report, es.ResponseContract.Cases)
 		feedback = failureAnalysis
+		traj.recordFailure(failureAnalysis, buildDir) // or-gb1.4
 
 		// Net-negative-refinement detector (or-mvr.5): a pass that made the
 		// artifact WORSE than the attempt it was refining terminates the loop —
@@ -821,7 +825,7 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	// write miss never fails an otherwise-green build.
 	if mem != nil {
 		withLock(stateMu, func() {
-			memMaintenance(ctx, mem, taskID, buildDir, report, lastNarrative, failureAnalysis)
+			memMaintenance(ctx, mem, taskID, buildDir, report, lastNarrative, failureAnalysis, traj)
 		})
 	}
 
@@ -926,8 +930,8 @@ func mutationThresholdFor(artifactDir string) float64 {
 // memMaintenance records the proven outcome into memory + bounds the tiers (or-hd3.*). Best-effort
 // (a memory miss never fails an otherwise-green build); called under stateMu so it is race-free
 // when clusters build in parallel.
-func memMaintenance(ctx context.Context, mem *memory.Store, taskID, buildDir string, report proof.Report, lastNarrative, failureAnalysis string) {
-	_ = rememberOutcome(ctx, mem, taskID, report)
+func memMaintenance(ctx context.Context, mem *memory.Store, taskID, buildDir string, report proof.Report, lastNarrative, failureAnalysis string, traj *buildTrajectory) {
+	_ = rememberOutcome(ctx, mem, taskID, report, traj)
 	// or-v9f.8: the durable decision log — a proven module's structural choices
 	// (exports, routes, module path) persist so dependent modules reuse them.
 	_ = rememberDecidedConstraints(ctx, mem, taskID, buildDir, report)
@@ -938,7 +942,10 @@ func memMaintenance(ctx context.Context, mem *memory.Store, taskID, buildDir str
 	_ = rememberFailure(ctx, mem, taskID, report, lastNarrative, failureAnalysis)
 	// or-ykz.8: propose a self-evolution candidate from a passing run (generation-tier,
 	// active=false — quarantined AND excluded from recall until the lifecycle activates it).
-	_ = proposeCandidate(ctx, mem, taskID, report)
+	_ = proposeCandidate(ctx, mem, taskID, report, traj)
+	// or-gb1.4 DISTILL: opt-in LLM distillation of a transferable rule from the
+	// trajectory — generation-tier + Candidate, absent unless the flag is set.
+	distillRule(ctx, mem, taskID, report, traj)
 	// or-hd3.6: promote hot, frequently-recalled MTM patterns to durable LTM FIRST (so eviction
 	// can't drop a promotion-eligible item), then bound BOTH tiers — all best-effort.
 	_, _, _ = mem.Promote(ctx)

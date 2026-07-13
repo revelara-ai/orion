@@ -54,6 +54,7 @@ Everything is optional; unset means the documented default. Variables marked
 
 | Variable | Default | Effect |
 |---|---|---|
+| `ORION_MEMORY_DISTILL` | off | `1` enables the LLM distillation pass: transferable rules from refinement trajectories, written as generation-tier candidates (opt-in). |
 | `ORION_MEMORY_EMBEDDER` | off | `gomlx` enables pure-Go semantic recall (opt-in). |
 | `ORION_MEMORY_EMBEDDING_MODEL` / `ORION_MEMORY_MODEL_PATH` / `ORION_EMBED_MODEL_DIR` | bge-base defaults | Embedding model selection/location. |
 | `ORION_POLARIS_MCP_URL` | token's endpoint | Override the revelara.ai MCP endpoint. |
