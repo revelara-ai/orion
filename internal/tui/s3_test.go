@@ -81,14 +81,19 @@ func TestAtFileAutocomplete(t *testing.T) {
 	if !found {
 		t.Errorf("@con should match a con*.go file, got %v", matches)
 	}
-	// Tab completes the @token with a selected path (the @ marker is consumed).
+	// Tab completes the @token to a full @path — the '@' sigil is PRESERVED so
+	// the completed token stays a recognized file directive on submit (or-ns8;
+	// dropping the @ silently disables the inline-file expansion).
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
 	v := m.input.Value()
-	if strings.Contains(v, "@con") || !strings.Contains(v, "look at ") {
-		t.Errorf("Tab should replace @con with a path, got %q", v)
+	if !strings.HasPrefix(v, "look at @") {
+		t.Errorf("Tab must keep the @ sigil on the completed path, got %q", v)
 	}
 	if !strings.Contains(v, ".go") {
 		t.Errorf("completed value should contain a file path, got %q", v)
+	}
+	if v == "look at @con" {
+		t.Errorf("Tab should have extended the @con stub to a full path, got %q", v)
 	}
 }
 
