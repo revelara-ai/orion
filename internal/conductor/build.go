@@ -662,8 +662,14 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	// memory, generation-tier memory quarantined as data-only) and prime the generator
 	// with it. Best-effort — a memory/recall miss simply yields spec-only context.
 	if eng != nil {
+		var suffRep contextengine.SufficiencyReport
 		withLock(stateMu, func() {
-			if bundle, aerr := eng.Assemble(ctx, taskID, es.Intent); aerr == nil {
+			// or-gb1.1 (E2.5): evidence-sufficiency gate between assembly and
+			// dispatch — bounded recall cycles chase the named gaps BEFORE a
+			// generation+proof attempt is spent on an under-evidenced bundle.
+			needs := obligationNeeds(contract)
+			if bundle, rep, aerr := eng.EnsureSufficient(ctx, taskID, es.Intent, needs); aerr == nil {
+				suffRep = rep
 				// or-7et.5c: each direct dependency's EXTRACTED surface rides the
 				// always-injected constraints — deterministic lookup by task key,
 				// never heat-ranked recall (which evicts at 100-module scale).
@@ -673,6 +679,27 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 				gs.Context = bundle.Render(contextengine.DomainGeneration)
 			}
 		})
+		if suffRep.Outcome == contextengine.NeedsHuman {
+			// Under-specified task: escalate and BLOCK — never silently spend
+			// generation+proof attempts on evidence the recall cycles could
+			// not produce (the human answers, then the task re-runs).
+			onPhase.emit("Context", PhaseWarn, suffRep.String())
+			withLock(stateMu, func() {
+				_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
+					if proj, _, perr := store.CurrentProjectSpec(ctx); perr == nil {
+						_, e := tx.Escalations().CreateDetailed(ctx, proj.ID, taskID,
+							"evidence insufficient for generation (E2.5 gate)", suffRep.String())
+						return e
+					}
+					return nil
+				})
+			})
+			return taskResult{TaskID: taskID, Verdict: "Reject", Blocked: true,
+				FailureAnalysis: suffRep.String(), BuildDir: buildDir}, nil
+		}
+		if suffRep.Cycles > 1 && suffRep.Outcome == contextengine.Sufficient {
+			onPhase.emit("Context", PhaseDone, suffRep.String())
+		}
 	}
 
 	// Surface discovered skills (user-scope + self-evolved) to the generator as available
@@ -1278,4 +1305,33 @@ func firstLine(s string) string {
 		}
 	}
 	return ""
+}
+
+// obligationNeeds derives the DETERMINISTIC evidence inputs a task's proof
+// obligations depend on (or-gb1.1): the E2.5 gate checks these are present
+// in the assembled bundle before generation dispatches. Conservative by
+// design — only inputs whose absence provably starves the obligation.
+func obligationNeeds(c testsynth.Contract) []string {
+	var needs []string
+	seen := map[string]bool{}
+	add := func(n string) {
+		if n = strings.TrimSpace(n); n != "" && !seen[n] {
+			seen[n] = true
+			needs = append(needs, n)
+		}
+	}
+	for _, cs := range c.Cases {
+		for _, a := range cs.Expect.Assertions {
+			if a.Kind == spec.AssertJSONKeyInTZ {
+				add(a.Value) // the IANA zone the obligation proves against
+			}
+		}
+		if cs.Unit != nil && cs.Unit.Pkg != "" {
+			add(cs.Unit.Pkg) // the package surface the unit steps call into
+		}
+	}
+	if c.TimeZone != "" {
+		add(c.TimeZone)
+	}
+	return needs
 }
