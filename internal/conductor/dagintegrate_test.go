@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/revelara-ai/orion/internal/decomposer"
@@ -200,5 +202,181 @@ func TestIntegrateEpicAssemblesAcceptedSubset(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(headDir, "clBAD.go")); err == nil {
 		t.Error("failed cluster's file must NOT be on the integration head")
+	}
+}
+
+// waveClusters builds K accepted clusters with the given file scopes.
+func waveClusters(t *testing.T, mgr *worktree.Manager, scopes map[string]string) ([]decomposer.TaskCluster, map[string]string, []taskResult) {
+	t.Helper()
+	ctx := context.Background()
+	var clusters []decomposer.TaskCluster
+	clusterWT := map[string]string{}
+	var results []taskResult
+	keys := make([]string, 0, len(scopes))
+	for k := range scopes {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		cl := decomposer.TaskCluster{Key: key, Members: []string{key + "-t"}}
+		if scopes[key] != "" {
+			cl.FileScopes = []string{scopes[key]}
+		}
+		wt, err := mgr.Create(ctx, key, "main")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sub := scopes[key]
+		if sub == "" {
+			sub = key
+		}
+		if err := os.MkdirAll(filepath.Join(wt.Path, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		dogWrite(t, filepath.Join(wt.Path, sub, key+".go"), "package "+strings.ReplaceAll(sub, "/", "")+"\n")
+		clusters = append(clusters, cl)
+		clusterWT[key] = wt.Path
+		results = append(results, taskResult{TaskID: key + "-t", Verdict: "Accept"})
+	}
+	return clusters, clusterWT, results
+}
+
+// TestAssemblyWaveBatching (or-7et.4a acceptance): K lease-disjoint accepted
+// clusters re-prove ONCE per wave plus the bookend — not once per cluster.
+func TestAssemblyWaveBatching(t *testing.T) {
+	ctx := context.Background()
+	repo := initManagedRepo(t)
+	mgr := worktree.New(repo, openStore(t)).WithBase("main")
+	// Three disjoint scopes → ONE wave; spy = 1 wave + 1 bookend = 2, not 3.
+	clusters, clusterWT, results := waveClusters(t, mgr, map[string]string{
+		"wa": "pkga", "wb": "pkgb", "wc": "pkgc",
+	})
+	calls := 0
+	spy := func(context.Context, string) (bool, error) { calls++; return true, nil }
+
+	_, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", spy, nil, nil)
+	if err != nil || !ok {
+		t.Fatalf("assembly must succeed: ok=%v err=%v", ok, err)
+	}
+	if calls != 2 {
+		t.Fatalf("3 disjoint clusters = 1 wave + 1 bookend = 2 re-proofs, got %d", calls)
+	}
+}
+
+// TestWaveRollback (or-7et.4 acceptance): a red wave re-proof resets the head
+// to the PRE-WAVE rev — previously integrated waves survive on the head.
+func TestWaveRollback(t *testing.T) {
+	ctx := context.Background()
+	repo := initManagedRepo(t)
+	mgr := worktree.New(repo, openStore(t)).WithBase("main")
+	// Overlapping scopes → each cluster is its own wave (deterministic order: wa then wb).
+	clusters, clusterWT, results := waveClusters(t, mgr, map[string]string{
+		"wa": "shared/a", "wb": "shared",
+	})
+	waveN := 0
+	waves := func(_ context.Context, _ string, _ []decomposer.TaskCluster, _ string) (bool, error) {
+		waveN++
+		return waveN == 1, nil // wave 1 green, wave 2 RED
+	}
+	full := func(context.Context, string) (bool, error) { return true, nil }
+
+	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", full, waves, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("a red wave must fail the epic")
+	}
+	if waveN != 2 {
+		t.Fatalf("overlapping scopes must form 2 waves, got %d", waveN)
+	}
+	if _, err := os.Stat(filepath.Join(headDir, "shared/a", "wa.go")); err != nil {
+		t.Fatal("wave 1's files must SURVIVE the wave-2 rollback")
+	}
+	if _, err := os.Stat(filepath.Join(headDir, "shared", "wb.go")); err == nil {
+		t.Fatal("the red wave's files must be rolled back off the head")
+	}
+}
+
+// TestFinalBookendFullProof (or-7et.4b acceptance): the final head always gets
+// the FULL re-proof; a red bookend rejects the epic even when every wave was
+// green.
+func TestFinalBookendFullProof(t *testing.T) {
+	ctx := context.Background()
+	repo := initManagedRepo(t)
+	mgr := worktree.New(repo, openStore(t)).WithBase("main")
+	clusters, clusterWT, results := waveClusters(t, mgr, map[string]string{
+		"wa": "pkga", "wb": "pkgb",
+	})
+	greenWaves := func(context.Context, string, []decomposer.TaskCluster, string) (bool, error) { return true, nil }
+	bookends := 0
+	redBookend := func(context.Context, string) (bool, error) { bookends++; return false, nil }
+
+	_, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", redBookend, greenWaves, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("a red bookend must reject the epic even after green waves")
+	}
+	if bookends != 1 {
+		t.Fatalf("the full bookend must run exactly once, got %d", bookends)
+	}
+}
+
+// TestScopedReproveEscalation (or-7et.4b acceptance): an undeclared FileScope
+// in the wave, or a wave diff touching go.mod, forces the FULL re-proof.
+func TestScopedReproveEscalation(t *testing.T) {
+	ctx := context.Background()
+	fullCalls := 0
+	full := func(context.Context, string) (bool, error) { fullCalls++; return true, nil }
+	wr := scopedWaveReprove(full)
+
+	// (i) empty FileScope → full, before any git work.
+	ok, err := wr(ctx, t.TempDir(), []decomposer.TaskCluster{{Key: "x", Members: []string{"t"}}}, "HEAD")
+	if err != nil || !ok || fullCalls != 1 {
+		t.Fatalf("undeclared scope must escalate to full: ok=%v err=%v calls=%d", ok, err, fullCalls)
+	}
+
+	// (ii) a wave diff touching go.mod → full.
+	repo := initManagedRepo(t)
+	pre, _ := gitIn(ctx, repo, "rev-parse", "HEAD")
+	dogWrite(t, filepath.Join(repo, "go.mod"), "module svc\n\ngo 1.24\n")
+	if _, err := gitIn(ctx, repo, "add", "-A"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitIn(ctx, repo, "-c", "user.name=T", "-c", "user.email=t@e.c", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "bump"); err != nil {
+		t.Fatal(err)
+	}
+	scoped := []decomposer.TaskCluster{{Key: "y", Members: []string{"t"}, FileScopes: []string{"pkga"}}}
+	ok, err = wr(ctx, repo, scoped, strings.TrimSpace(pre))
+	if err != nil || !ok || fullCalls != 2 {
+		t.Fatalf("a go.mod-touching wave must escalate to full: ok=%v err=%v calls=%d", ok, err, fullCalls)
+	}
+}
+
+// TestLazyWorktreeLifecycle (or-7et.4c acceptance): cluster checkouts are gone
+// after their wave integrates (eager removal); the assembled head remains.
+func TestLazyWorktreeLifecycle(t *testing.T) {
+	ctx := context.Background()
+	repo := initManagedRepo(t)
+	mgr := worktree.New(repo, openStore(t)).WithBase("main")
+	clusters, clusterWT, results := waveClusters(t, mgr, map[string]string{
+		"wa": "pkga", "wb": "pkgb",
+	})
+	wtPaths := []string{clusterWT["wa"], clusterWT["wb"]}
+	green := func(context.Context, string) (bool, error) { return true, nil }
+
+	headDir, ok, err := integrateEpic(ctx, mgr, clusters, clusterWT, results, "main", green, nil, nil)
+	if err != nil || !ok {
+		t.Fatalf("assembly: ok=%v err=%v", ok, err)
+	}
+	for _, p := range wtPaths {
+		if _, err := os.Stat(p); err == nil {
+			t.Fatalf("cluster checkout %s must be removed once its wave integrates", p)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(headDir, "pkga", "wa.go")); err != nil {
+		t.Fatal("the assembled head must survive eager cluster-worktree removal")
 	}
 }
