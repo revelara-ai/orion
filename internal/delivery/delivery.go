@@ -71,6 +71,12 @@ func EvaluateBar(verdict truthalign.Verdict, presentModes []string, policy relia
 	if policy.RequireEnvelope && len(unverifiedOps) > 0 {
 		return Result{Decision: Escalate, Reason: fmt.Sprintf("tier %s requires verified operability; runbook claims lack artifact evidence: %s", policy.Tier, strings.Join(unverifiedOps, ", "))}
 	}
+	// or-xe7.6: a Critical-tier delivery decided on REDUCED reliability context
+	// (revelara.ai unreachable → cache/empty) cannot attest the org's known
+	// controls/risks were weighed — escalate to a human rather than auto-ship.
+	if policy.RequireLiveReliabilityContext && env.ReducedReliabilityContext {
+		return Result{Decision: Escalate, Reason: fmt.Sprintf("tier %s requires LIVE reliability context, but revelara.ai was unreachable (reduced context) — a human must confirm the org's controls/risks before this ships", policy.Tier)}
+	}
 	env.Tier = string(policy.Tier)
 	return Result{Decision: Deliver, HumanMergeable: true, Envelope: &env, Reason: "bar met; human-mergeable (V2.0 no auto-deploy)"}
 }

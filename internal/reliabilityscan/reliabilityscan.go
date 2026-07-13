@@ -136,3 +136,30 @@ func DeriveDimensions(findings []Finding) reliabilitytier.RiskDimensions {
 	}
 	return d
 }
+
+// EnrichDimensions merges the org's revelara.ai risk register into the
+// code-derived dimensions (or-xe7.6): a CONCERN the org already tracks is
+// real risk this artifact inherits, so a high/critical org risk raises the
+// matching dimension (never lowers — controls attest mitigation, but the
+// deterministic tier must stay conservative; a present control does not
+// downgrade a proven code risk). risksText is the raw search_risks payload;
+// an empty/unparsable payload leaves the dimensions untouched. Keyword
+// signal only (the payload is opaque MCP text) — bounded, never a hard
+// dependency.
+func EnrichDimensions(base reliabilitytier.RiskDimensions, risksText string) reliabilitytier.RiskDimensions {
+	lower := strings.ToLower(risksText)
+	hasSevere := strings.Contains(lower, "critical") || strings.Contains(lower, "\"high\"") || strings.Contains(lower, "severity: high")
+	if !hasSevere {
+		return base
+	}
+	// A severe known risk means the org has cross-system exposure this change
+	// touches — raise blast radius to at least service level, and data
+	// sensitivity when the risk names data/PII.
+	if base.BlastRadius < 1 {
+		base.BlastRadius = 1
+	}
+	if (strings.Contains(lower, "pii") || strings.Contains(lower, "data breach") || strings.Contains(lower, "sensitive data")) && base.DataSensitivity < 2 {
+		base.DataSensitivity = 2
+	}
+	return base
+}
