@@ -2,6 +2,7 @@ package conductor
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -174,6 +175,12 @@ func runClusterDAG(clusters []decomposer.TaskCluster, tasks []orchestrator.PlanT
 		} // else leases[cl.Key] stays nil = exclusive
 	}
 
+	// or-tcs.2: when ready clusters exceed open slots, the slot goes to the
+	// cluster whose completion unblocks the LONGEST downstream chain — not to
+	// whichever happens to sit earliest in the slice. Deterministic, derived
+	// from the DAG itself; ties keep slice order (stable sort).
+	ordered := dispatchOrder(clusters, deps)
+
 	var mu sync.Mutex
 	state := map[string]string{}  // clusterKey -> ""(pending)|running|Accept|Reject|Blocked
 	accepted := map[string]bool{} // taskID -> reached Accept (global)
@@ -204,7 +211,7 @@ func runClusterDAG(clusters []decomposer.TaskCluster, tasks []orchestrator.PlanT
 
 	for completed < len(clusters) {
 		mu.Lock()
-		for _, cl := range clusters {
+		for _, cl := range ordered {
 			if state[cl.Key] != "" {
 				continue
 			}
@@ -344,4 +351,46 @@ func scopesOverlap(a, b []string) bool {
 		}
 	}
 	return false
+}
+
+// clusterPriorities computes each cluster's CRITICAL-PATH priority: the
+// longest chain of dependent clusters hanging off it. Completing a high
+// number unblocks the most downstream work; leaves score 0 (or-tcs.2).
+func clusterPriorities(clusters []decomposer.TaskCluster, deps map[string]map[string]bool) map[string]int {
+	// Reverse edges: who depends on k.
+	dependents := map[string][]string{}
+	for ck, ds := range deps {
+		for dk := range ds {
+			dependents[dk] = append(dependents[dk], ck)
+		}
+	}
+	memo := map[string]int{}
+	var chain func(string) int
+	chain = func(k string) int {
+		if v, ok := memo[k]; ok {
+			return v
+		}
+		memo[k] = 0 // cycle guard (topoSort already rejects real cycles)
+		best := 0
+		for _, d := range dependents[k] {
+			if c := chain(d) + 1; c > best {
+				best = c
+			}
+		}
+		memo[k] = best
+		return best
+	}
+	out := map[string]int{}
+	for _, cl := range clusters {
+		out[cl.Key] = chain(cl.Key)
+	}
+	return out
+}
+
+// dispatchOrder is the slot-fill order: priority DESC, slice order on ties.
+func dispatchOrder(clusters []decomposer.TaskCluster, deps map[string]map[string]bool) []decomposer.TaskCluster {
+	pr := clusterPriorities(clusters, deps)
+	ordered := append([]decomposer.TaskCluster(nil), clusters...)
+	sort.SliceStable(ordered, func(i, j int) bool { return pr[ordered[i].Key] > pr[ordered[j].Key] })
+	return ordered
 }
