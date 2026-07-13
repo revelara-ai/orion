@@ -114,11 +114,25 @@ func RunTool(ctx context.Context, workdir, tool string, args ...string) (stdout,
 
 	root := goRoot()
 	roBinds := []string{root}
+	// or-tf8 H3 enabler: the HOST module cache binds read-only so a
+	// dependency-bearing repo's synth_test resolves from cache with the
+	// network still denied (GOPROXY=off).
+	modCache := hostModCache()
+	if modCache != "" {
+		roBinds = append(roBinds, modCache)
+	}
 	var argv []string
 	if tool == "go" {
 		if be.Name() == "none" {
+			// or-tf8 H1: `go test` executes GENERATED code — without a
+			// namespace sandbox it can read host files and reach the network
+			// even with a scrubbed env. FAIL CLOSED; the operator override is
+			// explicit and visible, never a silent warn.
+			if os.Getenv("ORION_ALLOW_UNSAFE_GO_ARM") != "1" {
+				return "", "", -1, fmt.Errorf("proofexec: refusing to run generated code without a namespace sandbox — install bwrap, or set ORION_ALLOW_UNSAFE_GO_ARM=1 to explicitly accept unisolated proof execs")
+			}
 			warnNoneOnce.Do(func() {
-				slog.Warn("proofexec: no namespace sandbox available; proof execs run with a scrubbed env but WITHOUT network/filesystem isolation",
+				slog.Warn("proofexec: ORION_ALLOW_UNSAFE_GO_ARM=1 — proof execs run with a scrubbed env but WITHOUT network/filesystem isolation",
 					"backend", be.Name())
 			})
 		}
@@ -140,10 +154,14 @@ func RunTool(ctx context.Context, workdir, tool string, args ...string) (stdout,
 		argv = append([]string{bin}, args...)
 	}
 
+	env := toolEnv(root, workdir)
+	if modCache != "" {
+		env["GOMODCACHE"] = modCache // read-only bind above; cache-only resolution
+	}
 	res, runErr := be.Run(ctx, sandbox.Spec{
 		Workdir:  workdir,
 		Argv:     argv,
-		Env:      toolEnv(root, workdir),
+		Env:      env,
 		ROBinds:  roBinds,
 		AllowNet: false, // default-deny egress — never true on this path
 	})
@@ -158,3 +176,23 @@ func GoToolchain(ctx context.Context, workdir string, goArgs ...string) (output 
 	stdout, stderr, code, err := RunTool(ctx, workdir, "go", goArgs...)
 	return stdout + stderr, code, err
 }
+
+// hostModCache resolves the host GOMODCACHE once (best-effort; "" = none).
+func hostModCache() string {
+	modCacheOnce.Do(func() {
+		out, err := exec.Command("go", "env", "GOMODCACHE").Output()
+		if err == nil {
+			if p := strings.TrimSpace(string(out)); p != "" && p != "off" {
+				if _, serr := os.Stat(p); serr == nil {
+					modCacheVal = p
+				}
+			}
+		}
+	})
+	return modCacheVal
+}
+
+var (
+	modCacheOnce sync.Once
+	modCacheVal  string
+)

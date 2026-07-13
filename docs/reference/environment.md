@@ -67,6 +67,7 @@ Everything is optional; unset means the documented default. Variables marked
 | `ORION_WORKSPACE_WRITES` / `ORION_WORKSPACE_ROOT` | anchored to cwd | Workspace write anchoring (or-1cv): write_file/edit_file refuse paths outside the workspace root (traversal + outside-absolute). `unrestricted` restores trusted anywhere-writes; `ORION_WORKSPACE_ROOT` relocates the anchor. Reads stay unrestricted. |
 | `ORION_BASELINE_MEMO` | on | `off` disables green-baseline memoization in the regression gate (cache keyed by tree-hash + scope + skip + go version; GREEN only; 7-day TTL; dirty trees never hit; evidence stamps the cache source). |
 | `ORION_GATE_TEST_TIMEOUT` | 20m | Per-binary `go test -timeout` for regression-gate runs; a timed-out package retries once solo before the baseline reds (busy machine ≠ red package). Suites serialize machine-wide on ~/.orion/proof.lock. |
+| `ORION_ALLOW_UNSAFE_GO_ARM` | off | `1` explicitly accepts running generated code (go test) WITHOUT a namespace sandbox when bwrap is absent. Default fails closed — install bubblewrap instead. |
 | `ORION_HARNESS_DIR` | `~/.orion/harness` | Externalized, reviewable harness config: `generation_preamble.tmpl`, `checklists.yaml`, `rules.md` — edits change behavior without a rebuild; invalid files warn + fall back (see `orion doctor`). |
 | `ORION_MEMORY_DISTILL` | off | `1` enables the LLM distillation pass: transferable rules from refinement trajectories, written as generation-tier candidates (opt-in). |
 | `ORION_MEMORY_EMBEDDER` | off | `gomlx` enables pure-Go semantic recall (opt-in). |

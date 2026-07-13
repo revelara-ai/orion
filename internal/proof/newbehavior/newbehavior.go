@@ -202,11 +202,17 @@ func ProveNewBehavior(ctx context.Context, artifactDir string, cases []Case) (tr
 // module root. -v keeps the obligation markers from being suppressed; -run targets only
 // the synthesized funcs so the package's own tests are not re-run here.
 func runGoTest(ctx context.Context, moduleRoot, pkg string) (string, error) {
-	cmd := exec.CommandContext(ctx, "go", "test", "-v", "-run", "Test_orionNB_", "./"+filepath.ToSlash(pkg))
-	cmd.Dir = moduleRoot
-	cmd.Env = safeenv.Build()
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	// or-tf8 H3: synth_test executes GENERATED code — route it through the
+	// proof-exec sandbox (bwrap namespace, scrubbed env, network denied,
+	// host module cache read-only) instead of bare safeenv.
+	out, code, err := proofexec.GoToolchain(ctx, moduleRoot, "test", "-v", "-run", "Test_orionNB_", "./"+filepath.ToSlash(pkg))
+	if err != nil {
+		return out, err
+	}
+	if code != 0 {
+		return out, fmt.Errorf("go test exited %d", code)
+	}
+	return out, nil
 }
 
 // proveCommand runs the command modality's Setup steps then the Assert argv under safeenv
