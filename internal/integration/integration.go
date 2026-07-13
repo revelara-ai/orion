@@ -193,6 +193,14 @@ func (i *Integrator) Integrate(ctx context.Context, taskID, clusterDir, branch s
 			if _, _, rbErr := gitAt(ctx, i.headDir, "reset", "--hard", headBefore); rbErr != nil {
 				return RolledBack, fmt.Errorf("re-proof failed AND rollback failed: %w", rbErr)
 			}
+			// or-dka: restore the FULL baseline, not just tracked files — a red
+			// re-proof leaves untracked/ignored proof scratch (.orion-gocache/,
+			// synth corpora, build junk) that would contaminate every later
+			// merge's re-proof on this head. reset --hard cannot remove it;
+			// clean -fdx can (the head worktree is harness-owned scratch).
+			if _, _, cErr := gitAt(ctx, i.headDir, "clean", "-fdx"); cErr != nil {
+				return RolledBack, fmt.Errorf("re-proof failed AND baseline clean failed: %w", cErr)
+			}
 			return RolledBack, perr
 		}
 	}
