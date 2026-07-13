@@ -35,6 +35,7 @@ type ChangeResult struct {
 	Tier         string   // reliability tier classified from the change worktree (or-v9f.15)
 	Delivery     string   // "deliver" | "escalate" — the same decision semantic as the greenfield bar
 	PR           PRResult // PR-ready handoff over the review branch on deliver (or-v9f.15)
+	Landed       bool     // or-7fd: auto-landed post-proof under the standing opt-in
 	EscalationID string   // inbox escalation recorded on escalate (or-v9f.15)
 
 	// Reliability floor (or-uvw.8, log-only): corpus-sourced signals retrieved once in
@@ -355,6 +356,25 @@ func finishChange(ctx context.Context, store *contextstore.Store, repoRoot strin
 	nextAction := "git diff main.." + res.Branch
 	if store != nil {
 		if res.Delivery == "deliver" && res.Committed {
+			// or-7fd: standing opt-in lands the proven change NOW — ff-only merge,
+			// close the cited issue, reclaim the branch — no per-change prompt.
+			// Red button always wins; any landing miss (stale base) falls through
+			// to the normal review/PR handoff instead.
+			if postProofAutonomy() {
+				rb := actuation.RedButton{Path: filepath.Join(store.Dir(), "red_button")}
+				if actuation.AutonomousDeliverPermitted(rb, res.Delivery) {
+					if summary, lerr := LandProvenChange(ctx, repoRoot, store, rb, res.Branch, intent); lerr == nil {
+						res.Landed = true
+						_ = notify.Notify(ctx, notify.Event{
+							Kind: "change.landed", Task: oneLine(intent), Verdict: "Accept",
+							Detail: summary, Artifact: res.Branch, NextAction: "none — landed",
+						})
+						return res
+					} else {
+						res.Reason = strings.TrimSpace(res.Reason + "\nauto-land declined: " + lerr.Error())
+					}
+				}
+			}
 			if pr, perr := ChangePRHandoff(ctx, repoRoot, store.Dir(), res.Path, res.Branch, intent, res.Tier, res.Evidence.Markdown()); perr == nil {
 				res.PR = pr
 				if pr.ArtifactPath != "" {

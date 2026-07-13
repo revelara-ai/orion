@@ -310,6 +310,27 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 	})
 
 	r.Register(tools.Tool{
+		Name:        "finish_change",
+		Description: "The SINGLE post-proof step for a PROVEN change branch: fast-forward it onto the developer's current base, close the beads issue it resolves (optional issue_id — verified before closing), and reclaim the worktree + branch. Call ONCE after the developer's one approval — never run separate merge/close/cleanup rounds. Refuses (and teaches) when the base moved since the proof: re-run the change flow instead of hand-merging.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"branch":{"type":"string","description":"the proven orion-change-… review branch"},"issue_id":{"type":"string","description":"the beads issue this change resolves, if any"}},"required":["branch"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct {
+				Branch  string `json:"branch"`
+				IssueID string `json:"issue_id"`
+			}
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			root := GitRoot(ctx, ".")
+			if root == "" {
+				return "", fmt.Errorf("not in a git repo")
+			}
+			return LandProvenChange(ctx, root, c.Store(), storeRedButton(c), p.Branch, p.IssueID)
+		},
+	})
+
+	r.Register(tools.Tool{
 		Name:        "build_change",
 		Description: "Generate the change and PROVE it against the RATIFIED cases: regression gate (do-no-harm) + new-behavior proof (the ratified oracle) → commit on a review branch ONLY if both hold. Call after ratify_cases. Reports the verdict + per-obligation transcript; if NOT committed, read the do-no-harm transcript digest in the result, fix the defect it names, and call build_change again — failure→fix→retry is the expected loop (fresh worktree per attempt). Escalate to the developer only if the same defect survives two corrected attempts.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
