@@ -54,6 +54,11 @@ func CompileObligations(modelPath string) ([]Obligation, error) {
 	for _, m := range assertionRe.FindAllStringSubmatch(src, -1) {
 		asserted[m[1]] = true
 	}
+	// Zero applicable invariants = Inconclusive, never a silent pass (or-56c.4):
+	// a fired gate whose model asserts nothing has proven nothing.
+	if len(asserted) == 0 {
+		return nil, fmt.Errorf("model %s declares no invariants (no `always assertion`) — the design proof is Inconclusive, not a pass", filepath.Base(modelPath))
+	}
 
 	var unbound, dangling []string
 	for inv := range asserted {
