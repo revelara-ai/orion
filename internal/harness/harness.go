@@ -106,6 +106,11 @@ type Loop struct {
 	// including internal Destructive spec/change tools — never consult it. Subagents
 	// leave it nil (headless).
 	Approve func(ctx context.Context, name string, input json.RawMessage, safety tools.Safety) Decision
+	// Checkpoint + CheckpointKey (or-mvr.8): optional provider-outage turn
+	// checkpoint. A provider-class failure saves the conversation under the
+	// key; the next Run with the same key resumes from it; success clears it.
+	Checkpoint    TurnCheckpoint
+	CheckpointKey string
 	// MaxTokens is the DESIRED per-response output cap. The loop requests this much
 	// room (clamped to fit the window), so a generation turn can write a full file —
 	// the provider's tiny default (4096) truncates a write_file tool input mid-JSON.
@@ -178,6 +183,13 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 	if l.Tools != nil {
 		toolSpecs = l.Tools.Specs()
 	}
+	// or-mvr.8: a provider outage mid-turn left a checkpoint — pick the turn
+	// back up (its tool calls' effects are still on disk) instead of starting
+	// the conversation from scratch.
+	if resumed, ok := l.resumeFromCheckpoint(ctx, convo); ok {
+		convo = resumed
+		emit(Event{Kind: EventThought, Text: "\n[resuming from provider-outage checkpoint]\n"})
+	}
 	// Context-window policy for THIS provider: thresholds are fractions of the
 	// model's window (per-model via the optional llm.ContextWindow capability, else
 	// a conservative default), so the same code bounds a 1M Anthropic brain and an
@@ -249,6 +261,9 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 			}
 		}
 		if err != nil {
+			// or-mvr.8: persist the half-generated turn BEFORE surfacing the
+			// outage — the next attempt resumes instead of re-deriving.
+			l.checkpointOnProviderFailure(ctx, convo)
 			// Wrap the DEPENDENCY class so long-lived callers can classify the turn
 			// (the loop Breaker counts only ErrProvider failures — or-mvr.2).
 			return convo, nil, fmt.Errorf("%w: %w", ErrProvider, err)
@@ -310,6 +325,7 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 				continue
 			}
 			emit(Event{Kind: EventDone})
+			l.clearCheckpoint(ctx) // or-mvr.8: a finished turn owes no resume
 			return convo, resp, nil
 		}
 
