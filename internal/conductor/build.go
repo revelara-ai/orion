@@ -241,7 +241,10 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	var mem *memory.Store
 	if memDir := filepath.Join(store.Dir(), "memory"); os.MkdirAll(memDir, 0o700) == nil {
 		if m, merr := memory.Open(memDir); merr == nil {
-			mem = m
+			// or-gb1.6: scope memory to THIS project — proof-trust decisions
+			// (module paths, routes) must never travel into another project's
+			// generation prompt. '' items stay visible (explicitly global).
+			mem = m.ForProject(runProj.ID)
 			// or-hd3.7: opt-in semantic recall — wire an embedder from env (default off →
 			// keyword+heat recall, no model file needed).
 			if e, ok := embedderFromEnv(); ok {
