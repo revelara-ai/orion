@@ -624,10 +624,13 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		// persisted memo keyed by (spec anchor, artifact hash) (or-v9f.6), so a
 		// re-run after fixing an escalation skips proof for every unchanged cluster.
 		var rep proof.Report
-		if cached, ok := proofCache[art.ContentHash]; ok {
+		// or-7et.2 slice 2: a task whose covered spec surface changed in a
+		// reconciled amendment must be FRESHLY proven — the memo cannot vouch for
+		// obligations that no longer mean the same thing, even on identical bytes.
+		if cached, ok := proofCache[art.ContentHash]; ok && !task.ReproofRequired {
 			rep = cached
 			onPhase.emit("Prove", PhaseDone, "reused (identical artifact already proven)")
-		} else if r, ok := recallProofMemo(ctx, store, stateMu, es.Hash, art.ContentHash); ok {
+		} else if r, ok := recallProofMemo(ctx, store, stateMu, es.Hash, art.ContentHash); ok && !task.ReproofRequired {
 			proofCache[art.ContentHash] = r
 			rep = r
 			onPhase.emit("Prove", PhaseDone, "reused (persisted proof — unchanged since a prior run)")
@@ -644,6 +647,16 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 			proofCache[art.ContentHash] = r
 			persistProofMemo(ctx, store, stateMu, es.Hash, art.ContentHash, r) // best-effort cross-run memo
 			rep = r
+			if task.ReproofRequired {
+				// The fresh proof settles the amendment debt — clear the mark so
+				// later runs regain memo reuse. Best-effort (the mark only ever
+				// forces EXTRA proving).
+				withLock(stateMu, func() {
+					_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
+						return tx.Tasks().SetReproofRequired(ctx, task.ID, false)
+					})
+				})
+			}
 		}
 		report = rep
 

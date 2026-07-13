@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
@@ -146,7 +145,19 @@ func TestAmendedDraftEditsIndependentlyAndReratifies(t *testing.T) {
 	if _, err := c.ApproveSpec(ctx); err != nil {
 		t.Fatalf("re-ratify the amendment: %v", err)
 	}
-	if _, err := c.PlanView(ctx); !errors.Is(err, ErrPlanStale) {
-		t.Fatalf("the v1 plan must read STALE against the amended anchor (or-7et.2), got %v", err)
+	// Slice 2: the amendment reconciles — the plan reads fresh with the changed
+	// surface (the added requirement's cases) marked for re-proof.
+	pv, err := c.PlanView(ctx)
+	if err != nil {
+		t.Fatalf("the amended plan must be RECONCILED fresh, got %v", err)
+	}
+	invalidated := 0
+	for _, tk := range pv.Tasks {
+		if tk.ReproofRequired {
+			invalidated++
+		}
+	}
+	if invalidated == 0 || invalidated == len(pv.Tasks) {
+		t.Fatalf("a one-requirement amendment must invalidate SOME but not ALL tasks, got %d/%d", invalidated, len(pv.Tasks))
 	}
 }

@@ -53,6 +53,10 @@ type Task struct {
 	Status    string // ready|in_progress|being_validated|proven|integrated|done
 	FileScope string
 	ProofID   string
+	// ReproofRequired (or-7et.2 slice 2): the task's covered spec surface
+	// changed in a reconciled amendment — proof memo reuse is bypassed until a
+	// fresh proof lands.
+	ReproofRequired bool
 	CreatedAt string
 	UpdatedAt string
 }
@@ -561,9 +565,24 @@ func (r *TaskRepo) AddDep(ctx context.Context, taskID, dependsOn string) error {
 }
 
 // ListByEpic returns an epic's tasks in creation order.
+// SetReproofRequired marks/clears the amendment-invalidation flag (or-7et.2
+// slice 2): a marked task must be freshly proven — the memo cannot vouch for a
+// task whose covered spec surface changed.
+func (r *TaskRepo) SetReproofRequired(ctx context.Context, id string, required bool) error {
+	v := 0
+	if required {
+		v = 1
+	}
+	res, err := r.tx.ExecContext(ctx, `UPDATE tasks SET reproof_required=?, updated_at=? WHERE id=?`, v, nowRFC3339(), id)
+	if err != nil {
+		return fmt.Errorf("set reproof required: %w", err)
+	}
+	return mustAffectOne(res, "task")
+}
+
 func (r *TaskRepo) ListByEpic(ctx context.Context, epicID string) ([]Task, error) {
 	rows, err := r.tx.QueryContext(ctx,
-		`SELECT id, epic_id, title, status, file_scope, COALESCE(proof_id,''), created_at, updated_at
+		`SELECT id, epic_id, title, status, file_scope, COALESCE(proof_id,''), reproof_required, created_at, updated_at
 		 FROM tasks WHERE epic_id=? ORDER BY created_at`, epicID)
 	if err != nil {
 		return nil, err
@@ -572,9 +591,11 @@ func (r *TaskRepo) ListByEpic(ctx context.Context, epicID string) ([]Task, error
 	var out []Task
 	for rows.Next() {
 		var t Task
-		if err := rows.Scan(&t.ID, &t.EpicID, &t.Title, &t.Status, &t.FileScope, &t.ProofID, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		var rr int
+		if err := rows.Scan(&t.ID, &t.EpicID, &t.Title, &t.Status, &t.FileScope, &t.ProofID, &rr, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, err
 		}
+		t.ReproofRequired = rr != 0
 		out = append(out, t)
 	}
 	return out, rows.Err()

@@ -80,6 +80,9 @@ func Open(dir string) (*Store, error) {
 		// from (spec_id is insufficient — in-place re-ratification keeps the id).
 		// '' = pre-migration epic, grandfathered by the staleness guard.
 		{"epics", "spec_hash", "TEXT NOT NULL DEFAULT ''"},
+		// or-7et.2 slice 2: reconciliation marks tasks whose covered spec surface
+		// changed — proof memo reuse is BYPASSED for them (fresh re-proof).
+		{"tasks", "reproof_required", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if _, err := ensureColumn(db, m.table, m.col, m.decl); err != nil {
 			_ = db.Close()
@@ -358,6 +361,22 @@ func (s *Store) ProofMemoPut(ctx context.Context, specHash, contentHash, reportJ
 			`INSERT INTO proof_memo (spec_hash, content_hash, report_json, created_at) VALUES (?,?,?,?)
 			 ON CONFLICT(spec_hash, content_hash) DO UPDATE SET report_json=excluded.report_json, created_at=excluded.created_at`,
 			specHash, contentHash, reportJSON, nowRFC3339())
+		return e
+	})
+}
+
+// CopyProofMemos re-keys every proof memo from one spec anchor to another
+// (or-7et.2 slice 2): after a spec amendment, byte-identical artifacts keep
+// their proven verdicts under the NEW hash. Tasks whose covered surface
+// changed bypass the memo entirely via tasks.reproof_required, so this copy
+// can never launder a stale verdict onto an affected task.
+func (s *Store) CopyProofMemos(ctx context.Context, fromSpecHash, toSpecHash string) error {
+	return s.WithTx(ctx, func(tx *Tx) error {
+		_, e := tx.tx.ExecContext(ctx,
+			`INSERT INTO proof_memo (spec_hash, content_hash, report_json, created_at)
+			 SELECT ?, content_hash, report_json, ? FROM proof_memo WHERE spec_hash=?
+			 ON CONFLICT(spec_hash, content_hash) DO NOTHING`,
+			toSpecHash, nowRFC3339(), fromSpecHash)
 		return e
 	})
 }

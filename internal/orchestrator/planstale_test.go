@@ -9,12 +9,12 @@ import (
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 )
 
-// TestAmendedSpecMakesPlanStale (or-7et.2 slice 1, the Done-when): the intent
+// TestAmendedSpecReconcilesInsteadOfWedging (or-7et.2 slices 1+2): the intent
 // legitimately evolves mid-build — ratify → plan → add_requirement →
 // re-approve. The persisted plan was decomposed from the OLD anchor; every
 // plan read must now fail LOUD with ErrPlanStale, never silently hand the old
 // decomposition to a build that generates+proves against the new hash.
-func TestAmendedSpecMakesPlanStale(t *testing.T) {
+func TestAmendedSpecReconcilesInsteadOfWedging(t *testing.T) {
 	c, ctx := storeConductor(t)
 	driveToPlan(t, c, ctx)
 
@@ -39,9 +39,44 @@ func TestAmendedSpecMakesPlanStale(t *testing.T) {
 		t.Fatalf("re-approve after amendment must succeed (amendment is legitimate): %v", err)
 	}
 
-	_, err := c.PlanView(ctx)
-	if !errors.Is(err, ErrPlanStale) {
-		t.Fatalf("plan read after re-ratification must fail with ErrPlanStale, got: %v", err)
+	// or-7et.2 slice 2: re-ratification RECONCILES instead of wedging — the plan
+	// reads fresh, and (in-place amendment = no diffable lineage) every task is
+	// conservatively marked for re-proof.
+	pv, err := c.PlanView(ctx)
+	if err != nil {
+		t.Fatalf("plan read after re-ratification must be RECONCILED fresh, got: %v", err)
+	}
+	for _, tk := range pv.Tasks {
+		if !tk.ReproofRequired {
+			t.Fatalf("conservative reconciliation must mark every task, %q kept", tk.Title)
+		}
+	}
+}
+
+// TestStalePlanGuardFiresWithoutReconciliation: the slice-1 guard itself —
+// when an epic's anchor mismatches the spec and NO reconciliation ran (here:
+// the anchor is corrupted directly), every plan read fails loud.
+func TestStalePlanGuardFiresWithoutReconciliation(t *testing.T) {
+	c, ctx := storeConductor(t)
+	driveToPlan(t, c, ctx)
+	if _, err := c.PlanView(ctx); err != nil {
+		t.Fatal(err)
+	}
+	proj, _, err := c.Store().CurrentProjectSpec(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Store().WithTx(ctx, func(tx *contextstore.Tx) error {
+		e, err := tx.Epics().LatestForProject(ctx, proj.ID)
+		if err != nil {
+			return err
+		}
+		return tx.Epics().SetSpecHash(ctx, e.ID, "deadbeefdeadbeef")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.PlanView(ctx); !errors.Is(err, ErrPlanStale) {
+		t.Fatalf("a mismatched anchor with no reconciliation must fail loud, got %v", err)
 	}
 }
 

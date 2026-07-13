@@ -464,10 +464,9 @@ func (c *Conductor) ApproveSpec(ctx context.Context) (spec.ExecutableSpec, error
 	// The amendment is legitimate (the new anchor is the truth), but the plan
 	// decomposed from the old anchor is now stale — every plan read fails loud
 	// with ErrPlanStale until reconciliation (slice 2) re-anchors it.
-	if epic, err := c.currentEpic(ctx, proj.ID); err == nil && epic.SpecHash != "" && epic.SpecHash != es.Hash {
-		c.log.WarnContext(ctx, "re-ratification makes the existing plan STALE — plan reads will fail until reconciliation",
-			"epic_id", epic.ID, "plan_hash", epic.SpecHash, "new_hash", es.Hash)
-	}
+	// or-7et.2 slice 2: an amended anchor over an existing plan reconciles
+	// IMMEDIATELY — selective invalidation replaces the stale-plan wall.
+	c.reconcileAfterRatify(ctx, proj.ID, es.Hash)
 	return es, nil
 }
 
@@ -604,6 +603,9 @@ type PlanTask struct {
 	ProofObligation string   `json:"proof_obligation"`
 	FileScope       string   `json:"file_scope"`
 	DependsOn       []string `json:"depends_on"`
+	// ReproofRequired (or-7et.2 slice 2): the task's covered surface changed in
+	// a reconciled amendment — the builder must bypass proof-memo reuse.
+	ReproofRequired bool `json:"reproof_required,omitempty"`
 }
 
 // PlanView is the Plan pane / `orion plan show` projection.
@@ -693,32 +695,40 @@ func (c *Conductor) ensurePlan(ctx context.Context, proj contextstore.Project, s
 		} else if !errors.Is(e, contextstore.ErrNotFound) {
 			return e
 		}
-		eid, err := tx.Epics().Create(ctx, proj.ID, sp.ID, epic.Title, es.Hash)
-		if err != nil {
-			return err
-		}
+		eid, _, err := persistEpicTx(ctx, tx, proj.ID, sp.ID, es.Hash, epic)
 		epicID = eid
-		keyToID := map[string]string{}
-		for _, task := range epic.Tasks {
-			tid, err := tx.Tasks().Create(ctx, eid, task.Title, task.FileScope)
-			if err != nil {
-				return err
-			}
-			keyToID[task.Key] = tid
-			if _, err := tx.ProofObligations().Create(ctx, tid, task.ProofObligation); err != nil {
-				return err
-			}
-		}
-		for _, task := range epic.Tasks {
-			for _, dep := range task.DependsOn {
-				if err := tx.Tasks().AddDep(ctx, keyToID[task.Key], keyToID[dep]); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
+		return err
 	})
 	return epicID, err
+}
+
+// persistEpicTx writes a decomposed epic (tasks, obligations, deps) anchored to
+// a spec hash, returning the epic id and the task key→id map. Shared by
+// ensurePlan and plan reconciliation (or-7et.2 slice 2).
+func persistEpicTx(ctx context.Context, tx *contextstore.Tx, projectID, specID, specHash string, epic decomposer.Epic) (string, map[string]string, error) {
+	eid, err := tx.Epics().Create(ctx, projectID, specID, epic.Title, specHash)
+	if err != nil {
+		return "", nil, err
+	}
+	keyToID := map[string]string{}
+	for _, task := range epic.Tasks {
+		tid, err := tx.Tasks().Create(ctx, eid, task.Title, task.FileScope)
+		if err != nil {
+			return "", nil, err
+		}
+		keyToID[task.Key] = tid
+		if _, err := tx.ProofObligations().Create(ctx, tid, task.ProofObligation); err != nil {
+			return "", nil, err
+		}
+	}
+	for _, task := range epic.Tasks {
+		for _, dep := range task.DependsOn {
+			if err := tx.Tasks().AddDep(ctx, keyToID[task.Key], keyToID[dep]); err != nil {
+				return "", nil, err
+			}
+		}
+	}
+	return eid, keyToID, nil
 }
 
 // currentEpicID returns the latest epic id for a project (read-only).
@@ -793,6 +803,7 @@ func (c *Conductor) readPlan(ctx context.Context, proj contextstore.Project) (Pl
 				ProofObligation: ob,
 				FileScope:       t.FileScope,
 				DependsOn:       deps,
+				ReproofRequired: t.ReproofRequired,
 			})
 		}
 		return nil
