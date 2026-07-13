@@ -86,6 +86,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	// secrets, an empty change) escalate immediately.
 	attempts := changeAttempts()
 	var digests []string
+	var prevSnap refinementSnapshot // or-mvr.5
 	var res, lastMeaningful ChangeResult
 	var retryable bool
 	var err error
@@ -115,6 +116,17 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 			d = res.Reason
 		}
 		digests = append(digests, fmt.Sprintf("attempt %d: %s\n%s", attempt, res.Reason, d))
+		// Net-negative-refinement detector (or-mvr.5): a retry that BROKE MORE
+		// than the attempt it was fixing terminates self-correction now.
+		cur := refinementSnapshot{NewTestFailures: len(res.Evidence.NewFailures)}
+		if attempt > 1 {
+			if regressed, why := refinementRegressed(prevSnap, cur); regressed {
+				sink.emit("self-correct", PhaseWarn, why+" — terminating refinement")
+				digests = append(digests, why)
+				break
+			}
+		}
+		prevSnap = cur
 		if attempt < attempts {
 			// The failed attempt's worktree is uncommitted scratch — reclaim it
 			// best-effort so retries don't accumulate junk (or-kt5 tracks the

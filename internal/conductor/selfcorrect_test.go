@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -124,5 +126,50 @@ func TestChangeEscalatesWithAllDigestsAfterBudget(t *testing.T) {
 	}
 	if !strings.Contains(res.Reason, "attempt 1") || !strings.Contains(res.Reason, "attempt 2") {
 		t.Fatalf("the escalation must carry every attempt's digest, got reason:\n%s", res.Reason)
+	}
+}
+
+// TestNetNegativeRefinementTerminates (or-mvr.5): attempt 2 breaks MORE than
+// attempt 1 — the detector terminates self-correction (no attempt 3 despite
+// budget) and names the regression in the escalation.
+func TestNetNegativeRefinementTerminates(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs regression gates per attempt")
+	}
+	t.Setenv("ORION_CHANGE_ATTEMPTS", "3")
+	repo := t.TempDir()
+	git := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("config", "user.name", "T")
+	git("config", "user.email", "t@e.c")
+	dogWrite(t, filepath.Join(repo, "go.mod"), "module dogfood2\n\ngo 1.23\n")
+	dogWrite(t, filepath.Join(repo, "calc.go"), "package dogfood2\n\nfunc Add(a, b int) int { return a + b }\n\nfunc Mul(a, b int) int { return a * b }\n")
+	dogWrite(t, filepath.Join(repo, "calc_test.go"), "package dogfood2\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 {\n\t\tt.Fatal(\"add\")\n\t}\n}\n\nfunc TestMul(t *testing.T) {\n\tif Mul(2, 3) != 6 {\n\t\tt.Fatal(\"mul\")\n\t}\n}\n")
+	git("add", "-A")
+	git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "init")
+
+	gen := &seqGen{attempts: []map[string]string{
+		{"calc.go": "package dogfood2\n\nfunc Add(a, b int) int { return a - b }\n\nfunc Mul(a, b int) int { return a * b }\n"},                    // breaks TestAdd
+		{"calc.go": "package dogfood2\n\nfunc Add(a, b int) int { return a - b }\n\nfunc Mul(a, b int) int { return a + b }\n"},                    // breaks BOTH
+		{"note.go": "package dogfood2\n\nfunc Note() string { return \"never reached\" }\n"},                                                        // must NOT run
+	}}
+	res, err := ChangeAndProve(context.Background(), repo, openStore(t), gen, "tweak the calculator", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("ChangeAndProve: %v", err)
+	}
+	if res.Committed {
+		t.Fatal("a degrading refinement must not commit")
+	}
+	if len(gen.systems) != 2 {
+		t.Fatalf("the detector must terminate after the degrading attempt 2 (no attempt 3), got %d attempts", len(gen.systems))
+	}
+	if !strings.Contains(res.Reason, "degraded the artifact") || !strings.Contains(res.Reason, "test regressions 1→2") {
+		t.Fatalf("the escalation must name the regression, got:\n%s", res.Reason)
 	}
 }
