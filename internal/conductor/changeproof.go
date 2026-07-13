@@ -40,6 +40,11 @@ type ChangeResult struct {
 	// the trusted control plane, used twice — advisory generator context + lint checks.
 	FloorSignals []reliabilityfloor.Signal
 	FloorLint    reliabilityfloor.LintResult
+
+	// Evidence (or-ykz.12): the before/after differential of the regression
+	// gate's runs — reviewable proof of WHAT changed behaviorally, attached to
+	// the PR artifact on deliver.
+	Evidence brownfield.EvidenceDiff
 }
 
 // ChangeAndProve runs the brownfield change loop end-to-end: it creates a WORKTREE off
@@ -112,6 +117,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		return res, fmt.Errorf("regression gate: %w", err)
 	}
 	res.Regression = reg
+	res.Evidence = brownfield.Diff(reg)
 	res.FilesChanged = changedFiles(ctx, wt.Path)
 
 	// Use TWICE, part 2: log-only lint of the changed dirs against the mechanizable
@@ -243,7 +249,7 @@ func finishChange(ctx context.Context, store *contextstore.Store, repoRoot strin
 	nextAction := "git diff main.." + res.Branch
 	if store != nil {
 		if res.Delivery == "deliver" && res.Committed {
-			if pr, perr := ChangePRHandoff(ctx, repoRoot, store.Dir(), res.Path, res.Branch, intent, res.Tier); perr == nil {
+			if pr, perr := ChangePRHandoff(ctx, repoRoot, store.Dir(), res.Path, res.Branch, intent, res.Tier, res.Evidence.Markdown()); perr == nil {
 				res.PR = pr
 				if pr.ArtifactPath != "" {
 					nextAction = "review " + pr.ArtifactPath

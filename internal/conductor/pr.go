@@ -72,7 +72,7 @@ func PRHandoff(ctx context.Context, repoRoot, storeDir string, d GitDelivery, es
 // reusing the identical push/gh/opt-in machinery as the greenfield path. The
 // body is change-shaped (intent + tier + diffstat) — a change has no
 // ExecutableSpec.
-func ChangePRHandoff(ctx context.Context, repoRoot, storeDir, worktree, branch, intent, tier string) (PRResult, error) {
+func ChangePRHandoff(ctx context.Context, repoRoot, storeDir, worktree, branch, intent, tier, evidence string) (PRResult, error) {
 	base := deliveryBase(ctx, repoRoot)
 	diffstat := ""
 	if worktree != "" {
@@ -80,7 +80,7 @@ func ChangePRHandoff(ctx context.Context, repoRoot, storeDir, worktree, branch, 
 			diffstat = out
 		}
 	}
-	return emitPR(ctx, repoRoot, storeDir, branch, base, "orion: "+oneLine(intent), changeSlug(intent), changePRBody(intent, tier, diffstat))
+	return emitPR(ctx, repoRoot, storeDir, branch, base, "orion: "+oneLine(intent), changeSlug(intent), changePRBody(intent, tier, diffstat, evidence))
 }
 
 // emitPR is the shared PR-handoff tail: it ALWAYS writes the local artifact (the
@@ -128,7 +128,7 @@ func emitPR(ctx context.Context, repoRoot, storeDir, branch, base, title, slug, 
 
 // changePRBody renders the developer-facing PR description for a proven
 // brownfield change: the intent, the classified reliability tier, and the diff.
-func changePRBody(intent, tier, diffstat string) string {
+func changePRBody(intent, tier, diffstat, evidence string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %s\n\n", strings.TrimSpace(intent))
 	b.WriteString("_Brownfield change generated and regression-proven by Orion._\n\n")
@@ -139,6 +139,12 @@ func changePRBody(intent, tier, diffstat string) string {
 		fmt.Fprintf(&b, "- Reliability tier: %s\n", tier)
 	}
 	b.WriteString("\n")
+	// Before/after empirical evidence (or-ykz.12): the reviewable differential
+	// of the regression gate's runs — what changed behaviorally, not just green.
+	if strings.TrimSpace(evidence) != "" {
+		b.WriteString(strings.TrimRight(evidence, "\n"))
+		b.WriteString("\n\n")
+	}
 	if strings.TrimSpace(diffstat) != "" {
 		b.WriteString("### Changes\n```\n")
 		b.WriteString(strings.TrimRight(diffstat, "\n"))

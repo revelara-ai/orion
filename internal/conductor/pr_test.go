@@ -107,3 +107,17 @@ func TestPRHandoffLocalFirstNoRemote(t *testing.T) {
 		t.Errorf("commands should name the feature branch, got: %v", res.Commands)
 	}
 }
+
+// TestChangePRBodyCarriesEvidence (or-ykz.12): the before/after differential
+// rides the PR artifact so the proof is reviewable, and an empty evidence
+// section is omitted rather than rendered blank.
+func TestChangePRBodyCarriesEvidence(t *testing.T) {
+	ev := "## Before/after empirical evidence\n\n- REGRESSION: TestX (green before, red after)\n"
+	body := changePRBody("fix it", "standard", "1 file changed", ev)
+	if !strings.Contains(body, "Before/after empirical evidence") || !strings.Contains(body, "REGRESSION: TestX") {
+		t.Fatalf("evidence must ride the PR body:\n%s", body)
+	}
+	if strings.Contains(changePRBody("fix it", "standard", "", ""), "Before/after") {
+		t.Fatal("empty evidence must be omitted")
+	}
+}
