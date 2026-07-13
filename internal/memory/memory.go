@@ -372,7 +372,31 @@ func (s *Store) Retrieve(ctx context.Context, query string, tiers ...Tier) ([]It
 
 	now := time.Now().UTC()
 	q := strings.ToLower(strings.TrimSpace(query))
-	matched := func(it Item) bool { return q != "" && strings.Contains(strings.ToLower(it.Content), q) }
+	// or-gb1.7: TOKENIZED term-overlap keyword scoring. Whole-query substring
+	// matching never fires for sentence queries against compact summaries, so
+	// the keyword half of the hybrid fusion was inert out of the box. kw =
+	// matched-query-terms / total-query-terms, with an exact-phrase bonus.
+	qTerms := tokenizeTerms(q)
+	keywordScore := func(it Item) float64 {
+		if q == "" {
+			return 0
+		}
+		content := strings.ToLower(it.Content)
+		if strings.Contains(content, q) {
+			return 1 // exact-phrase match keeps its full-strength bonus
+		}
+		if len(qTerms) == 0 {
+			return 0
+		}
+		cTerms := tokenizeSet(content)
+		hit := 0
+		for _, t := range qTerms {
+			if cTerms[t] {
+				hit++
+			}
+		}
+		return float64(hit) / float64(len(qTerms))
+	}
 
 	// or-hd3.8 hybrid fusion: when an embedder is configured and the query is non-empty, blend
 	// SEMANTIC similarity (vector cosine) with the KEYWORD signal so a paraphrase recalls what
@@ -392,10 +416,7 @@ func (s *Store) Retrieve(ctx context.Context, query string, tiers ...Tier) ([]It
 		}
 	}
 	relevance := func(it Item) float64 {
-		var kw float64
-		if matched(it) {
-			kw = 1
-		}
+		kw := keywordScore(it)
 		semScore := float64(sem[it.ID]) // cosine; treat negatives as no signal
 		if semScore < 0 {
 			semScore = 0
@@ -774,4 +795,30 @@ func (s *Store) ListCandidates(ctx context.Context, tiers ...Tier) ([]Item, erro
 		items = append(items, it)
 	}
 	return items, rows.Err()
+}
+
+// tokenizeTerms splits a lowercased query into deduped indexable terms
+// (letters/digits runs; single-char noise dropped).
+func tokenizeTerms(s string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range strings.FieldsFunc(s, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	}) {
+		if len(t) < 2 || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
+}
+
+// tokenizeSet is tokenizeTerms as a membership set.
+func tokenizeSet(s string) map[string]bool {
+	set := map[string]bool{}
+	for _, t := range tokenizeTerms(s) {
+		set[t] = true
+	}
+	return set
 }
