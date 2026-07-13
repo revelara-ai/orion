@@ -36,6 +36,7 @@ func NativeGenerator(provider llm.Provider, acct *budget.Accountant, store *cont
 			Provider:   provider,
 			Tools:      reg,
 			System:     generationRole(gs),
+			Role:       "generator",
 			Supervisor: harness.Supervisor{MaxIterations: 24, Budget: acct},
 		}
 		if store != nil {

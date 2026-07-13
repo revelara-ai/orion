@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/health"
 	"github.com/revelara-ai/orion/internal/llmsetup"
 	"github.com/revelara-ai/orion/internal/polaris"
@@ -42,7 +43,7 @@ func bannerIdentity() tui.Identity {
 		Brain:   brainLabel(),
 		Cwd:     abbrevHome(cwd),
 		Session: time.Now().Format("20060102_1504"),
-		Budget:  "0 tok · $0.00",
+		Budget:  spendSummary(),
 	}
 }
 
@@ -104,4 +105,49 @@ func livePolarisCheck() health.Check {
 		who = "authenticated"
 	}
 	return health.Check{Name: "revelara.ai", Status: health.OK, Detail: "connected as " + who}
+}
+
+// spendSummary reads the persistent ledger (or-v9f.28): cumulative project
+// spend split by role/model — no more hardcoded zeros.
+func spendSummary() string {
+	dir, err := resolveDataDir()
+	if err != nil {
+		return "0 tok · $0.00"
+	}
+	store, err := contextstore.Open(dir)
+	if err != nil {
+		return "0 tok · $0.00"
+	}
+	defer store.Close()
+	ctx := context.Background()
+	proj, _, err := store.CurrentOrLastDeliveredProjectSpec(ctx)
+	if err != nil {
+		return "0 tok · $0.00"
+	}
+	tok, dol, err := store.SumSpend(ctx, proj.ID)
+	if err != nil || tok == 0 {
+		return "0 tok · $0.00"
+	}
+	out := fmt.Sprintf("%s tok · $%.2f", compactTokens(tok), dol)
+	if rows, rerr := store.SpendByRole(ctx, proj.ID); rerr == nil && len(rows) > 0 {
+		parts := make([]string, 0, 3)
+		for i, r := range rows {
+			if i >= 3 {
+				break
+			}
+			parts = append(parts, fmt.Sprintf("%s $%.2f", r.Role, r.Dollars))
+		}
+		out += " (" + strings.Join(parts, ", ") + ")"
+	}
+	return out
+}
+
+func compactTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	}
+	return fmt.Sprintf("%d", n)
 }

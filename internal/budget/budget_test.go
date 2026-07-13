@@ -85,3 +85,18 @@ func TestFromEnv(t *testing.T) {
 		t.Fatal("an unparseable value is ignored, never a partial ceiling")
 	}
 }
+
+// TestSeedEvaluatesCeilingAgainstCumulativeSpend (or-v9f.28): seeding from
+// the persisted ledger makes ceilings evaluate PROJECT spend — a restart
+// cannot reset the basis. Idempotent.
+func TestSeedEvaluatesCeilingAgainstCumulativeSpend(t *testing.T) {
+	a := NewWithCeiling(Ceiling{MaxDollars: 1})
+	a.Seed(1000, 2.0) // prior runs already crossed the ceiling
+	if !a.Halted() {
+		t.Fatal("seeded cumulative spend beyond the ceiling must halt")
+	}
+	a.Seed(1000, 2.0) // second seed is a no-op
+	if s := a.Snapshot(); s.Dollars != 2.0 {
+		t.Fatalf("seeding must be idempotent, got $%.2f", s.Dollars)
+	}
+}

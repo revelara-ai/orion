@@ -104,6 +104,16 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	// store-tail. The terminal sink is preserved; persistence is best-effort.
 	runProj, _, _ := store.CurrentProjectSpec(ctx)
 	runID := newRunID()
+	// or-v9f.28: budget ceilings evaluate PROJECT spend — seed from the
+	// persisted ledger and write every attributed record through to it.
+	if acct := c.Budget(); acct != nil && runProj.ID != "" {
+		if tok, dol, serr := store.SumSpend(ctx, runProj.ID); serr == nil {
+			acct.Seed(tok, dol)
+		}
+		acct.SetLedger(func(role, model string, tokens int, dollars float64) {
+			_ = store.AppendSpend(context.Background(), runProj.ID, runID, role, model, tokens, dollars)
+		})
+	}
 	termSink := onPhase
 	onPhase = teeRunSink(termSink, store, runProj.ID, runID, "")
 	onPhase.emit("Run", PhaseRunning, "run "+runID+" started")

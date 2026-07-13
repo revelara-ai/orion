@@ -244,3 +244,18 @@ CREATE TABLE IF NOT EXISTS run_events (
 );
 CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, id);
 CREATE INDEX IF NOT EXISTS idx_run_events_project ON run_events(project_id, id);
+
+-- Spend ledger (or-v9f.28): persistent cumulative cost attribution. The
+-- accountant seeds from this on run start, so budget ceilings evaluate
+-- PROJECT spend across restarts, and status shows real numbers.
+CREATE TABLE IF NOT EXISTS spend_ledger (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  TEXT NOT NULL,
+    run_id      TEXT NOT NULL DEFAULT '',
+    role        TEXT NOT NULL,
+    model_ref   TEXT NOT NULL DEFAULT '',
+    tokens      INTEGER NOT NULL DEFAULT 0,
+    dollars     REAL NOT NULL DEFAULT 0,
+    recorded_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_spend_project ON spend_ledger(project_id);
