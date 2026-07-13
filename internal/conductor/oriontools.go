@@ -29,7 +29,14 @@ import (
 // tools are the only way it touches the store, and the completeness/compile/
 // accept gates stay the deterministic truth source — the agent proposes, the
 // gates verify (no agent grades its own homework).
-func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSession, emit func(acp.Update)) *tools.Registry {
+// specTools builds the intake/spec tool registry. verbatim, when supplied, is
+// the developer's raw turn for this call — submit_intent classifies scale/type
+// from it so an agent paraphrase can't silently drop a signal (or-hn15.2).
+func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSession, emit func(acp.Update), verbatim ...string) *tools.Registry {
+	rawTurn := ""
+	if len(verbatim) > 0 {
+		rawTurn = verbatim[0]
+	}
 	r := tools.NewRegistry()
 	// or-ykz.2: the generation-domain registry is the ONLY extensible tool
 	// surface — installed packages intercept/rewrite/block calls here. The
@@ -45,7 +52,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	r.Register(tools.Tool{
 		Name:        "submit_intent",
 		Description: "Submit the developer's build intent (call once, first). Returns the open spec decisions to resolve.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"intent":{"type":"string","description":"the developer's stated goal"},"force_greenfield":{"type":"boolean","description":"build a NEW standalone project (game, CLI, pipeline, library, service, …) even though this workspace has existing code"}},"required":["intent"]}`),
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"intent":{"type":"string","description":"the developer's request in their OWN words — copy it VERBATIM, do not summarize or rephrase (the scale/type classifier reads this literal text; paraphrasing can drop a signal like 'a large project')"},"force_greenfield":{"type":"boolean","description":"build a NEW standalone project (game, CLI, pipeline, library, service, …) even though this workspace has existing code"}},"required":["intent"]}`),
 		Safety:      tools.Safety{Destructive: true},
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
 			var p struct {
@@ -69,7 +76,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 					}
 				}
 			}
-			conf, err := c.Submit(ctx, p.Intent)
+			conf, err := c.SubmitVerbatim(ctx, p.Intent, rawTurn)
 			if err != nil {
 				return "", err
 			}
@@ -534,6 +541,25 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				return "", err
 			}
 			return "project type resolved: " + strings.ToLower(strings.TrimSpace(p.ProjectType)) + " — run check_completeness to see the decisions this type raises", nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "set_scale",
+		Description: "Correct the project's SCALE after the developer confirms it (or-hn15.2): the scale is classified deterministically from the submitted intent, and a paraphrase can drop the signal (e.g. 'I expect this to be a large project'). If the developer states or confirms a scale the classification missed — or you realize the intent is a large, multi-team, whole-platform effort — record it here. 'large' turns on the goals-first conversation and the direction (language/engine/stack) decisions; 'standard' is a focused single build. Audited (gold-labeled).",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"scale":{"type":"string","enum":["standard","large"],"description":"the developer-confirmed scale"}},"required":["scale"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct {
+				Scale string `json:"scale"`
+			}
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			if err := c.SetScale(ctx, p.Scale); err != nil {
+				return "", err
+			}
+			return "project scale resolved: " + strings.ToLower(strings.TrimSpace(p.Scale)) + " — run check_completeness to see the decisions this scale raises", nil
 		},
 	})
 

@@ -166,7 +166,7 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 	a.mu.Unlock()
 	userMsg := llm.TextMessage(llm.RoleUser, text)
 
-	reg := specTools(a.conductor, prov, a.changeSessionFor(sessionID), emit)
+	reg := specTools(a.conductor, prov, a.changeSessionFor(sessionID), emit, text)
 	toolSpecs := reg.Specs()
 
 	// PROACTIVE compaction: if the HISTORY's reducible dialogue already dominates the
@@ -330,7 +330,7 @@ You turn a developer's intent into a precise, ratified spec by ADVERSARIALLY gri
   - direct_work with the developer's intent to SCOPE it — which domains/packages the change touches, the blast radius of impacted packages, and the baseline hazards it must preserve. Use that to focus your questions and the decomposition;
   - propose_stamp_baseline when the change touches safety/reliability-critical control loops, and review the hazards-to-preserve with the developer.
   Reuse the codebase's own conventions; cite SPECIFIC code-derived facts you read — a real package, type, function signature, or route — in your questions, so the developer sees the spec is grounded in their actual code, not invented.
-- First, call submit_intent with their stated goal. It returns the open decisions.
+- First, call submit_intent with the developer's request in their OWN words — copy it VERBATIM, do not summarize (the scale/type classifier reads that literal text; a paraphrase can silently drop a signal like "a large project"). It returns the open decisions. If the classification still gets the scale wrong, correct it with set_scale.
 - Use check_completeness to see what's still open; the no-fallback ones are blocking.
 - Grill: ask ONE focused question at a time. Probe edge cases, push back on vague answers, and infer what you safely can from the intent — only ask what is genuinely ambiguous.
 - Record each answer with record_answer — but ONLY for a single scalar value (a port, a format, a route, a timezone name).
