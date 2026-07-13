@@ -47,6 +47,8 @@ command exits 2 with a `not implemented` marker.
 |---|---|
 | `orion agents` | Registered vendor-agent presets (claude / gemini / codex over ACP). |
 | `orion skills` | The skill registry (trust-tiered; proof-tier skills are immutable at runtime). |
+| `orion conductor start --supervise` / `status` | Watchdog with bounded-backoff restarts (crash/restart/exhausted notify events); status reports running / WEDGED (live pid, stale heartbeat) / stopped. |
+| `orion service install\|uninstall\|status [--dry-run]` | User-level init unit (systemd/launchd) pointing at `orion boot --stay`: stale-pid cleanup, worktree reconcile, incomplete-run re-dispatch (run.resumed), then supervised conductor. |
 | `orion trace [run-id] ` | Show the full persisted trace of a build run (phases, per-task attribution, timings) plus the run summary and the cross-run drift indicator. |
 | `orion resume` | Continue an interrupted run: surfaces escalations awaiting a decision, shows where the last run stopped, re-enters the idempotent loop (proof-memo skips unchanged clusters). |
 | `orion conductor attach` | Tail a live (or finished) run's persisted phase events from any terminal — the run outlives the terminal that started it. |

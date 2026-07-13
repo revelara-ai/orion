@@ -12,6 +12,7 @@ import (
 	"github.com/revelara-ai/orion/internal/actuation"
 	"github.com/revelara-ai/orion/internal/conductor"
 	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/notify"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 )
 
@@ -50,10 +51,44 @@ func cmdConductor(args []string) int {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		ca := conductor.NewConductorAgent(conductor.RoleTemplate{Project: "orion"}, orchestrator.NewWithStore(store))
+		// or-v9f.25: the heartbeat distinguishes RUNNING from WEDGED for
+		// `orion conductor status` and the watchdog.
+		conductor.TouchHeartbeat(dir)
+		go func() {
+			t := time.NewTicker(15 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					conductor.TouchHeartbeat(dir)
+				}
+			}
+		}()
 		go func() { _ = ca.Serve(ctx, os.Stdin, os.Stdout) }()
 		<-ctx.Done()
 		return 0
 	case "start":
+		for _, a := range args[1:] {
+			if a == "--supervise" {
+				// or-v9f.25: the foreground WATCHDOG — crash-detect, notify,
+				// bounded-backoff restart; exhaustion escalates. Under systemd,
+				// prefer Restart=on-failure and plain `start`.
+				ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+				defer stop()
+				fmt.Println("conductor: supervising (Ctrl-C stops the watchdog AND leaves the conductor running)")
+				err := m.Supervise(ctx, conductor.SuperviseOpts{}, func(kind, detail string) {
+					fmt.Printf("conductor: %s — %s\n", kind, detail)
+					_ = notify.Notify(context.Background(), notify.Event{Kind: kind, Detail: detail})
+				})
+				if err != nil && ctx.Err() == nil {
+					fmt.Fprintln(os.Stderr, "orion conductor start --supervise:", err)
+					return 1
+				}
+				return 0
+			}
+		}
 		if err := m.Start(nowStamp()); err != nil {
 			fmt.Fprintln(os.Stderr, "orion conductor start:", err)
 			return 1
@@ -62,9 +97,16 @@ func cmdConductor(args []string) int {
 		fmt.Printf("conductor started (pid %d)\n", pid)
 		return 0
 	case "status":
-		if running, pid := m.Status(); running {
+		// or-v9f.25: three states — a live pid with a stale heartbeat is
+		// WEDGED, not running.
+		kind := m.StatusKind()
+		_, pid := m.Status()
+		switch kind {
+		case "running":
 			fmt.Printf("conductor: running (pid %d)\n", pid)
-		} else {
+		case "wedged":
+			fmt.Printf("conductor: WEDGED (pid %d alive, heartbeat stale) — restart it: orion conductor restart\n", pid)
+		default:
 			fmt.Println("conductor: stopped")
 		}
 		return 0
