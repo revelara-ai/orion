@@ -693,6 +693,10 @@ func (c *Conductor) ensurePlan(ctx context.Context, proj contextstore.Project, s
 		return "", err
 	}
 
+	// or-56c.2: the design-proof synthesis slot — after spec+STPA, before the
+	// plan persists. Best-effort: it drafts a ratifiable artifact, never blocks.
+	c.synthesizeDesignModel(ctx, proj.ID, es)
+
 	var epicID string
 	err = c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
 		// Re-check inside the write tx to avoid a double-decompose race.

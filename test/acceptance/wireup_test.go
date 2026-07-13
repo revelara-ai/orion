@@ -22,7 +22,6 @@ const modulePath = "github.com/revelara-ai/orion"
 // assembly; or-y0z exposed tracker via `orion tracker project`; or-uvw.8 wired
 // reliabilityfloor into ChangeAndProve.
 var deferredOrphans = map[string]string{
-	"internal/proof/formal": "or-56c.2–.5 wire the design-proof gate (invariant synthesis → obligation compilation → tier trigger → dogfood CI); or-56c.1 shipped the checker runner + hand-modeled S1/S2 first by design",
 }
 
 // goListInternal returns the set of internal/ packages emitted by `go list <args>`.
