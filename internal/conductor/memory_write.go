@@ -51,14 +51,20 @@ const (
 // it is TrustProof (it may enter a trusted prompt; it is not a generation
 // self-report). Only Accept is remembered here — failure-analysis writes are
 // slice 4 (or-hd3.5). Best-effort: a memory miss never fails a green build.
-func rememberOutcome(ctx context.Context, mem *memory.Store, taskID string, report proof.Report, traj *buildTrajectory) error {
+func rememberOutcome(ctx context.Context, mem *memory.Store, taskID string, report proof.Report, traj *buildTrajectory, specSlice string) error {
 	if mem == nil || report.Outcome.Verdict != truthalign.Accept {
 		return nil
+	}
+	content := summarizeOutcome(taskID, report, traj)
+	if specSlice != "" {
+		// or-qnto residual 2: the outcome carries the spec-slice SHAPE it
+		// proved — a later recall can match on shape, not just task id.
+		content += "\nspec slice: " + specSlice
 	}
 	_, err := mem.Write(ctx, memory.Item{
 		Tier:      memory.MTM,
 		Kind:      memory.KindPattern,
-		Content:   summarizeOutcome(taskID, report, traj),
+		Content:   content,
 		TrustTier: memory.TrustProof,
 		Heat:      1.0,
 	})

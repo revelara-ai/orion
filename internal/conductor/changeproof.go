@@ -152,6 +152,12 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		res.Reason = fmt.Sprintf("%d attempt(s) failed:\n%s", len(digests), strings.Join(digests, "\n---\n"))
 		res.Delivery = "escalate"
 	}
+	// or-qnto residual 3: a change that OVERCAME failed attempts carries the
+	// same transferable signal a greenfield task does — mirror the distill
+	// pass over its digest trajectory (opt-in, generation-tier candidate).
+	if res.Committed && len(digests) > 0 {
+		distillChangeRule(ctx, mem, intent, digests)
+	}
 	final := finishChange(ctx, store, repoRoot, res, intent)
 	// or-kt5: a NOT-committed change reclaims its worktree AND branch now —
 	// the evidence is already persisted (or-67av), so the checkout is not the

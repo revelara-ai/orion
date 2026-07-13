@@ -26,7 +26,7 @@ func TestBuildRecallsAndQuarantinesGenerationMemory(t *testing.T) {
 
 	// A proven task outcome (harness-derived ⇒ proof-tier) is remembered.
 	rep := proof.Report{Outcome: truthalign.Outcome{Verdict: truthalign.Accept}}
-	if err := rememberOutcome(ctx, mem, "task-1", rep, &buildTrajectory{}); err != nil {
+	if err := rememberOutcome(ctx, mem, "task-1", rep, &buildTrajectory{}, ""); err != nil {
 		t.Fatalf("rememberOutcome: %v", err)
 	}
 

@@ -318,6 +318,9 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	if err != nil {
 		return BuildResult{}, err
 	}
+	// or-qnto residual 1: the END-OF-RUN distillation bookend — one cross-task
+	// pass over the whole run's outcomes (opt-in, generation-tier candidate).
+	withLock(&stateMu, func() { distillRunRule(ctx, mem, results) })
 
 	// or-tcs.1.6: assemble the proven clusters. Each accepted cluster integrates ONE AT A TIME
 	// onto a fresh epic head, re-proving the merged tree (proof.ProveAll), so the DELIVERED
@@ -1031,7 +1034,7 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 	// write miss never fails an otherwise-green build.
 	if mem != nil {
 		withLock(stateMu, func() {
-			memMaintenance(ctx, mem, taskID, buildDir, report, lastNarrative, failureAnalysis, traj)
+			memMaintenance(ctx, mem, taskID, buildDir, report, lastNarrative, failureAnalysis, traj, specSliceDigest(es, task))
 		})
 	}
 	// or-7et.5b: on Accept, persist the module's ACTUAL exported surface —
@@ -1155,8 +1158,8 @@ func mutationThresholdFor(artifactDir string) float64 {
 // memMaintenance records the proven outcome into memory + bounds the tiers (or-hd3.*). Best-effort
 // (a memory miss never fails an otherwise-green build); called under stateMu so it is race-free
 // when clusters build in parallel.
-func memMaintenance(ctx context.Context, mem *memory.Store, taskID, buildDir string, report proof.Report, lastNarrative, failureAnalysis string, traj *buildTrajectory) {
-	_ = rememberOutcome(ctx, mem, taskID, report, traj)
+func memMaintenance(ctx context.Context, mem *memory.Store, taskID, buildDir string, report proof.Report, lastNarrative, failureAnalysis string, traj *buildTrajectory, specSlice string) {
+	_ = rememberOutcome(ctx, mem, taskID, report, traj, specSlice)
 	// or-v9f.8: the durable decision log — a proven module's structural choices
 	// (exports, routes, module path) persist so dependent modules reuse them.
 	_ = rememberDecidedConstraints(ctx, mem, taskID, buildDir, report)
@@ -1361,4 +1364,28 @@ func obligationNeeds(c testsynth.Contract) []string {
 		add(c.TimeZone)
 	}
 	return needs
+}
+
+// specSliceDigest renders the executable-spec SLICE a task proved against —
+// recalled outcomes then carry WHAT SHAPE of spec they proved (or-qnto
+// residual 2), not just the verdict.
+func specSliceDigest(es spec.ExecutableSpec, task orchestrator.PlanTask) string {
+	kinds := map[string]int{}
+	for _, cs := range es.ResponseContract.Cases {
+		k := string(cs.Kind)
+		if k == "" {
+			k = "http"
+		}
+		kinds[k]++
+	}
+	parts := make([]string, 0, len(kinds))
+	for _, k := range []string{"http", "exec", "unit", "file"} {
+		if kinds[k] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", kinds[k], k))
+		}
+	}
+	slice := fmt.Sprintf("intent=%s; obligation=%s; format=%s; cases=%s",
+		clip(oneLine(es.Intent), 100), clip(task.ProofObligation, 100),
+		es.ResponseContract.Format(), strings.Join(parts, ", "))
+	return slice
 }

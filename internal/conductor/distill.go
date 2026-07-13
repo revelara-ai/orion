@@ -83,3 +83,90 @@ func distillWithLLM(ctx context.Context, provider llm.Provider, taskID string, r
 	}
 	return resp.Text(), nil
 }
+
+// distillRunRule is the END-OF-RUN bookend (or-qnto residual 1): one
+// cross-task pass over the whole run's outcomes — failure classes that only
+// show ACROSS tasks (the same analysis overcome twice, a systemic gap) are
+// invisible to the per-task pass. Same containment: generation-tier
+// CANDIDATE, opt-in flag + wired provider, never fails a run.
+func distillRunRule(ctx context.Context, mem *memory.Store, results []taskResult) {
+	if mem == nil || !distillEnabled() || distillLLM == nil {
+		return
+	}
+	var b strings.Builder
+	struggled := 0
+	for _, r := range results {
+		if r.Attempts > 1 || r.FailureAnalysis != "" {
+			struggled++
+			fmt.Fprintf(&b, "Task %s: verdict %s after %d attempt(s).\n", r.TaskID, r.Verdict, r.Attempts)
+			if r.FailureAnalysis != "" {
+				fmt.Fprintf(&b, "  analysis: %s\n", clip(r.FailureAnalysis, 400))
+			}
+		}
+	}
+	if struggled == 0 {
+		return // a clean run has no cross-task failure signal to distill
+	}
+	b.WriteString("\nState ONE general, transferable rule (1-3 sentences) visible ACROSS these tasks — a systemic pattern a future RUN should follow, not a single task's fix. Answer with the rule only.")
+	resp, err := distillLLM.Chat(ctx, llm.ChatRequest{
+		System:    "You distill whole-run build trajectories into single transferable engineering rules.",
+		Messages:  []llm.Message{llm.TextMessage(llm.RoleUser, b.String())},
+		MaxTokens: 400,
+	})
+	if err != nil || resp == nil {
+		slog.Warn("run distillation skipped", "err", err)
+		return
+	}
+	rule := strings.TrimSpace(resp.Text())
+	if rule == "" {
+		return
+	}
+	if len(rule) > 1000 {
+		rule = rule[:1000] + "…"
+	}
+	if _, err := mem.Write(ctx, memory.Item{
+		Tier: memory.LTM, Kind: memory.KindRule,
+		Content:   "run-distilled rule: " + rule,
+		TrustTier: memory.TrustGeneration, Candidate: true, Heat: 0.5,
+	}); err != nil {
+		slog.Warn("run distillation write failed", "err", err)
+	}
+}
+
+// distillChangeRule mirrors distillRule over the CHANGE flow's attempt-digest
+// trajectory (or-qnto residual 3): a change that overcame failed attempts
+// carries the same transferable signal a greenfield task does.
+func distillChangeRule(ctx context.Context, mem *memory.Store, intent string, digests []string) {
+	if mem == nil || !distillEnabled() || distillLLM == nil || len(digests) == 0 {
+		return
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "A brownfield change (%q) was proven after %d failed attempt(s).\n", clip(intent, 120), len(digests))
+	for i, d := range digests {
+		fmt.Fprintf(&b, "Attempt %d failure digest:\n%s\n", i+1, clip(d, 400))
+	}
+	b.WriteString("\nState ONE general, transferable rule (1-3 sentences) a future change attempt should follow to avoid this failure class. Answer with the rule only.")
+	resp, err := distillLLM.Chat(ctx, llm.ChatRequest{
+		System:    "You distill change-attempt failure trajectories into single transferable engineering rules.",
+		Messages:  []llm.Message{llm.TextMessage(llm.RoleUser, b.String())},
+		MaxTokens: 400,
+	})
+	if err != nil || resp == nil {
+		slog.Warn("change distillation skipped", "err", err)
+		return
+	}
+	rule := strings.TrimSpace(resp.Text())
+	if rule == "" {
+		return
+	}
+	if len(rule) > 1000 {
+		rule = rule[:1000] + "…"
+	}
+	if _, err := mem.Write(ctx, memory.Item{
+		Tier: memory.LTM, Kind: memory.KindRule,
+		Content:   "change-distilled rule: " + rule,
+		TrustTier: memory.TrustGeneration, Candidate: true, Heat: 0.5,
+	}); err != nil {
+		slog.Warn("change distillation write failed", "err", err)
+	}
+}
