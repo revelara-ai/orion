@@ -8,6 +8,12 @@
 // Files INVALID → a loud warning + the Go defaults at the consumption site,
 // and `orion doctor` reports the exact error — a bad edit degrades visibly,
 // it never bricks a run and never silently half-applies.
+//
+// HOT-READ CONTRACT (or-0sk, A2): every artifact here is re-read from disk on
+// EVERY use — an edit applies on the next render and a deletion reverts to the
+// compiled default immediately, with no restart and no /reload. Do not add
+// caching; continuous reload is the API (pinned by
+// TestPromptArtifactsHotReloadMidSession).
 package harnessconfig
 
 import (
