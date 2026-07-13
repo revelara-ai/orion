@@ -217,6 +217,20 @@ func (i *Integrator) headRev(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// ScopesOverlap reports whether two declared scope SETS can touch the same
+// files (or-7et.4: the wave partitioner's disjointness predicate). Empty sets
+// follow normalizeScope's fail-safe: undeclared = whole tree = overlaps all.
+func ScopesOverlap(a, b []string) bool {
+	for _, x := range normalizeScope(a) {
+		for _, y := range normalizeScope(b) {
+			if pathsOverlap(x, y) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // pathsOverlap reports whether two declared file-scope prefixes can touch the same files — true
 // when one is a path-prefix of the other (directory-prefix scoping). The root prefix "" (an
 // undeclared scope, see normalizeScope) overlaps everything.
