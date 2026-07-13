@@ -40,6 +40,10 @@ type Decision struct {
 	Key       string
 	Value     string
 	ValueKind string // precise | fallback_preset
+	// SecurityRelevant marks a decision whose loss/downgrade is a security
+	// event (memory summarization retains these in full; spec amendment must
+	// carry the flag forward, or-tcs.5.1).
+	SecurityRelevant bool
 }
 
 type Task struct {
@@ -247,6 +251,22 @@ func (r *SpecRepo) CreateDraft(ctx context.Context, projectID string) (string, e
 	return id, nil
 }
 
+// CreateAmendmentDraft starts a NEW spec version seeded from a ratified parent
+// (or-tcs.5.1 spec lineage): status drafting, version parent+1, parent_spec_id
+// recorded, requirements copied so the developer EDITS rather than re-elicits.
+// Decisions are copied by the caller (they carry their own rows per spec).
+func (r *SpecRepo) CreateAmendmentDraft(ctx context.Context, parent Spec) (string, error) {
+	id, now := newID(), nowRFC3339()
+	_, err := r.tx.ExecContext(ctx,
+		`INSERT INTO specs (id, project_id, status, version, parent_spec_id, requirements, created_at, updated_at)
+		 VALUES (?,?, 'drafting', ?, ?, ?, ?, ?)`,
+		id, parent.ProjectID, parent.Version+1, parent.ID, parent.Requirements, now, now)
+	if err != nil {
+		return "", fmt.Errorf("create amendment draft: %w", err)
+	}
+	return id, nil
+}
+
 // SetStatus updates a spec's lifecycle status.
 func (r *SpecRepo) SetStatus(ctx context.Context, id, status string) error {
 	res, err := r.tx.ExecContext(ctx,
@@ -349,7 +369,7 @@ func (r *DecisionRepo) Create(ctx context.Context, projectID, specID, key, value
 // ListForSpec returns the latest answer per key for a spec (last write wins).
 func (r *DecisionRepo) ListForSpec(ctx context.Context, specID string) ([]Decision, error) {
 	rows, err := r.tx.QueryContext(ctx,
-		`SELECT key, value, value_kind FROM decisions WHERE spec_id=? ORDER BY created_at`, specID)
+		`SELECT key, value, value_kind, security_relevant FROM decisions WHERE spec_id=? ORDER BY created_at`, specID)
 	if err != nil {
 		return nil, err
 	}
@@ -358,9 +378,11 @@ func (r *DecisionRepo) ListForSpec(ctx context.Context, specID string) ([]Decisi
 	var order []string
 	for rows.Next() {
 		var d Decision
-		if err := rows.Scan(&d.Key, &d.Value, &d.ValueKind); err != nil {
+		var sr int
+		if err := rows.Scan(&d.Key, &d.Value, &d.ValueKind, &sr); err != nil {
 			return nil, err
 		}
+		d.SecurityRelevant = sr != 0
 		if _, seen := latest[d.Key]; !seen {
 			order = append(order, d.Key)
 		}
