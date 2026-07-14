@@ -243,13 +243,19 @@ func (a *OrionAgent) persistSession(sessionID string, convo []llm.Message) {
 		a.persistFailed(err)
 		return
 	}
-	name := a.sessionStamp(sessionID) + ".md"
+	stamp := a.sessionStamp(sessionID)
+	// Human view: the markdown transcript (best-effort, atomic full rewrite).
+	name := stamp + ".md"
 	tmp := filepath.Join(dir, "."+name+".tmp")
 	if err := os.WriteFile(tmp, []byte(renderTranscript(convo)), 0o644); err != nil {
 		a.persistFailed(err)
-		return
+	} else if err := os.Rename(tmp, filepath.Join(dir, name)); err != nil { // atomic replace
+		a.persistFailed(err)
 	}
-	if err := os.Rename(tmp, filepath.Join(dir, name)); err != nil { // atomic replace
+	// Faithful reload source: the append-only JSONL message log (or-8my7). The
+	// markdown drops tool_use IDs / linkage / signatures and cannot be resumed
+	// from; the log preserves them.
+	if err := a.persistSessionLog(sessionID, filepath.Join(dir, stamp+".jsonl"), convo); err != nil {
 		a.persistFailed(err)
 	}
 }

@@ -26,6 +26,12 @@ func (a *OrionAgent) Control(ctx context.Context, sessionID, op, arg string) (st
 		return a.treeView(sessionID)
 	case "switch":
 		return a.switchSession(sessionID, arg)
+	// Resume a prior session from its on-disk log (or-8my7): survives a process
+	// restart, unlike the in-memory fork/clone/switch family above.
+	case "sessions":
+		return a.sessionsView()
+	case "resume":
+		return a.resumeSession(sessionID, arg)
 	default:
 		return "", fmt.Errorf("unknown control op %q", op)
 	}
