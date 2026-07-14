@@ -117,6 +117,10 @@ type LossScenario struct {
 
 // Model is the full developed STPA artifact set.
 type Model struct {
+	// Language is the ratified implementation language ("" = go, or-4y7.1). It
+	// selects the per-language hazard prober; omitempty keeps persisted models
+	// (the time-service golden) byte-identical on the Go path.
+	Language  string           `json:"language,omitempty"`
 	Losses    []Loss           `json:"losses"`
 	Structure ControlStructure `json:"control_structure"`
 	UCAs      []UCA            `json:"ucas"`

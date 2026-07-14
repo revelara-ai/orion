@@ -212,7 +212,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		model = stpa.SkeletonModel()
 		_ = stpa.Save(ctx, store, proj.ID, model)
 	}
-	contract := testsynth.Contract{Route: gs.Route, Format: gs.Format, TimeZone: gs.TimeZone, Cases: es.ResponseContract.Cases, EntrySymbol: gs.Entry()}
+	contract := testsynth.Contract{Language: gs.Language, Route: gs.Route, Format: gs.Format, TimeZone: gs.TimeZone, Cases: es.ResponseContract.Cases, EntrySymbol: gs.Entry()}
 	// Shadow gate (or-v9f.3 slice 1): exec obligations are executed and recorded
 	// in every report, but the VERDICT gates on them only when
 	// ORION_EXEC_CASES=required — the measured cutover flips the default once the

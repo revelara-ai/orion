@@ -1,6 +1,10 @@
 package completeness
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/revelara-ai/orion/internal/lang"
+)
 
 // DimDirection is the development-direction dimension (or-045a.5): stack,
 // language, engine, wire protocol, repo layout — the decisions the mech-game
@@ -48,15 +52,26 @@ type Gap struct {
 	Provable []string // what the harness CAN prove for this key today
 }
 
-// provableDirections is the deterministic harness-capability manifest: what
-// the decompose→generate→testsynth→prove chain can actually prove TODAY.
-// Extending a row (e.g. adding "grpc" when or-4rxw lands) is how capability
-// growth reaches the gate. Keys absent here (stack, repo_layout — free-text)
-// carry no capability constraint.
-var provableDirections = map[string][]string{
-	"direction.language":      {"go"},
+// staticProvable is the deterministic harness-capability manifest for the
+// direction rows Orion proves TODAY. direction.language is NOT here: it is
+// sourced from the language registry (see provableFor) so a language is
+// "provable" exactly when an adapter is registered — capability can never be
+// claimed with nothing behind it (or-4y7.1). Keys absent entirely (stack,
+// repo_layout — free-text) carry no capability constraint.
+var staticProvable = map[string][]string{
 	"direction.wire_protocol": {"http-json", "text", "http"},
 	"direction.engine":        {"none"},
+}
+
+// provableFor returns the values the harness can prove for a direction key.
+// direction.language comes from lang.Registered() (the registry is the
+// authority); every other constrained key is static.
+func provableFor(key string) ([]string, bool) {
+	if key == "direction.language" {
+		return lang.Registered(), true
+	}
+	p, ok := staticProvable[key]
+	return p, ok
 }
 
 // DirectionGaps returns the direction answers that exceed the harness's proof
@@ -65,7 +80,7 @@ var provableDirections = map[string][]string{
 func DirectionGaps(answers map[string]string) []Gap {
 	var gaps []Gap
 	for _, d := range directionDecisions() { // stable order
-		provable, constrained := provableDirections[d.Key]
+		provable, constrained := provableFor(d.Key)
 		if !constrained {
 			continue
 		}

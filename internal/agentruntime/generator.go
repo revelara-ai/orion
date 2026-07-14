@@ -18,6 +18,9 @@ import (
 type GenRequest struct {
 	Description string
 	Module      string
+	// Language is the ratified implementation language ("" = go), so the spawned
+	// generator can render a per-language prompt (or-4y7.1/.3).
+	Language    string
 	Route       string
 	Format      string
 	TimeZone    string
