@@ -16,19 +16,20 @@ import (
 // ACP gate (ask), mapping the outcome. "allow_always" records the tool so future calls
 // skip the prompt. A nil ask (headless/subagent — no interactive gate) yields a nil hook,
 // so those tools keep their own red-button gating and never prompt.
-func (a *OrionAgent) approver(sessionID string, ask acp.AskFunc) func(context.Context, string, json.RawMessage, tools.Safety) harness.Decision {
+func (a *OrionAgent) approver(sessionID string, ask acp.AskFunc) func(context.Context, string, json.RawMessage, tools.Safety, string) harness.Decision {
 	if ask == nil {
 		return nil
 	}
-	return func(_ context.Context, name string, input json.RawMessage, _ tools.Safety) harness.Decision {
+	return func(_ context.Context, name string, input json.RawMessage, _ tools.Safety, rationale string) harness.Decision {
 		if a.toolAllowed(sessionID, name) {
 			return harness.DecisionAllow
 		}
 		res, err := ask(acp.PermissionRequest{
-			Kind:    "tool",
-			Tool:    name,
-			Title:   "Run " + name + "?",
-			Preview: toolPreview(name, input),
+			Kind:      "tool",
+			Tool:      name,
+			Title:     "Run " + name + "?",
+			Preview:   toolPreview(name, input),
+			Rationale: approvalRationale(rationale),
 		})
 		if err != nil {
 			return harness.DecisionDeny // a gate error is a safe default: don't run it
@@ -43,6 +44,16 @@ func (a *OrionAgent) approver(sessionID string, ask acp.AskFunc) func(context.Co
 			return harness.DecisionDeny
 		}
 	}
+}
+
+// approvalRationale is the assistant's stated reason for a tool call, trimmed for
+// the approval card — or an honest placeholder when the model gave none, so a
+// prompt is never a context-free "Run bash?" (or-10m0).
+func approvalRationale(rationale string) string {
+	if r := strings.TrimSpace(rationale); r != "" {
+		return r
+	}
+	return "(the model gave no explanation for this call)"
 }
 
 // toolAllowed reports whether the developer allow-always'd this tool for the session.

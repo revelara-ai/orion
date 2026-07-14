@@ -46,6 +46,10 @@ type PermissionRequest struct {
 	// the approval card (a bash command, or a file path + unified-diff/content preview).
 	Tool    string `json:"tool,omitempty"`
 	Preview string `json:"preview,omitempty"`
+	// Rationale is the assistant's stated reason for THIS turn — why the tool is
+	// being run (or-10m0). The card shows it so a prompt is never a context-free
+	// "Run bash?"; empty when the model gave no explanation.
+	Rationale string `json:"rationale,omitempty"`
 }
 
 // PermissionResult is the gate's decision. For a spec ratify: "granted" | "denied". For a

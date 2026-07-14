@@ -25,7 +25,7 @@ func TestApproveHookDeniesDestructiveTool(t *testing.T) {
 	}}
 	var consulted []string
 	loop := Loop{Provider: prov, Tools: reg, System: "x",
-		Approve: func(_ context.Context, name string, _ json.RawMessage, _ tools.Safety) Decision {
+		Approve: func(_ context.Context, name string, _ json.RawMessage, _ tools.Safety, _ string) Decision {
 			consulted = append(consulted, name)
 			return DecisionDeny
 		}}
@@ -60,7 +60,7 @@ func TestApproveHookAllowsAndSkipsReadOnly(t *testing.T) {
 	}}
 	var consulted []string
 	loop := Loop{Provider: prov, Tools: reg,
-		Approve: func(_ context.Context, name string, _ json.RawMessage, _ tools.Safety) Decision {
+		Approve: func(_ context.Context, name string, _ json.RawMessage, _ tools.Safety, _ string) Decision {
 			consulted = append(consulted, name)
 			return DecisionAllow
 		}}

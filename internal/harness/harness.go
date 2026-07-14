@@ -109,7 +109,7 @@ type Loop struct {
 	// NOT run and a denial message is fed back to the model so it adapts. Other tools —
 	// including internal Destructive spec/change tools — never consult it. Subagents
 	// leave it nil (headless).
-	Approve func(ctx context.Context, name string, input json.RawMessage, safety tools.Safety) Decision
+	Approve func(ctx context.Context, name string, input json.RawMessage, safety tools.Safety, rationale string) Decision
 	// Checkpoint + CheckpointKey (or-mvr.8): optional provider-outage turn
 	// checkpoint. A provider-class failure saves the conversation under the
 	// key; the next Run with the same key resumes from it; success clears it.
@@ -402,7 +402,7 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 				content = fmt.Sprintf("strategy stall: %s has now failed %d times in a row with different inputs — the approach is not working. Re-read the last error carefully; try a fundamentally different approach or a different tool; or end your turn and report the blocker to the developer.", tu.Name, streak.count)
 				isErr = true
 			} else {
-				content, isErr = l.dispatch(ctx, tu)
+				content, isErr = l.dispatch(ctx, tu, resp.Text())
 				if !isErr {
 					streak.reset()
 				}
@@ -437,7 +437,7 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 	return convo, nil, fmt.Errorf("%w after %d iterations (%s) — %s", ErrMaxIterations, l.Supervisor.maxIter(), tallyString(tally, tallyOrder), hint)
 }
 
-func (l *Loop) dispatch(ctx context.Context, tu llm.ToolUse) (string, bool) {
+func (l *Loop) dispatch(ctx context.Context, tu llm.ToolUse, rationale string) (string, bool) {
 	if l.Tools == nil {
 		return fmt.Sprintf("no tools registered (requested %q)", tu.Name), true
 	}
@@ -447,7 +447,7 @@ func (l *Loop) dispatch(ctx context.Context, tu llm.ToolUse) (string, bool) {
 	// NOT gated.
 	if l.Approve != nil {
 		if t, ok := l.Tools.Get(tu.Name); ok && t.Safety.RequiresApproval {
-			if l.Approve(ctx, tu.Name, tu.Input, t.Safety) == DecisionDeny {
+			if l.Approve(ctx, tu.Name, tu.Input, t.Safety, rationale) == DecisionDeny {
 				return "The user denied permission to run " + tu.Name + "; do not retry it — adapt or ask them what to do instead.", true
 			}
 		}
