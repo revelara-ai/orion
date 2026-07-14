@@ -85,9 +85,10 @@ func TestCommandPalette(t *testing.T) {
 	}
 	m.input.SetValue("/") // bare slash → injected commands + built-in intrinsics
 	// status/doctor/mcp (injected) + help/clear/compact/context/model/exit +
-	// fork/clone/tree/switch (or-ykz.5 session branching) = 13
-	if got := m.paletteMatches(); len(got) != 13 {
-		t.Errorf("/ should list the 3 injected + 10 intrinsic commands, got %d", len(got))
+	// fork/clone/tree/switch (or-ykz.5 session branching) +
+	// sessions/resume (or-8my7 resumable sessions) = 15
+	if got := m.paletteMatches(); len(got) != 15 {
+		t.Errorf("/ should list the 3 injected + 12 intrinsic commands, got %d", len(got))
 	}
 
 	m.paletteIdx = 99
