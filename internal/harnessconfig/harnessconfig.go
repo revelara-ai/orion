@@ -52,6 +52,9 @@ const (
 type PreambleData struct {
 	Module string
 	Entry  string
+	// Language is the ratified implementation language ("" = go), so an
+	// externalized preamble template can branch on it (or-4y7.1/.3).
+	Language string
 	Family string // "" (http service) | "cli" | "library"
 	Route  string
 	Port   int

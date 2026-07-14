@@ -26,6 +26,10 @@ import (
 
 // Contract is the slice of the spec the behavioral corpus is synthesized from.
 type Contract struct {
+	// Language is the ratified implementation language ("" = go). It threads the
+	// dispatch key from GenSpec through proof so each mode can select its adapter
+	// (or-4y7.1). "" resolves to Go everywhere, so the Go path is unchanged.
+	Language string
 	Route    string
 	Format   string // "json" | "text" | "xml"
 	TimeZone string
