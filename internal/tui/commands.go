@@ -38,6 +38,8 @@ func builtinCommands() []Command {
 		{Name: "clone", Help: "branch a full copy of this conversation"},
 		{Name: "tree", Help: "show the session branch tree"},
 		{Name: "switch", Help: "jump to another branch (/switch <id>)"},
+		{Name: "sessions", Help: "list resumable sessions (from prior runs)"},
+		{Name: "resume", Help: "resume a prior session (/resume <id>) — /sessions lists them"},
 		{Name: "exit", Help: "quit Orion"},
 	}
 }
@@ -76,7 +78,9 @@ func (m *Conversation) handleCommand(text string) tea.Cmd {
 		return m.controlCmd("model", strings.TrimSpace(arg))
 	// Tree-structured sessions (or-ykz.5): forwarded as control ops; a
 	// "SESSION:<id>" result switches the active branch in Update.
-	case "fork", "clone", "tree", "switch":
+	// /sessions + /resume (or-8my7) forward the same way — resume reloads a prior
+	// on-disk session's history into this one; the result text is displayed.
+	case "fork", "clone", "tree", "switch", "sessions", "resume":
 		_, arg, _ := strings.Cut(strings.TrimPrefix(text, "/"), " ")
 		m.input.Reset()
 		m.msgs = append(m.msgs, msg{role: "you", text: text})
