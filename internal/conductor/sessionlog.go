@@ -3,6 +3,7 @@ package conductor
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"io"
 	"os"
@@ -90,14 +91,14 @@ func rewriteSessionLog(path string, convo []llm.Message) error {
 // failing the load — the log is a recovery aid, not a transactional record.
 // Returns os.ErrNotExist (wrapped) when no log exists for the stamp.
 func loadSessionHistory(dir, stamp string) ([]llm.Message, error) {
-	f, err := os.Open(sessionLogPath(dir, stamp))
+	rc, err := openSessionLog(dir, stamp)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { _ = rc.Close() }()
 
 	var out []llm.Message
-	r := bufio.NewReader(f)
+	r := bufio.NewReader(rc)
 	for {
 		line, rerr := r.ReadBytes('\n')
 		if len(bytes.TrimSpace(line)) > 0 {
@@ -116,7 +117,41 @@ func loadSessionHistory(dir, stamp string) ([]llm.Message, error) {
 	return out, nil
 }
 
-// sessionLogPath is the on-disk path of a session's message log.
+// sessionLogPath is the on-disk path of a session's ACTIVE (uncompressed) log.
 func sessionLogPath(dir, stamp string) string {
 	return dir + string(os.PathSeparator) + stamp + ".jsonl"
+}
+
+// openSessionLog opens a session's log for reading, transparently handling a
+// gzip-compressed (archived) log (or-8my7 S4): the hot .jsonl if present, else
+// the compressed .jsonl.gz. The returned ReadCloser closes the underlying file.
+func openSessionLog(dir, stamp string) (io.ReadCloser, error) {
+	if f, err := os.Open(sessionLogPath(dir, stamp)); err == nil {
+		return f, nil
+	}
+	f, err := os.Open(sessionLogPath(dir, stamp) + ".gz")
+	if err != nil {
+		return nil, err
+	}
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return gzReadCloser{gz: gz, f: f}, nil
+}
+
+// gzReadCloser closes both the gzip reader and its backing file.
+type gzReadCloser struct {
+	gz *gzip.Reader
+	f  *os.File
+}
+
+func (g gzReadCloser) Read(p []byte) (int, error) { return g.gz.Read(p) }
+func (g gzReadCloser) Close() error {
+	err := g.gz.Close()
+	if cerr := g.f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }

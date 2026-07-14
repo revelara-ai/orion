@@ -62,10 +62,18 @@ func listSessions(dir string) ([]SessionInfo, error) {
 	}
 	var out []SessionInfo
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+		if e.IsDir() {
 			continue
 		}
-		stamp := strings.TrimSuffix(e.Name(), ".jsonl")
+		var stamp string
+		switch { // an archived (gzipped) session is still listable/resumable
+		case strings.HasSuffix(e.Name(), ".jsonl"):
+			stamp = strings.TrimSuffix(e.Name(), ".jsonl")
+		case strings.HasSuffix(e.Name(), ".jsonl.gz"):
+			stamp = strings.TrimSuffix(e.Name(), ".jsonl.gz")
+		default:
+			continue
+		}
 		si := SessionInfo{Stamp: stamp}
 		if fi, err := e.Info(); err == nil {
 			si.Modified = fi.ModTime()
