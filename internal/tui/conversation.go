@@ -163,6 +163,9 @@ type msg struct {
 	kind string // "" | agent_thought | agent_message | spec | plan | permission | tool_permission
 	text string
 	tool string // for tool_permission: the mutating tool name (bash / write_file / edit_file)
+	// rationale (tool_permission): the assistant's stated reason for the call, so
+	// the approval card shows WHY it popped up (or-10m0).
+	rationale string
 }
 
 // Conversation is the default pane: an async chat client over the Conductor agent.
@@ -664,7 +667,7 @@ func (m Conversation) permKind() string {
 func (m *Conversation) surfacePerm(p pendingPermission) {
 	m.permExpanded = false
 	if p.req.Kind == "tool" {
-		m.msgs = append(m.msgs, msg{role: "orion", kind: "tool_permission", tool: p.req.Tool, text: p.req.Preview})
+		m.msgs = append(m.msgs, msg{role: "orion", kind: "tool_permission", tool: p.req.Tool, text: p.req.Preview, rationale: p.req.Rationale})
 		m.input.Placeholder = "y allow · a always · n deny"
 	} else {
 		m.msgs = append(m.msgs, msg{role: "orion", kind: "permission", text: p.req.Title})
@@ -1041,6 +1044,12 @@ func (m Conversation) toolPermCard(mm msg) string {
 		clipped[i] = truncRunes(l, maxW)
 	}
 	body := colorizeDiff(strings.Join(clipped, "\n"))
+	// The assistant's reason for the call, so the card is never a context-free
+	// "Run bash?" (or-10m0). Shown above the command/diff preview.
+	why := ""
+	if r := strings.TrimSpace(mm.rationale); r != "" {
+		why = dimStyle.Width(maxW).Render(r) + "\n\n"
+	}
 	choices := okGlyph.Render("y") + dimStyle.Render(" allow once   ") +
 		starStyle.Render("a") + dimStyle.Render(" allow always   ") +
 		failGlyph.Render("n") + dimStyle.Render(" deny")
@@ -1048,7 +1057,7 @@ func (m Conversation) toolPermCard(mm msg) string {
 	if truncated {
 		foot = dimStyle.Render(fmt.Sprintf("… +%d more · e expand", len(all)-len(shown))) + "\n" + choices
 	}
-	return title + "\n" + body + "\n\n" + foot
+	return title + "\n" + why + body + "\n\n" + foot
 }
 
 // truncRunes clips s to at most max display runes, marking the cut with an ellipsis.

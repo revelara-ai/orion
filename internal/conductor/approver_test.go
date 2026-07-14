@@ -23,14 +23,14 @@ func TestApproverAllowAlwaysShortCircuits(t *testing.T) {
 	dest := tools.Safety{Destructive: true}
 	in := json.RawMessage(`{"command":"ls"}`)
 
-	if approve(context.Background(), "bash", in, dest) != harness.DecisionAllow {
+	if approve(context.Background(), "bash", in, dest, "") != harness.DecisionAllow {
 		t.Fatal("allow_always should allow")
 	}
 	if asks != 1 {
 		t.Fatalf("first call should prompt once, got %d", asks)
 	}
 	// Second call to the same tool is short-circuited by the allow-always set.
-	if approve(context.Background(), "bash", in, dest) != harness.DecisionAllow {
+	if approve(context.Background(), "bash", in, dest, "") != harness.DecisionAllow {
 		t.Fatal("second call should still allow")
 	}
 	if asks != 1 {
@@ -45,7 +45,7 @@ func TestApproverOutcomesMap(t *testing.T) {
 		ask := func(acp.PermissionRequest) (acp.PermissionResult, error) {
 			return acp.PermissionResult{Outcome: outcome}, nil
 		}
-		return a.approver("s"+outcome, ask)(context.Background(), "write_file", json.RawMessage(`{"path":"x","content":"y"}`), dest)
+		return a.approver("s"+outcome, ask)(context.Background(), "write_file", json.RawMessage(`{"path":"x","content":"y"}`), dest, "")
 	}
 	if mk("deny") != harness.DecisionDeny {
 		t.Error("deny → DecisionDeny")
