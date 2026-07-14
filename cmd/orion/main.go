@@ -67,6 +67,8 @@ func run(args []string) int {
 			return cmdDeliver(args[1:])
 		case "conductor":
 			return cmdConductor(args[1:])
+		case "sessions":
+			return cmdSessions(args[1:])
 		case "deps":
 			return cmdDeps(args[1:])
 		case "tracker":
