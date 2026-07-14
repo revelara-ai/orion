@@ -41,6 +41,7 @@ type OrionAgent struct {
 	// or-08l: one mutex per session, held for a whole Prompt — same-session
 	// turns serialize so history read-modify-write + persist are atomic.
 	turnMu      map[string]*sync.Mutex
+	persisted   map[string]int                                             // session → messages already written to the .jsonl log (append offset, or-8my7)
 	persistWarn sync.Once                                                  // a repeated transcript-write failure is logged ONCE
 	tree        map[string]sessionNode                                     // session forks: id → parent + fork turn (or-ykz.5)
 	changes     map[string]*changeSession                                  // brownfield change-flow state, per session
@@ -53,7 +54,7 @@ type OrionAgent struct {
 
 // NewOrionAgent builds the native agent over the given model provider.
 func NewOrionAgent(p llm.Provider, c *orchestrator.Conductor, role RoleTemplate) *OrionAgent {
-	a := &OrionAgent{provider: p, conductor: c, role: role, sessions: map[string][]llm.Message{}, turnMu: map[string]*sync.Mutex{}, changes: map[string]*changeSession{}, allowed: map[string]map[string]bool{}, starts: map[string]time.Time{}}
+	a := &OrionAgent{provider: p, conductor: c, role: role, sessions: map[string][]llm.Message{}, turnMu: map[string]*sync.Mutex{}, persisted: map[string]int{}, changes: map[string]*changeSession{}, allowed: map[string]map[string]bool{}, starts: map[string]time.Time{}}
 	if n, err := strconv.Atoi(os.Getenv("ORION_LOOP_BREAKER_TURNS")); err == nil && n > 0 {
 		a.breaker.Threshold = n
 	}
