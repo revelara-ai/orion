@@ -112,7 +112,10 @@ func (e *GoMLX) Close() error {
 	return nil
 }
 
-func (e *GoMLX) Dim() int   { return e.dim }
+// Dim is the embedding dimensionality.
+func (e *GoMLX) Dim() int { return e.dim }
+
+// ID identifies the embedder (model + dims) for index compatibility checks.
 func (e *GoMLX) ID() string { return e.id }
 
 func (e *GoMLX) EmbedDocuments(_ context.Context, texts []string) ([][]float32, error) {
