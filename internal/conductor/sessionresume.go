@@ -17,6 +17,23 @@ import (
 // JSONL logs written by persistSession — no separate index to keep in sync
 // (discovery is the filesystem itself).
 
+// ListSessions returns the resumable session logs under dir, newest first — the
+// CLI-facing wrapper over the discovery used by /sessions (or-8my7 S3).
+func ListSessions(dir string) ([]SessionInfo, error) { return listSessions(dir) }
+
+// ResolveSession maps a stamp or id fragment to a concrete session stamp.
+func ResolveSession(dir, target string) (string, error) { return resolveSessionStamp(dir, target) }
+
+// RenderSessionTranscript renders a session's markdown transcript from its
+// faithful log — for `orion sessions show`, recall without starting the TUI.
+func RenderSessionTranscript(dir, stamp string) (string, error) {
+	msgs, err := loadSessionHistory(dir, stamp)
+	if err != nil {
+		return "", err
+	}
+	return renderTranscript(msgs), nil
+}
+
 // sessionsDir is the on-disk home of the session logs, or "" when store-less.
 func (a *OrionAgent) sessionsDir() string {
 	if a.conductor == nil {
