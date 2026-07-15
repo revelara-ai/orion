@@ -98,12 +98,13 @@ func toolEnv(root, workdir string) map[string]string {
 // namespace isolation is refused). A non-zero exit is returned via exitCode; err is reserved
 // for policy violations (non-allowlisted tool, non-dry-run make, missing binary/sandbox) and
 // launch failures.
-func RunTool(ctx context.Context, workdir, tool string, args ...string) (stdout, stderr string, exitCode int, err error) {
-	if !allowedTools[tool] {
-		return "", "", -1, fmt.Errorf("proofexec: tool %q is not on the verification allowlist", tool)
+func RunTool(ctx context.Context, workdir, lang, tool string, args ...string) (stdout, stderr string, exitCode int, err error) {
+	tc := toolchainFor(lang)
+	if tc == nil {
+		return "", "", -1, fmt.Errorf("proofexec: no proof toolchain registered for language %q", lang)
 	}
-	if tool == "go" && len(args) > 0 && goDeniedSubcommands[args[0]] {
-		return "", "", -1, fmt.Errorf("proofexec: `go %s` is not allowed (it runs arbitrary code)", args[0])
+	if aerr := tc.Allow(tool, args); aerr != nil {
+		return "", "", -1, aerr
 	}
 	// or-7y68: ONE toolchain exec per machine — the same flock the brownfield
 	// regression gates hold (or-6wbl), so concurrent proof builds/tests (and a
@@ -124,52 +125,44 @@ func RunTool(ctx context.Context, workdir, tool string, args ...string) (stdout,
 		return "", "", -1, err
 	}
 
-	root := goRoot()
-	roBinds := []string{root}
-	// or-tf8 H3 enabler: the HOST module cache binds read-only so a
-	// dependency-bearing repo's synth_test resolves from cache with the
-	// network still denied (GOPROXY=off).
-	modCache := hostModCache()
-	if modCache != "" {
-		roBinds = append(roBinds, modCache)
-	}
-	var argv []string
-	if tool == "go" {
-		if be.Name() == "none" {
-			// or-tf8 H1: `go test` executes GENERATED code — without a
-			// namespace sandbox it can read host files and reach the network
-			// even with a scrubbed env. FAIL CLOSED; the operator override is
-			// explicit and visible, never a silent warn.
-			if os.Getenv("ORION_ALLOW_UNSAFE_GO_ARM") != "1" {
+	// or-tf8 H3 enabler: the toolchain roots (GOROOT + the HOST module cache)
+	// bind read-only so a dependency-bearing repo's synth_test resolves from
+	// cache with the network still denied.
+	roBinds := tc.Roots()
+	// Decide the sandbox policy from the tool's ROLE before resolving its binary,
+	// so an auxiliary tool refuses the none backend BEFORE any host LookPath
+	// (preserving the original order + refusal reason).
+	primary := tc.IsPrimary(tool)
+	if be.Name() == "none" {
+		if primary {
+			// or-tf8 H1: the primary toolchain (`go test`) executes GENERATED
+			// code — without a namespace sandbox it can read host files and
+			// reach the network even with a scrubbed env. FAIL CLOSED; the
+			// operator override is explicit and visible, never a silent warn.
+			if !tc.UnsafeNoneOverride() || os.Getenv("ORION_ALLOW_UNSAFE_GO_ARM") != "1" {
 				return "", "", -1, fmt.Errorf("proofexec: refusing to run generated code without a namespace sandbox — install bwrap, or set ORION_ALLOW_UNSAFE_GO_ARM=1 to explicitly accept unisolated proof execs")
 			}
 			warnNoneOnce.Do(func() {
 				slog.Warn("proofexec: ORION_ALLOW_UNSAFE_GO_ARM=1 — proof execs run with a scrubbed env but WITHOUT network/filesystem isolation",
 					"backend", be.Name())
 			})
-		}
-		argv = append([]string{filepath.Join(root, "bin", "go")}, args...)
-	} else {
-		// A non-go tool runs over GENERATED, untrusted content: require a real namespace
-		// sandbox, and bind the binary resolved on the trusted host (never from the worktree).
-		if be.Name() == "none" {
+		} else {
+			// An auxiliary tool (golangci-lint) over generated content requires
+			// a real namespace sandbox — always.
 			return "", "", -1, fmt.Errorf("proofexec: refusing to run %q without a namespace sandbox (install bwrap or set ORION_SANDBOX_ISOLATION=bwrap)", tool)
 		}
-		bin, lerr := exec.LookPath(tool)
-		if lerr != nil {
-			return "", "", -1, fmt.Errorf("proofexec: %q not found on host: %w", tool, lerr)
-		}
-		if resolved, serr := filepath.EvalSymlinks(bin); serr == nil {
-			bin = resolved
-		}
+	}
+	bin, berr := tc.ResolveBin(tool)
+	if berr != nil {
+		return "", "", -1, berr
+	}
+	if !primary {
+		// The primary binary lives under Roots (already bound); an auxiliary
+		// tool's host binary is bound here.
 		roBinds = append(roBinds, bin)
-		argv = append([]string{bin}, args...)
 	}
-
-	env := toolEnv(root, workdir)
-	if modCache != "" {
-		env["GOMODCACHE"] = modCache // read-only bind above; cache-only resolution
-	}
+	argv := append([]string{bin}, args...)
+	env := tc.Env(workdir)
 	res, runErr := be.Run(ctx, sandbox.Spec{
 		Workdir:  workdir,
 		Argv:     argv,
@@ -185,7 +178,7 @@ func RunTool(ctx context.Context, workdir, tool string, args ...string) (stdout,
 // thin wrapper over RunTool's "go" arm (sandboxed, scrubbed, network-denied). A non-zero exit
 // is returned via exitCode, not err; err is reserved for failures to launch the toolchain.
 func GoToolchain(ctx context.Context, workdir string, goArgs ...string) (output string, exitCode int, err error) {
-	stdout, stderr, code, err := RunTool(ctx, workdir, "go", goArgs...)
+	stdout, stderr, code, err := RunTool(ctx, workdir, "go", "go", goArgs...)
 	return stdout + stderr, code, err
 }
 

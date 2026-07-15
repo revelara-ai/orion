@@ -26,7 +26,7 @@ func TestRunToolQueuesOnTheMachineLock(t *testing.T) {
 
 	short, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	_, _, _, rerr := RunTool(short, t.TempDir(), "go", "version")
+	_, _, _, rerr := RunTool(short, t.TempDir(), "go", "go", "version")
 	if rerr == nil {
 		t.Fatal("RunTool ran while the machine-wide toolchain lock was held — the bound is broken")
 	}
@@ -40,7 +40,7 @@ func TestRunToolQueuesOnTheMachineLock(t *testing.T) {
 	release()
 	free, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel2()
-	if _, _, _, rerr := RunTool(free, t.TempDir(), "go", "version"); rerr != nil && strings.Contains(rerr.Error(), "singleflight") {
+	if _, _, _, rerr := RunTool(free, t.TempDir(), "go", "go", "version"); rerr != nil && strings.Contains(rerr.Error(), "singleflight") {
 		t.Fatalf("with the lock free, RunTool must not report a lock wait: %v", rerr)
 	}
 }

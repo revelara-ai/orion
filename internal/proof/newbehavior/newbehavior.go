@@ -260,7 +260,7 @@ func proveVerify(ctx context.Context, dir string, v VerifyCommand) (truthalign.O
 				"golangci verify with curate_golangci must pass --config " + toolingcfg.CuratedConfigName
 		}
 	}
-	stdout, stderr, exit, err := proofexec.RunTool(ctx, dir, v.Tool, v.Args...)
+	stdout, stderr, exit, err := proofexec.RunTool(ctx, dir, "go", v.Tool, v.Args...)
 	if err != nil {
 		return truthalign.ObligationStatus{Executed: false}, "verifier refused/failed to launch: " + err.Error()
 	}

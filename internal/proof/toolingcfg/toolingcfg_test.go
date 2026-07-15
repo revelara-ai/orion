@@ -81,7 +81,7 @@ func TestCuratedConfigUsableUnderSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Pass the curated config by a path relative to the workdir (resolves inside the sandbox).
-	stdout, stderr, exit, err := proofexec.RunTool(context.Background(), dir, "golangci-lint", "run", "--config", filepath.Base(curated), "./...")
+	stdout, stderr, exit, err := proofexec.RunTool(context.Background(), dir, "go", "golangci-lint", "run", "--config", filepath.Base(curated), "./...")
 	if err != nil {
 		t.Fatalf("RunTool: %v\n%s%s", err, stdout, stderr)
 	}
