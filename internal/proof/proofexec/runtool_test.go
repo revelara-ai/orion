@@ -26,7 +26,7 @@ func mustWrite(t *testing.T, path, content string) {
 
 // TestRunToolRejectsDisallowedTool (or-75c): only the allowlist runs.
 func TestRunToolRejectsDisallowedTool(t *testing.T) {
-	_, _, _, err := RunTool(context.Background(), t.TempDir(), "bash", "-c", "echo hi")
+	_, _, _, err := RunTool(context.Background(), t.TempDir(), "go", "bash", "-c", "echo hi")
 	if err == nil || !strings.Contains(err.Error(), "allowlist") {
 		t.Fatalf("a non-allowlisted tool must be rejected, got %v", err)
 	}
@@ -35,7 +35,7 @@ func TestRunToolRejectsDisallowedTool(t *testing.T) {
 // TestRunToolRejectsMake: make is NOT on the allowlist — it can't load in the lib-less sandbox
 // and its $(shell ...) parse-time expansion is an exec vector; Makefiles are proven statically.
 func TestRunToolRejectsMake(t *testing.T) {
-	if _, _, _, err := RunTool(context.Background(), t.TempDir(), "make", "-n", "build"); err == nil ||
+	if _, _, _, err := RunTool(context.Background(), t.TempDir(), "go", "make", "-n", "build"); err == nil ||
 		!strings.Contains(err.Error(), "allowlist") {
 		t.Fatal("make must be rejected as non-allowlisted")
 	}
@@ -45,7 +45,7 @@ func TestRunToolRejectsMake(t *testing.T) {
 // code (go run / go generate / go get / go install / go tool), even though `go` is allowlisted.
 func TestRunToolRejectsGoRunGenerate(t *testing.T) {
 	for _, sub := range []string{"run", "generate", "get", "install", "tool"} {
-		_, _, _, err := RunTool(context.Background(), t.TempDir(), "go", sub, "./...")
+		_, _, _, err := RunTool(context.Background(), t.TempDir(), "go", "go", sub, "./...")
 		if err == nil || !strings.Contains(err.Error(), "not allowed") {
 			t.Errorf("`go %s` must be rejected, got %v", sub, err)
 		}
@@ -56,9 +56,21 @@ func TestRunToolRejectsGoRunGenerate(t *testing.T) {
 // without namespace isolation.
 func TestRunToolFailsClosedForNonGoUnderNone(t *testing.T) {
 	t.Setenv("ORION_SANDBOX_ISOLATION", "none")
-	_, _, _, err := RunTool(context.Background(), t.TempDir(), "golangci-lint", "config", "path")
+	_, _, _, err := RunTool(context.Background(), t.TempDir(), "go", "golangci-lint", "config", "path")
 	if err == nil || !strings.Contains(err.Error(), "namespace sandbox") {
 		t.Fatalf("non-go tool under 'none' backend must fail closed, got %v", err)
+	}
+}
+
+// TestAuxiliaryToolRefusesNoneEvenWithOverride (or-4y7.2): the unisolated-backend
+// override covers only the PRIMARY toolchain (go) — an auxiliary tool over
+// generated content must refuse the none backend even with the override set.
+func TestAuxiliaryToolRefusesNoneEvenWithOverride(t *testing.T) {
+	t.Setenv("ORION_SANDBOX_ISOLATION", "none")
+	t.Setenv("ORION_ALLOW_UNSAFE_GO_ARM", "1")
+	_, _, _, err := RunTool(context.Background(), t.TempDir(), "go", "golangci-lint", "config", "path")
+	if err == nil || !strings.Contains(err.Error(), "namespace sandbox") {
+		t.Fatalf("an auxiliary tool must refuse the none backend even WITH the override, got %v", err)
 	}
 }
 
@@ -70,7 +82,7 @@ func TestRunToolGolangciLintSandboxed(t *testing.T) {
 		t.Skip("golangci-lint not on PATH")
 	}
 	dir := writeTinyModule(t)
-	stdout, stderr, exit, err := RunTool(context.Background(), dir, "golangci-lint", "run", "./...")
+	stdout, stderr, exit, err := RunTool(context.Background(), dir, "go", "golangci-lint", "run", "./...")
 	if err != nil {
 		t.Fatalf("golangci-lint under sandbox failed to launch: %v\n%s%s", err, stdout, stderr)
 	}
