@@ -173,7 +173,9 @@ func ProveAllWithThreshold(ctx context.Context, artifactDir string, c testsynth.
 	// generated code does not compile, the behavioral/empirical/hazard modes cannot run
 	// — return a Reject with the diagnostics immediately, skipping minutes of pointless
 	// work. The refinement loop feeds these diagnostics straight back to the generator.
-	if d := diagnostics.Check(ctx, artifactDir); !d.OK {
+	// or-4y7.4: the fast tier dispatches by the contract's language ("" → go).
+	chk := diagnostics.For(c.Language)
+	if d := chk.Check(ctx, artifactDir); !d.OK {
 		mr := truthalign.ModeResult{Mode: "diagnostics", Pass: false, Output: d.Output}
 		return Report{Outcome: truthalign.Converge(mr), Modes: []ModeReport{{Result: mr}}}, nil
 	}
@@ -182,7 +184,7 @@ func ProveAllWithThreshold(ctx context.Context, artifactDir string, c testsynth.
 	// cascading into all-obligations-Inconclusive spin.
 	for _, cs := range c.Cases {
 		if cs.Kind == spec.KindExec {
-			if e := diagnostics.CheckEntry(artifactDir, c.Entry()); !e.OK {
+			if e := chk.CheckEntry(artifactDir, c.Entry()); !e.OK {
 				mr := truthalign.ModeResult{Mode: "diagnostics", Pass: false, Output: e.Output}
 				return Report{Outcome: truthalign.Converge(mr), Modes: []ModeReport{{Result: mr}}}, nil
 			}
@@ -191,7 +193,7 @@ func ProveAllWithThreshold(ctx context.Context, artifactDir string, c testsynth.
 	}
 	// or-v9f.23: unit cases require their packages to exist — one targeted
 	// diagnostic beats a corpus-compile cascade.
-	if u := diagnostics.CheckUnitRefs(artifactDir, c.Cases); !u.OK {
+	if u := chk.CheckUnitRefs(artifactDir, c.Cases); !u.OK {
 		mr := truthalign.ModeResult{Mode: "diagnostics", Pass: false, Output: u.Output}
 		return Report{Outcome: truthalign.Converge(mr), Modes: []ModeReport{{Result: mr}}}, nil
 	}
