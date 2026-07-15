@@ -11,8 +11,6 @@ package hazard
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/proof/hazard/stpa"
@@ -37,10 +35,10 @@ type Report struct {
 // Prove checks the artifact against the ratified STPA model.
 func Prove(ctx context.Context, artifactDir string, model stpa.Model) (truthalign.ModeResult, Report, error) {
 	_ = ctx
-	src := ""
-	if b, err := os.ReadFile(filepath.Join(artifactDir, "main.go")); err == nil {
-		src = string(b)
-	}
+	// or-4y7.7: read the artifact's control-bearing source through the language's
+	// prober (model.Language "" → go). The STPA reasoning below is neutral.
+	pr := proberFor(model.Language)
+	src := pr.SourceText(artifactDir)
 
 	rep := Report{
 		UCAsConsidered:   []string{},
@@ -54,7 +52,7 @@ func Prove(ctx context.Context, artifactDir string, model stpa.Model) (truthalig
 		rep.UCAsConsidered = append(rep.UCAsConsidered, u.ID)
 		switch u.Disposition {
 		case stpa.DispositionControlled:
-			if controlPresent(src, u) {
+			if pr.ControlPresent(src, u) {
 				controlledOK++
 			} else {
 				// Claimed controlled but the control is absent in the artifact → it
