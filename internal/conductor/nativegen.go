@@ -227,7 +227,9 @@ func GenerationPrompt(gs sandbox.GenSpec, writeHint string) string {
 			b.WriteString("\n")
 		}
 	} else {
-		writeDefaultPreamble(&b, gs, module)
+		// or-4y7.3: the zero-config preamble dispatches by the ratified language
+		// ("" → go, byte-identical); an externalized template still wins above.
+		genFor(gs.Language).Preamble(&b, gs, module)
 	}
 	b.WriteString("\nThe program MUST satisfy these behavioral cases (request → expected response) — these ARE the contract:\n")
 	cases := append([]spec.BehavioralCase(nil), gs.Cases...)
@@ -272,7 +274,7 @@ func writeDefaultPreamble(b *strings.Builder, gs sandbox.GenSpec, module string)
 
 // generationRole is the native (in-process LLM) generator's system prompt.
 func generationRole(gs sandbox.GenSpec) string {
-	return GenerationPrompt(gs, "Write go.mod and main.go via write_file, then end your turn.")
+	return GenerationPrompt(gs, genFor(gs.Language).WriteHint())
 }
 
 func renderCaseForGen(c spec.BehavioralCase) string {
