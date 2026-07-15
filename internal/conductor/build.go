@@ -399,8 +399,11 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	wired := true
 	var driftLine string // the SystemValidate re-evaluation, cited in the PR handoff (or-tcs.7)
 	if integrated {
-		var orphans []string
-		wired, orphans = systemWireupGate(intDir)
+		// or-4y7.8: dispatch the wireup analyzer by the ratified language; only an
+		// Orphaned verdict blocks (Wired + Unverified stay non-blocking), but an
+		// Unverified tree is reported distinctly, never as "clean".
+		verdict, orphans := systemWireupGate(intDir, es.Decisions["direction.language"])
+		wired = verdict != WireupOrphaned
 		// Judge coverage against the assembled proof when the integrator re-proved it; for a
 		// single-cluster epic the integrator fast-forwards (no reprove) and the head is byte-identical
 		// to the already-proven cluster, so rep.Report is the assembled proof.
@@ -409,7 +412,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 			driftProof = assembledReport
 		}
 		untraced := untracedSurface(es, contract.EntrySymbol, intDir)
-		dr, drift := driftReport(es, driftProof, orphans, untraced)
+		dr, drift := driftReport(es, driftProof, verdict, orphans, untraced)
 		driftLine = dr
 		status := PhaseDone
 		if drift {

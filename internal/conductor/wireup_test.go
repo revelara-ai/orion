@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/revelara-ai/orion/internal/orchestrator/spec"
+	"github.com/revelara-ai/orion/internal/proof"
 )
 
 func wuWrite(t *testing.T, dir, rel, content string) {
@@ -27,9 +30,9 @@ func TestSystemWireupGateDetectsOrphan(t *testing.T) {
 	wuWrite(t, dir, "internal/handler/h.go", "package handler\n\nfunc H() {}\n") // wired (main imports it)
 	wuWrite(t, dir, "internal/orphan/o.go", "package orphan\n\nfunc O() {}\n")   // ORPHAN — nobody imports it
 
-	ok, orphans := systemWireupGate(dir)
-	if ok {
-		t.Error("an unwired package must fail the wireup gate")
+	verdict, orphans := systemWireupGate(dir, "go")
+	if verdict != WireupOrphaned {
+		t.Error("an unwired package must yield WireupOrphaned")
 	}
 	if len(orphans) != 1 || !strings.Contains(orphans[0], "orphan") {
 		t.Errorf("expected the orphan package to be flagged, got %v", orphans)
@@ -44,8 +47,8 @@ func TestSystemWireupGatePassesWhenAllWired(t *testing.T) {
 	wuWrite(t, dir, "internal/handler/h.go", "package handler\n\nimport \"svc/internal/util\"\n\nfunc H() { util.U() }\n")
 	wuWrite(t, dir, "internal/util/u.go", "package util\n\nfunc U() {}\n")
 
-	if ok, orphans := systemWireupGate(dir); !ok {
-		t.Errorf("a fully-wired tree must pass; orphans=%v", orphans)
+	if verdict, orphans := systemWireupGate(dir, "go"); verdict != WireupWired {
+		t.Errorf("a fully-wired tree must be WireupWired; orphans=%v", orphans)
 	}
 }
 
@@ -56,7 +59,27 @@ func TestSystemWireupGateAbstainsWithoutMain(t *testing.T) {
 	wuWrite(t, dir, "go.mod", "module lib\n\ngo 1.23\n")
 	wuWrite(t, dir, "pkg/a/a.go", "package a\n\nfunc A() {}\n")
 
-	if ok, _ := systemWireupGate(dir); !ok {
-		t.Error("a no-main library must abstain (ok=true)")
+	if verdict, _ := systemWireupGate(dir, "go"); verdict != WireupUnverified {
+		t.Error("a no-main library must be WireupUnverified (honest, not a silent clean)")
+	}
+}
+
+// TestSystemWireupGateUnverifiedForNonGo (or-4y7.8): a non-Go language has no
+// registered analyzer — the verdict is Unverified, NEVER the false "wireup clean"
+// the old two-valued gate produced (no Go mains → abstain → pass).
+func TestSystemWireupGateUnverifiedForNonGo(t *testing.T) {
+	dir := t.TempDir()
+	wuWrite(t, dir, "main.py", "def run(argv):\n    return 0\n")
+	verdict, orphans := systemWireupGate(dir, "python")
+	if verdict != WireupUnverified {
+		t.Fatalf("an unanalyzable (non-Go) tree must be WireupUnverified, got %v", verdict)
+	}
+	if len(orphans) != 0 {
+		t.Fatalf("Unverified carries no orphans, got %v", orphans)
+	}
+	// And it renders distinctly — never "wireup clean".
+	line, _ := driftReport(spec.ExecutableSpec{}, proof.Report{}, verdict, orphans, nil)
+	if strings.Contains(line, "wireup clean") || !strings.Contains(line, "unverified") {
+		t.Fatalf("an Unverified tree must not report 'wireup clean': %q", line)
 	}
 }
