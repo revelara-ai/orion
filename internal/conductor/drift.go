@@ -78,7 +78,7 @@ func untracedSurface(es spec.ExecutableSpec, entrySymbol, buildDir string) []str
 	return untraced
 }
 
-func driftReport(es spec.ExecutableSpec, report proof.Report, orphans, untraced []string) (string, bool) {
+func driftReport(es spec.ExecutableSpec, report proof.Report, wireupVerdict WireupVerdict, orphans, untraced []string) (string, bool) {
 	// Distinct required obligations: RequiredCaseIDs can repeat a content-addressed id when two
 	// cases collapse to the same (request, expect) — e.g. a requirement restating the bare happy
 	// path. Count each distinct obligation ONCE so the coverage fraction this report cites is honest.
@@ -109,9 +109,13 @@ func driftReport(es spec.ExecutableSpec, report proof.Report, orphans, untraced 
 	if len(uncovered) > 0 {
 		fmt.Fprintf(&b, " (unbuilt: %s)", strings.Join(uncovered, ", "))
 	}
-	if len(orphans) > 0 {
+	switch {
+	case len(orphans) > 0:
 		fmt.Fprintf(&b, "; wireup: orphan package(s) %s", strings.Join(orphans, ", "))
-	} else {
+	case wireupVerdict == WireupUnverified:
+		// or-4y7.8: not language-groundable — reported distinctly, NEVER "clean".
+		b.WriteString("; wireup unverified (not language-groundable)")
+	default:
 		b.WriteString("; wireup clean")
 	}
 	// or-hik dimension 3: BUILT-NOT-IN-SPEC — proven behavior with no spec

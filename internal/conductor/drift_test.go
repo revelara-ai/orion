@@ -21,18 +21,18 @@ func TestDriftReport(t *testing.T) {
 		"c2": {Executed: true, Passed: true},
 	}}
 
-	if out, drift := driftReport(es, covered, nil, nil); drift || !strings.Contains(out, "aligned") {
+	if out, drift := driftReport(es, covered, WireupWired, nil, nil); drift || !strings.Contains(out, "aligned") {
 		t.Errorf("full coverage + no orphans should read aligned: %q", out)
 	}
 
 	// coverage drift — c2 has no passing obligation (spec not built)
 	partial := proof.Report{ObligationResults: map[string]proof.ObligationResult{"c1": {Executed: true, Passed: true}}}
-	if out, drift := driftReport(es, partial, nil, nil); !drift || !strings.Contains(out, "unbuilt: c2") {
+	if out, drift := driftReport(es, partial, WireupWired, nil, nil); !drift || !strings.Contains(out, "unbuilt: c2") {
 		t.Errorf("an uncovered obligation must be DRIFT: %q", out)
 	}
 
 	// wireup drift — an orphan package (built, not wired)
-	if out, drift := driftReport(es, covered, []string{"internal/orphan"}, nil); !drift || !strings.Contains(out, "orphan") {
+	if out, drift := driftReport(es, covered, WireupOrphaned, []string{"internal/orphan"}, nil); !drift || !strings.Contains(out, "orphan") {
 		t.Errorf("an orphan package must be DRIFT: %q", out)
 	}
 }
@@ -46,7 +46,7 @@ func TestDriftReportDedupsCollidingCaseIDs(t *testing.T) {
 	}
 	// "a" covered, "b" not → 1 of 2 DISTINCT obligations proven, "b" the sole unbuilt.
 	rep := proof.Report{ObligationResults: map[string]proof.ObligationResult{"a": {Executed: true, Passed: true}}}
-	out, drift := driftReport(dup, rep, nil, nil)
+	out, drift := driftReport(dup, rep, WireupWired, nil, nil)
 	if !drift || !strings.Contains(out, "coverage 1/2") {
 		t.Errorf("distinct denominator must be 2, not 3: %q", out)
 	}
@@ -57,7 +57,7 @@ func TestDriftReportDedupsCollidingCaseIDs(t *testing.T) {
 	full := proof.Report{ObligationResults: map[string]proof.ObligationResult{
 		"a": {Executed: true, Passed: true}, "b": {Executed: true, Passed: true},
 	}}
-	if out, drift := driftReport(dup, full, nil, nil); drift || !strings.Contains(out, "coverage 2/2") {
+	if out, drift := driftReport(dup, full, WireupWired, nil, nil); drift || !strings.Contains(out, "coverage 2/2") {
 		t.Errorf("fully covered must read aligned 2/2 (deduped): %q", out)
 	}
 }
@@ -118,11 +118,11 @@ func main() {
 		"c1": {Executed: true, Passed: true},
 		"c2": {Executed: true, Passed: true},
 	}
-	out, drift := driftReport(es, rep, nil, untraced)
+	out, drift := driftReport(es, rep, WireupWired, nil, untraced)
 	if !drift || !strings.Contains(out, "untraced: ") || !strings.Contains(out, "scope creep") {
 		t.Fatalf("the untraced clause must escalate drift: %s", out)
 	}
-	clean, cleanDrift := driftReport(spec.ExecutableSpec{}, rep, nil, nil)
+	clean, cleanDrift := driftReport(spec.ExecutableSpec{}, rep, WireupWired, nil, nil)
 	if !strings.Contains(clean, "traceability clean") {
 		t.Fatalf("no untraced surface → traceability clean: %s (drift=%v)", clean, cleanDrift)
 	}

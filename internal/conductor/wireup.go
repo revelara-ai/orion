@@ -13,10 +13,56 @@ import (
 // graph; the unreachable ones are orphans and REJECT the epic.
 //
 // It is deliberately scoped to the structural seam no single task owns — the per-merge whole-tree
-// re-proof (or-tcs.1.6) already covers assembled BEHAVIOR; this covers assembled WIRING. With no
-// main package (a library, not a service) wiring can't be rooted, so the gate abstains (ok=true)
-// rather than flag every package — it never fabricates a verdict it can't ground.
-func systemWireupGate(dir string) (ok bool, orphans []string) {
+// re-proof (or-tcs.1.6) already covers assembled BEHAVIOR; this covers assembled WIRING.
+
+// WireupVerdict is the THREE-valued outcome of the system-wireup check (or-4y7.8).
+// The old two-valued (ok bool) form collapsed "cannot be grounded" into "clean",
+// which is a FALSE GREEN for a non-Go tree (no Go mains → abstain → pass). The
+// distinct Unverified state is never reported as clean.
+type WireupVerdict int
+
+const (
+	WireupWired      WireupVerdict = iota // rooted from a main, every package reachable
+	WireupOrphaned                        // rooted, but unreachable package(s) exist
+	WireupUnverified                      // cannot be grounded (no analyzer for the language, or no rootable entry)
+)
+
+// wireupAnalyzer roots a language's reachability graph; a language with no
+// analyzer is Unverified, never rubber-stamped clean.
+type wireupAnalyzer interface {
+	Language() string
+	Analyze(dir string) (WireupVerdict, []string)
+}
+
+var wireupAnalyzers = map[string]wireupAnalyzer{}
+
+func registerWireupAnalyzer(a wireupAnalyzer) { wireupAnalyzers[a.Language()] = a }
+
+func wireupAnalyzerFor(language string) wireupAnalyzer {
+	if language == "" {
+		language = "go"
+	}
+	return wireupAnalyzers[language]
+}
+
+// systemWireupGate roots reachability for the artifact's language. An
+// unregistered language yields Unverified (the caller reports it distinctly and
+// does not treat it as clean).
+func systemWireupGate(dir, language string) (WireupVerdict, []string) {
+	an := wireupAnalyzerFor(language)
+	if an == nil {
+		return WireupUnverified, nil
+	}
+	return an.Analyze(dir)
+}
+
+// goWireup is the default: the V2.0 Go import-graph reachability, verbatim —
+// except a no-main tree is now honestly Unverified (it was a silent pass).
+type goWireup struct{}
+
+func (goWireup) Language() string { return "go" }
+
+func (goWireup) Analyze(dir string) (WireupVerdict, []string) {
 	m := brownfield.ScanRepoMap(dir)
 	byDir := make(map[string]brownfield.GoPackage, len(m.Packages))
 	var mains []string
@@ -27,7 +73,9 @@ func systemWireupGate(dir string) (ok bool, orphans []string) {
 		}
 	}
 	if len(mains) == 0 {
-		return true, nil // nothing to root reachability on — abstain rather than rubber-stamp-reject
+		// A library (no main) can't be reachability-rooted — Unverified, not a
+		// fabricated "clean". The caller keeps it non-blocking.
+		return WireupUnverified, nil
 	}
 
 	reached := map[string]bool{}
@@ -47,6 +95,7 @@ func systemWireupGate(dir string) (ok bool, orphans []string) {
 		visit(mn)
 	}
 
+	var orphans []string
 	for _, p := range m.Packages {
 		if p.Name == "main" || reached[p.Dir] {
 			continue
@@ -54,5 +103,10 @@ func systemWireupGate(dir string) (ok bool, orphans []string) {
 		orphans = append(orphans, p.Dir)
 	}
 	sort.Strings(orphans)
-	return len(orphans) == 0, orphans
+	if len(orphans) == 0 {
+		return WireupWired, nil
+	}
+	return WireupOrphaned, orphans
 }
+
+func init() { registerWireupAnalyzer(goWireup{}) }
