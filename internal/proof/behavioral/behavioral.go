@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
-	"github.com/revelara-ai/orion/internal/proof/proofexec"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 	"github.com/revelara-ai/orion/internal/reliabilitytier"
@@ -31,6 +30,13 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract, corpus
 // — the classified reliability tier finally reaches the gate (or-v9f.11): a
 // critical artifact is held to 0.9, a throwaway to 0.
 func ProveWithThreshold(ctx context.Context, artifactDir string, c testsynth.Contract, corpusDirOut *string, mutationThreshold float64) (truthalign.ModeResult, error) {
+	// or-4y7.5: the corpus author + test runner + mutation engine dispatch by the
+	// contract's language ("" → go, verbatim). An unregistered language refuses —
+	// running the Go corpus over non-Go code would be a meaningless proof.
+	pv := proverFor(c.Language)
+	if pv == nil {
+		return truthalign.ModeResult{}, fmt.Errorf("behavioral: no prover registered for language %q", c.Language)
+	}
 	proofDir, err := os.MkdirTemp("", "orion-proof-*")
 	if err != nil {
 		return truthalign.ModeResult{}, fmt.Errorf("proof dir: %w", err)
@@ -47,35 +53,26 @@ func ProveWithThreshold(ctx context.Context, artifactDir string, c testsynth.Con
 	if err := stageTree(artifactDir, proofDir); err != nil {
 		return truthalign.ModeResult{}, fmt.Errorf("stage artifact: %w", err)
 	}
-	// Write the harness-authored corpus (held by the proof domain).
-	corpus := testsynth.SynthesizeBehavioral(c)
-	if err := os.WriteFile(filepath.Join(proofDir, "orion_behavioral_test.go"), []byte(corpus), 0o644); err != nil {
-		return truthalign.ModeResult{}, fmt.Errorf("write corpus: %w", err)
+	// Write the harness-authored corpus (held by the proof domain; authored by
+	// the language's prover — the generating agent never sees this dir).
+	corpusFiles, serr := pv.SynthesizeCorpus(c, proofDir)
+	if serr != nil {
+		return truthalign.ModeResult{}, fmt.Errorf("corpus synthesis: %w", serr)
 	}
-	// or-v9f.3: exec cases assert through the embedded casecheck oracle — the
-	// IDENTICAL semantics the empirical prober compiles in (§4.1).
-	for name, content := range testsynth.SynthesizeSupportFiles(c) {
-		if err := os.WriteFile(filepath.Join(proofDir, name), []byte(content), 0o644); err != nil {
-			return truthalign.ModeResult{}, fmt.Errorf("write support file %s: %w", name, err)
+	for rel, content := range corpusFiles {
+		p := filepath.Join(proofDir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return truthalign.ModeResult{}, fmt.Errorf("corpus dir for %s: %w", rel, err)
 		}
-	}
-	// or-v9f.23: unit cases become IN-PACKAGE obligation tests (restart-narrowed
-	// cases run only in the empirical channel).
-	unitFiles, uerr := testsynth.SynthesizeUnitTests(c.Cases, proofDir)
-	if uerr != nil {
-		return truthalign.ModeResult{}, fmt.Errorf("unit synthesis: %w", uerr)
-	}
-	for rel, content := range unitFiles {
-		if err := os.WriteFile(filepath.Join(proofDir, rel), []byte(content), 0o644); err != nil {
-			return truthalign.ModeResult{}, fmt.Errorf("write unit corpus %s: %w", rel, err)
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			return truthalign.ModeResult{}, fmt.Errorf("write corpus %s: %w", rel, err)
 		}
 	}
 
 	// Run the tests independently (the baseline) INSIDE the proof sandbox (network
 	// + filesystem isolated) so the generated code under test cannot read host
-	// secrets or reach the network. -v so passing per-case obligation markers
-	// (RUN/PASS) are not suppressed by `go test`.
-	output, code, err := proofexec.GoToolchain(ctx, proofDir, "test", "-v", "./...")
+	// secrets or reach the network.
+	output, code, err := pv.RunTests(ctx, proofDir)
 	if err != nil {
 		return truthalign.ModeResult{}, fmt.Errorf("behavioral exec: %w", err)
 	}
@@ -86,14 +83,9 @@ func ProveWithThreshold(ctx context.Context, artifactDir string, c testsynth.Con
 	inconclusive := false
 	if pass {
 		// Behavioral quality gate: the corpus must KILL behavior-changing mutants
-		// (green coverage is a vanity metric; mutation score is the signal).
-		corpusFiles := map[string]string{"orion_behavioral_test.go": corpus}
-		for name, content := range testsynth.SynthesizeSupportFiles(c) {
-			corpusFiles[name] = content
-		}
-		for rel, content := range unitFiles {
-			corpusFiles[rel] = content
-		}
+		// (green coverage is a vanity metric; mutation score is the signal). The
+		// engine is the prover's; the GATE below is shared — a language without a
+		// mutation engine returns total==0 and reads UNMEASURED, never a pass.
 		var unitPkgs []string
 		seenPkg := map[string]bool{}
 		for _, cs := range c.Cases {
@@ -102,7 +94,7 @@ func ProveWithThreshold(ctx context.Context, artifactDir string, c testsynth.Con
 				unitPkgs = append(unitPkgs, cs.Unit.Pkg)
 			}
 		}
-		killed, total, mErr := MutationScoreFiles(ctx, artifactDir, corpusFiles, c.Entry(), unitPkgs)
+		killed, total, mErr := pv.MutationScore(ctx, artifactDir, corpusFiles, c.Entry(), unitPkgs)
 		if mErr == nil {
 			metrics["mutation_score"] = MutationScoreValue(killed, total)
 			var note string
