@@ -27,7 +27,6 @@ import (
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/internal/proof/casecheck"
 	"github.com/revelara-ai/orion/internal/proof/execprobe"
-	"github.com/revelara-ai/orion/internal/proof/proofexec"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 	"github.com/revelara-ai/orion/internal/proof/unitprobe"
@@ -47,6 +46,13 @@ type ProbeResult struct {
 // service against the contract. The service runs in its own process group and is
 // reaped after the probe.
 func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truthalign.ModeResult, ProbeResult, error) {
+	// or-4y7.6: staging/build/unit-driver dispatch by the contract's language
+	// ("" → go, verbatim); an unregistered language refuses — go-building non-Go
+	// sources would be a meaningless probe.
+	lt := langToolFor(c.Language)
+	if lt == nil {
+		return truthalign.ModeResult{}, ProbeResult{}, fmt.Errorf("empirical: no language tool registered for language %q", c.Language)
+	}
 	// or-v9f.3: exec cases take the real-binary channel; http cases keep the
 	// live-service probe. A contract may carry either or both.
 	var httpCases, execCases, unitCases, fileCases []spec.BehavioralCase
@@ -84,16 +90,18 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truth
 	// the build workdir, and the untrusted build cannot read host secrets or reach
 	// the network during compilation. (The probe RUN below is not yet sandboxed —
 	// it needs the service reachable on loopback; tracked as a follow-up.)
-	if err := stageArtifact(artifactDir, binDir); err != nil {
+	if err := lt.Stage(artifactDir, binDir); err != nil {
 		return failMode("stage artifact: " + err.Error()), ProbeResult{Detail: "stage failed"}, nil
 	}
 	bin := filepath.Join(binDir, "svc")
 	if hasHTTP || len(execCases) > 0 {
-		if out, code, err := proofexec.GoToolchain(ctx, binDir, "build", "-o", "svc", "."); err != nil {
+		b, out, code, err := lt.Build(ctx, binDir)
+		if err != nil {
 			return truthalign.ModeResult{}, ProbeResult{}, fmt.Errorf("empirical build exec: %w", err)
 		} else if code != 0 {
 			return failMode("build failed: " + strings.TrimSpace(out)), ProbeResult{Detail: "build failed"}, nil
 		}
+		bin = b
 	}
 	// or-v9f.23: unit cases run through the sandboxed driver built WITH the
 	// artifact module; a driver that cannot build leaves the obligations
@@ -101,7 +109,7 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truth
 	var unitDriver string
 	unitBuildDetail := ""
 	if len(unitCases) > 0 {
-		d, ok, detail, derr := unitprobe.BuildDriver(ctx, binDir, unitCases)
+		d, ok, detail, derr := lt.BuildUnitDriver(ctx, binDir, unitCases)
 		if derr != nil {
 			return truthalign.ModeResult{}, ProbeResult{}, derr
 		}
