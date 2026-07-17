@@ -168,7 +168,8 @@ func RunTool(ctx context.Context, workdir, lang, tool string, args ...string) (s
 		Argv:     argv,
 		Env:      env,
 		ROBinds:  roBinds,
-		AllowNet: false, // default-deny egress — never true on this path
+		Symlinks: tc.Links(), // usr-merge links for a dynamically-linked tool's loader (nil for Go)
+		AllowNet: false,       // default-deny egress — never true on this path
 	})
 	return res.Stdout, res.Stderr, res.ExitCode, runErr
 }

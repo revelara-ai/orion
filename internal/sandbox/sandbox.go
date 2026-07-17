@@ -30,6 +30,7 @@ type Spec struct {
 	Stdin    string            // fed to the process's stdin (or-v9f.3 exec cases); empty = no input
 	Env      map[string]string // scrubbed environment (no ambient creds)
 	ROBinds  []string          // host paths to expose read-only (e.g. a static helper)
+	Symlinks map[string]string // dest→target symlinks to create in the jail (e.g. usr-merge /lib64→usr/lib64, so a dynamically-linked tool's loader resolves)
 	AllowNet bool              // default false → egress denied
 	NetAdmin bool              // grant CAP_NET_ADMIN over the jail's OWN netns (bring lo up); meaningless without !AllowNet isolation
 }
@@ -111,6 +112,19 @@ func (bwrapBackend) Run(ctx context.Context, s Spec) (Result, error) {
 	args = append(args, "--bind", s.Workdir, s.Workdir, "--chdir", s.Workdir)
 	for _, b := range s.ROBinds {
 		args = append(args, "--ro-bind", b, b)
+	}
+	// usr-merge (and similar) symlinks: a dynamically-linked tool's ELF interpreter
+	// is often reached via a symlinked top-level dir (/lib64 → usr/lib64) whose own
+	// entries are RELATIVE symlinks; binding the target dir at /lib64 breaks that
+	// resolution, so we recreate the link and bind the real target dir instead.
+	// (Static binaries — the Go arm — need none of this.) Deterministic order.
+	symDests := make([]string, 0, len(s.Symlinks))
+	for dest := range s.Symlinks {
+		symDests = append(symDests, dest)
+	}
+	sort.Strings(symDests)
+	for _, dest := range symDests {
+		args = append(args, "--symlink", s.Symlinks[dest], dest)
 	}
 	// Deterministic env order.
 	keys := make([]string, 0, len(s.Env))
