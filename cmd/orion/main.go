@@ -16,9 +16,12 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"golang.org/x/term"
+
 	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/health"
 	"github.com/revelara-ai/orion/internal/orchestrator"
+	"github.com/revelara-ai/orion/internal/preflight"
 	"github.com/revelara-ai/orion/internal/proc"
 	"github.com/revelara-ai/orion/internal/proof/empirical"
 	"github.com/revelara-ai/orion/internal/tui"
@@ -157,6 +160,20 @@ func run(args []string) int {
 		if err := worktree.New(repoRoot, store).Reconcile(ctx); err != nil {
 			fmt.Fprintln(os.Stderr, "orion: worktree reconcile:", err)
 		}
+	}
+
+	// or-f96q: before the TUI takes the terminal, offer to install any missing
+	// dependent tools ("you're missing {foo} — install now? [Y/n]"). Interactive
+	// TTY only; a decline persists in the data dir so it never nags. Runs before
+	// the banner probe so a fresh install shows green immediately.
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		preflight.Run(preflight.Options{
+			IsTTY:     true,
+			In:        os.Stdin,
+			Out:       os.Stderr,
+			Runner:    preflight.ExecRunner,
+			PrefsPath: filepath.Join(dir, "toolprefs.json"),
+		})
 	}
 
 	// or-gik.3: the TUI launch banner is network-free — a cached (no-Me()) Polaris probe.
