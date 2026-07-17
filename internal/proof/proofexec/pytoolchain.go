@@ -133,16 +133,13 @@ var usrMergeTops = []string{"/lib", "/lib64"}
 func pyRuntime() (pyRT, error) {
 	pyOnce.Do(func() {
 		// Resolution order (the or-4y7.10 hook): the developer's explicit
-		// ORION_PYTHON pin (name or path) → the SYSTEM python3 (/usr/bin) → PATH.
-		// The system interpreter beats PATH by default because PATH shadowing
-		// (brew/pyenv shims) is a moving target the proof must not silently follow.
+		// ORION_PYTHON pin (name or path) → the user's python3 as their PATH
+		// resolves it. Orion uses whatever version the developer has; a missing
+		// interpreter is the startup preflight's job (offer to install), never a
+		// silent substitution here.
 		interp := strings.TrimSpace(os.Getenv("ORION_PYTHON"))
 		if interp == "" {
-			if _, serr := os.Stat("/usr/bin/python3"); serr == nil {
-				interp = "/usr/bin/python3"
-			} else {
-				interp = "python3"
-			}
+			interp = "python3"
 		}
 		bin, err := exec.LookPath(interp)
 		if err != nil {

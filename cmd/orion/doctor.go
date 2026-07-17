@@ -3,13 +3,16 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/revelara-ai/orion/internal/harnessconfig"
 	"os"
 	"os/exec"
 	"path/filepath"
 
+	"golang.org/x/term"
+
+	"github.com/revelara-ai/orion/internal/harnessconfig"
 	"github.com/revelara-ai/orion/internal/health"
 	"github.com/revelara-ai/orion/internal/polaris"
+	"github.com/revelara-ai/orion/internal/preflight"
 )
 
 // checkStatus mirrors health.Status for doctor's flat line output + JSON. Only fail flips the
@@ -34,12 +37,30 @@ type doctorCheck struct {
 // CI can gate on it — the 3 a.m. test applied to Orion itself (or-ykz.18, or-gik.1).
 func cmdDoctor(args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
-	fix := fs.Bool("fix", false, "attempt to repair known faults (e.g. create a missing data dir)")
+	fix := fs.Bool("fix", false, "attempt to repair known faults (e.g. create a missing data dir, offer missing-tool installs)")
+	yes := fs.Bool("yes", false, "with --fix: install missing tools without prompting (CI)")
 	asJSON := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	dir, _ := doctorDataDir() // "" if unresolved; the data-dir check reports that as a fail
+	if *fix {
+		// or-f96q: --fix also offers the missing-tool installs the startup
+		// preflight would (prompted on a TTY; --yes for headless CI), before the
+		// probe below so a fresh install reports green.
+		prefsPath := ""
+		if dir != "" {
+			prefsPath = filepath.Join(dir, "toolprefs.json")
+		}
+		preflight.Run(preflight.Options{
+			IsTTY:     term.IsTerminal(int(os.Stdin.Fd())),
+			In:        os.Stdin,
+			Out:       os.Stderr,
+			Runner:    preflight.ExecRunner,
+			PrefsPath: prefsPath,
+			AssumeYes: *yes,
+		})
+	}
 	checks := doctorChecks(dir, exec.LookPath, os.Getenv("ORION_AGENT"), *fix)
 	if *asJSON {
 		return emitJSON(checks)
