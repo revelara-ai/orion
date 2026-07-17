@@ -16,7 +16,7 @@ func TestGoToolchainSnapshot(t *testing.T) {
 	if toolchainFor("go") != tc {
 		t.Fatal(`toolchainFor("go") must equal toolchainFor("")`)
 	}
-	if toolchainFor("python") != nil {
+	if toolchainFor("ruby") != nil {
 		t.Fatal("an unregistered language must resolve to nil, never a silent Go toolchain")
 	}
 
