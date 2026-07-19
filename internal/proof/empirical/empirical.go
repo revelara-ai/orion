@@ -29,7 +29,6 @@ import (
 	"github.com/revelara-ai/orion/internal/proof/execprobe"
 	"github.com/revelara-ai/orion/internal/proof/testsynth"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
-	"github.com/revelara-ai/orion/internal/proof/unitprobe"
 )
 
 // ProbeResult is the empirical evidence surfaced by `orion proof show`.
@@ -184,7 +183,7 @@ func Prove(ctx context.Context, artifactDir string, c testsynth.Contract) (truth
 		}
 		if len(unitCases) > 0 {
 			if unitDriver != "" {
-				obs, fails := unitprobe.RunRound(ctx, unitDriver, unitCases)
+				obs, fails := lt.UnitRound(ctx, unitDriver, unitCases)
 				if pr.Cases == nil {
 					pr.Cases = map[string]truthalign.ObligationStatus{}
 				}

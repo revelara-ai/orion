@@ -66,7 +66,7 @@ func Compile(intent string, answers map[string]string, kinds map[string]string, 
 	// must not be anchored (the or-y9d invariant, enforced at compile).
 	for i := range reqs {
 		reqs[i].SetIDs()
-		if err := ValidateRequirement(reqs[i]); err != nil {
+		if err := ValidateRequirementFor(reqs[i], answers["direction.language"]); err != nil {
 			return ExecutableSpec{}, fmt.Errorf("cannot compile spec: %w", err)
 		}
 	}

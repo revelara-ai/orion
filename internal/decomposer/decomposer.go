@@ -96,6 +96,17 @@ func Decompose(es spec.ExecutableSpec, projectType string) Epic {
 // owned by or-4rxw; here the DECISION visibly shapes the plan.
 func scaffoldTask(es spec.ExecutableSpec, projectType string) Task {
 	lang := strings.ToLower(strings.TrimSpace(es.Decisions["direction.language"]))
+	// The scaffold is the direction-shaped task: when the spec ELICITED the
+	// direction dimension (large scale / unregistered type), the scaffold's
+	// obligation covers it — but never claim coverage of a dimension the spec
+	// does not carry (that would force every proposer to invent it).
+	scaffoldCovers := []string{string(completeness.DimFunctional)}
+	for _, d := range es.Dimensions {
+		if d.Name == completeness.DimDirection {
+			scaffoldCovers = append(scaffoldCovers, string(completeness.DimDirection))
+			break
+		}
+	}
 	// or-hn15.4: an UNREGISTERED type with no chosen language must NOT inherit
 	// the Go scaffold — a game whose direction.language was never answered is
 	// unchosen, not Go. Emit a language-neutral skeleton so the plan doesn't
@@ -107,7 +118,7 @@ func scaffoldTask(es spec.ExecutableSpec, projectType string) Task {
 			Title:           "Scaffold the project skeleton (language undecided — ratify direction.language)",
 			ProofObligation: "the project skeleton builds cleanly from a fresh checkout once the language/toolchain is chosen (reduced proof until direction.language is ratified, or-4rxw)",
 			FileScope:       ".",
-			Covers:          []string{string(completeness.DimFunctional)},
+			Covers:          scaffoldCovers,
 		}
 	}
 	if lang == "" || lang == "go" {
@@ -116,7 +127,7 @@ func scaffoldTask(es spec.ExecutableSpec, projectType string) Task {
 			Title:           "Scaffold Go module and entrypoint",
 			ProofObligation: "`go build ./...` succeeds and the binary starts cleanly",
 			FileScope:       "go.mod,cmd/",
-			Covers:          []string{string(completeness.DimFunctional)},
+			Covers:          scaffoldCovers,
 		}
 	}
 	return Task{
@@ -124,7 +135,7 @@ func scaffoldTask(es spec.ExecutableSpec, projectType string) Task {
 		Title:           fmt.Sprintf("Scaffold the %s project skeleton (direction.language=%s)", lang, lang),
 		ProofObligation: fmt.Sprintf("the %s project builds cleanly from a fresh checkout — reduced proof until the harness gains this toolchain (or-4rxw)", lang),
 		FileScope:       ".",
-		Covers:          []string{string(completeness.DimFunctional)},
+		Covers:          scaffoldCovers,
 	}
 }
 

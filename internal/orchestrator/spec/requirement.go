@@ -151,25 +151,29 @@ func requirementID(r Requirement) string {
 // ValidateRequirement rejects a requirement that cannot be turned into executable
 // obligations: zero cases, or a case the proof domain can't run (unknown assertion
 // kind, unprovable content type, malformed timezone, missing fields).
-func ValidateRequirement(r Requirement) error {
+func ValidateRequirement(r Requirement) error { return ValidateRequirementFor(r, "") }
+
+// ValidateRequirementFor is ValidateRequirement with the ratified language
+// (or-4y7.9): unit-case expression validation dispatches on it ("" = go).
+func ValidateRequirementFor(r Requirement, language string) error {
 	if len(r.Cases) == 0 {
 		return fmt.Errorf("requirement %q has no behavioral cases (nothing to prove)", r.Text)
 	}
 	for i := range r.Cases {
-		if err := validateCase(r.Cases[i]); err != nil {
+		if err := validateCase(r.Cases[i], language); err != nil {
 			return fmt.Errorf("case %d: %w", i, err)
 		}
 	}
 	return nil
 }
 
-func validateCase(c BehavioralCase) error {
+func validateCase(c BehavioralCase, language string) error {
 	switch c.Kind {
 	case KindHTTP:
 	case KindExec:
 		return validateExecCase(c)
 	case KindUnit:
-		return validateUnitCase(c)
+		return validateUnitCaseFor(c, language)
 	case KindFile:
 		return validateFileCase(c)
 	default:

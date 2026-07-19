@@ -70,7 +70,7 @@ func TestSystemWireupGateAbstainsWithoutMain(t *testing.T) {
 func TestSystemWireupGateUnverifiedForNonGo(t *testing.T) {
 	dir := t.TempDir()
 	wuWrite(t, dir, "main.py", "def run(argv):\n    return 0\n")
-	verdict, orphans := systemWireupGate(dir, "python")
+	verdict, orphans := systemWireupGate(dir, "ruby")
 	if verdict != WireupUnverified {
 		t.Fatalf("an unanalyzable (non-Go) tree must be WireupUnverified, got %v", verdict)
 	}

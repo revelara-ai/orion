@@ -6,6 +6,7 @@ package behavioral
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -95,7 +96,21 @@ func ProveWithThreshold(ctx context.Context, artifactDir string, c testsynth.Con
 			}
 		}
 		killed, total, mErr := pv.MutationScore(ctx, artifactDir, corpusFiles, c.Entry(), unitPkgs)
-		if mErr == nil {
+		switch {
+		case errors.Is(mErr, ErrMutationUnsupported):
+			// or-4y7.9: the language DECLARES no mutation engine — a capability
+			// fact, not a corpus-quality signal. The mode stays a test-pass but is
+			// LABELED reduced: the delivery report carries the caveat, and the
+			// metric says unmeasured instead of a fake 0.
+			metrics["mutation_supported"] = 0
+			delete(metrics, "mutation_score")
+			output += "\nmutation gate: NOT SUPPORTED for language " + pv.Language() + " — behavioral proof is REDUCED to test-pass (fault-catching quality unmeasured)"
+		case mErr != nil:
+			// The engine exists but could not run: the corpus quality is
+			// unmeasured for INFRA reasons — Inconclusive, never a silent pass.
+			pass, inconclusive = false, true
+			output += "\nmutation gate: engine failed (" + mErr.Error() + ") — corpus fault-catching quality is UNMEASURED (inconclusive, not a pass)"
+		default:
 			metrics["mutation_score"] = MutationScoreValue(killed, total)
 			var note string
 			pass, inconclusive, note = mutationGate(pass, killed, total, mutationThreshold)

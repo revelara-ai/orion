@@ -14,7 +14,7 @@ func TestCheckerRegistry(t *testing.T) {
 	if For("") == nil || For("") != For("go") || For("go").Language() != "go" {
 		t.Fatal(`For("") must resolve to the go checker (== For("go"))`)
 	}
-	if For("python") != nil {
+	if For("ruby") != nil {
 		t.Fatal("an unregistered language must resolve to nil")
 	}
 

@@ -205,13 +205,19 @@ func (c *Conductor) AddRequirement(ctx context.Context, req spec.Requirement) er
 	if c.store == nil {
 		return errNoStore
 	}
-	if err := spec.ValidateRequirement(req); err != nil {
-		return err
-	}
 	req.SetIDs()
 	_, sp, err := c.currentProjectSpec(ctx)
 	if err != nil {
 		return fmt.Errorf("no current spec to add a requirement: %w", err)
+	}
+	// or-4y7.9: expression validation dispatches on the draft's ratified-or-
+	// pending language decision ("" = go), so a python case is judged as python.
+	answers, _, aerr := c.loadAnswers(ctx, sp.ID)
+	if aerr != nil {
+		return aerr
+	}
+	if err := spec.ValidateRequirementFor(req, answers["direction.language"]); err != nil {
+		return err
 	}
 	reqs := loadRequirements(sp.Requirements)
 	for _, r := range reqs {

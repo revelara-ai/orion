@@ -331,7 +331,7 @@ func TestScopedReproveEscalation(t *testing.T) {
 	ctx := context.Background()
 	fullCalls := 0
 	full := func(context.Context, string) (bool, error) { fullCalls++; return true, nil }
-	wr := scopedWaveReprove(full)
+	wr := scopedWaveReprove(full, "")
 
 	// (i) empty FileScope → full, before any git work.
 	ok, err := wr(ctx, t.TempDir(), []decomposer.TaskCluster{{Key: "x", Members: []string{"t"}}}, "HEAD")
