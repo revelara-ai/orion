@@ -42,6 +42,19 @@ const EvalEvidenceKind = "skilleval"
 // content-addressed id. This is the ONLY promotion path — every caller
 // (orion evolve, the admin verb) routes through this gate.
 func PromoteCandidates(ctx context.Context, mem *memory.Store, skillsDir string) ([]string, []Rejection, error) {
+	return promoteCandidates(ctx, mem, skillsDir, nil)
+}
+
+// PromoteCandidatesRedacted is PromoteCandidates with the origin project's
+// literals scrubbed from every promoted skill body (or-gb1.6): the skills dir
+// is DATA-DIR GLOBAL — the same developer-scope boundary as generalized LTM —
+// so a promoted skill must not carry the origin project's module paths/routes
+// into every other project's context.
+func PromoteCandidatesRedacted(ctx context.Context, mem *memory.Store, skillsDir string, redact []string) ([]string, []Rejection, error) {
+	return promoteCandidates(ctx, mem, skillsDir, redact)
+}
+
+func promoteCandidates(ctx context.Context, mem *memory.Store, skillsDir string, redact []string) ([]string, []Rejection, error) {
 	if mem == nil {
 		return nil, nil, nil
 	}
@@ -83,6 +96,9 @@ func PromoteCandidates(ctx context.Context, mem *memory.Store, skillsDir string)
 			continue
 		}
 		sk := candidateToSkill(c)
+		// or-gb1.6: project literals never cross the developer-scope boundary.
+		sk.Description = memory.RedactLiterals(sk.Description, redact)
+		sk.Body = memory.RedactLiterals(sk.Body, redact)
 		if _, werr := skill.WriteSkill(skillsDir, sk); werr != nil {
 			return promoted, rejected, fmt.Errorf("promote candidate %s: %w", c.ID, werr)
 		}

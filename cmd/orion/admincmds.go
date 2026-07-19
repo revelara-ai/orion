@@ -111,7 +111,7 @@ func evolveText() string {
 		return "evolve: " + err.Error()
 	}
 	defer func() { _ = mem.Close() }()
-	promoted, rejected, err := selfevolve.PromoteCandidates(context.Background(), mem, filepath.Join(dir, "skills"))
+	promoted, rejected, err := selfevolve.PromoteCandidatesRedacted(context.Background(), mem, filepath.Join(dir, "skills"), projectRedactLiterals(dir))
 	if err != nil {
 		return "evolve: " + err.Error()
 	}

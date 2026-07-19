@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/memory"
 	"github.com/revelara-ai/orion/internal/selfevolve"
 	"github.com/revelara-ai/orion/internal/skillcurator"
@@ -36,7 +39,9 @@ func cmdEvolve(_ []string) int {
 	defer func() { _ = mem.Close() }()
 
 	skillsDir := filepath.Join(dir, "skills")
-	promoted, rejected, err := selfevolve.PromoteCandidates(context.Background(), mem, skillsDir)
+	// or-gb1.6: skills are data-dir GLOBAL — scrub the active project's
+	// literals (its route/module surface) at this developer-scope boundary.
+	promoted, rejected, err := selfevolve.PromoteCandidatesRedacted(context.Background(), mem, skillsDir, projectRedactLiterals(dir))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "orion evolve:", err)
 		return 1
@@ -76,4 +81,32 @@ func curatorStaleAfter() time.Duration {
 		}
 	}
 	return 90 * 24 * time.Hour
+}
+
+// projectRedactLiterals collects the ACTIVE project's identifying literals
+// (route + module surface) for redaction at developer-scope boundaries.
+// Best-effort: no active project (or no store) means nothing to redact.
+func projectRedactLiterals(dataDir string) []string {
+	store, err := contextstore.Open(dataDir)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = store.Close() }()
+	_, sp, err := store.CurrentProjectSpec(context.Background())
+	if err != nil {
+		return nil
+	}
+	var rc struct {
+		Route  string `json:"route"`
+		Module string `json:"module"`
+	}
+	_ = json.Unmarshal([]byte(sp.ResponseContract), &rc)
+	var out []string
+	if strings.TrimSpace(rc.Route) != "" {
+		out = append(out, rc.Route)
+	}
+	if strings.TrimSpace(rc.Module) != "" {
+		out = append(out, rc.Module)
+	}
+	return out
 }

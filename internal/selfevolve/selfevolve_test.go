@@ -8,6 +8,8 @@ import (
 
 	"github.com/revelara-ai/orion/internal/memory"
 	"github.com/revelara-ai/orion/internal/skill"
+	"os"
+	"path/filepath"
 )
 
 func writeCandidate(t *testing.T, mem *memory.Store, content string) {
@@ -187,5 +189,35 @@ func TestPromoteCandidatesFailsClosed(t *testing.T) {
 	_, _ = r.LoadDir(skillsDir, skill.TrustGeneration)
 	if len(r.List()) != 1 {
 		t.Fatalf("only the passing candidate may materialize, got %d skills", len(r.List()))
+	}
+}
+
+// TestPromoteRedactsProjectLiterals (or-2dxc / or-gb1.6): the skills dir is
+// data-dir GLOBAL — a promoted skill must not carry the origin project's
+// literals across the developer-scope boundary.
+func TestPromoteRedactsProjectLiterals(t *testing.T) {
+	ctx := context.Background()
+	mem, err := memory.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = mem.Close() }()
+	writeCandidate(t, mem, "When mounting /time on orion-generated/timeservice, validate inputs first")
+	evidenceForAll(t, mem)
+	skillsDir := t.TempDir()
+	promoted, rejected, err := PromoteCandidatesRedacted(ctx, mem, skillsDir, []string{"/time", "orion-generated/timeservice"})
+	if err != nil || len(promoted) != 1 {
+		t.Fatalf("promote: %v (promoted %v, rejected %+v)", err, promoted, rejected)
+	}
+	data, err := os.ReadFile(filepath.Join(skillsDir, promoted[0], "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.ToLower(string(data))
+	if strings.Contains(body, "/time") || strings.Contains(body, "timeservice") {
+		t.Fatalf("project literals must be redacted from the promoted skill:\n%s", data)
+	}
+	if !strings.Contains(string(data), "[redacted]") {
+		t.Fatalf("redaction placeholder must mark the scrubbed spans:\n%s", data)
 	}
 }
