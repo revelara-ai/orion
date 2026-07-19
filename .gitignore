@@ -16,7 +16,7 @@
 orion-build/
 debug/
 # personal / machine-local
-.claude/settings.local.json
+.claude/
 /bin/
 .beads/
 .agents/
