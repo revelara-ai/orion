@@ -140,8 +140,8 @@ func exportPyProvenCode(srcDir, destDir string, es spec.ExecutableSpec) ([]strin
 			}
 			return nil
 		}
-		if !strings.HasSuffix(name, ".py") || strings.HasPrefix(name, "orion_") || strings.HasPrefix(name, "test_") {
-			return nil
+		if name != ".python-version" && (!strings.HasSuffix(name, ".py") || strings.HasPrefix(name, "orion_") || strings.HasPrefix(name, "test_")) {
+			return nil // .python-version ships: it IS the artifact's runtime pin (or-4y7.10)
 		}
 		rel, rerr := filepath.Rel(srcDir, p)
 		if rerr != nil {

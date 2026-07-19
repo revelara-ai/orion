@@ -8,7 +8,7 @@ import (
 
 func requirePython(t *testing.T) {
 	t.Helper()
-	if _, err := (pyToolchain{}).ResolveBin("python3"); err != nil {
+	if _, err := (pyToolchain{}).ResolveBin("", "python3"); err != nil {
 		t.Skip("no python3 on host")
 	}
 }

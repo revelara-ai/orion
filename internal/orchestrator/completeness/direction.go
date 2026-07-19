@@ -1,6 +1,7 @@
 package completeness
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/lang"
@@ -74,9 +75,28 @@ func provableFor(key string) ([]string, bool) {
 	return p, ok
 }
 
+// langRuntimeRE splits a direction.language answer into its base language and
+// an optional pinned version: "python 3.12", "python3.12", "Python@3.12.4",
+// "go 1.22" all parse; a bare "python"/"go" carries no version.
+var langRuntimeRE = regexp.MustCompile(`^([a-z#+]+?)\s*[-@ ]?\s*v?([0-9][0-9.]*)?$`)
+
+// SplitLanguageRuntime normalizes a direction.language answer to (language,
+// version) — or-4y7.10: the developer states the runtime they prefer ("python
+// 3.12"); the base language drives capability/dispatch and the version becomes
+// the direction.runtime pin. Unparseable answers return as-is with no version
+// (they then fail the capability gate on their own merits).
+func SplitLanguageRuntime(v string) (language, version string) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if m := langRuntimeRE.FindStringSubmatch(v); m != nil {
+		return m[1], strings.TrimRight(m[2], ".")
+	}
+	return v, ""
+}
+
 // DirectionGaps returns the direction answers that exceed the harness's proof
 // capability (empty when everything chosen is provable). Deterministic and
-// case-insensitive; non-direction keys are ignored.
+// case-insensitive; non-direction keys are ignored. direction.language answers
+// carrying a version pin ("python 3.12") are judged by their BASE language.
 func DirectionGaps(answers map[string]string) []Gap {
 	var gaps []Gap
 	for _, d := range directionDecisions() { // stable order
@@ -87,6 +107,9 @@ func DirectionGaps(answers map[string]string) []Gap {
 		v := strings.ToLower(strings.TrimSpace(answers[d.Key]))
 		if v == "" {
 			continue // unanswered = the fallback, which is provable by construction
+		}
+		if d.Key == "direction.language" {
+			v, _ = SplitLanguageRuntime(v)
 		}
 		ok := false
 		for _, p := range provable {

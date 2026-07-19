@@ -178,6 +178,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		// or-hn15.5: carry the ratified direction so the generator can branch on
 		// it (a non-Go/non-HTTP direction is already refused above).
 		Language: es.Decisions["direction.language"],
+		Runtime:  es.Decisions["direction.runtime"],
 		Engine:   es.Decisions["direction.engine"],
 	}
 	// or-v9f.3: a spec whose cases are exec-shaped with no HTTP contract is a CLI
@@ -839,6 +840,16 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 		}
 		lastHash = art.ContentHash
 		lastNarrative = art.Narrative
+		// or-4y7.10: materialize the ratified runtime pin as the artifact's
+		// stack file (harness-authored, deterministic) — .python-version is the
+		// convention every python tool understands, and the proof toolchain
+		// resolves the interpreter FROM it, so proof validates against exactly
+		// the version the developer ratified.
+		if gs.Language == "python" && gs.Runtime != "" {
+			if werr := os.WriteFile(filepath.Join(buildDir, ".python-version"), []byte(gs.Runtime+"\n"), 0o644); werr != nil {
+				return taskResult{}, fmt.Errorf("write runtime pin: %w", werr)
+			}
+		}
 		// or-tcs.11 (deterministic, covers ACP too): observed writes must fall
 		// inside the cluster's lease — an out-of-scope artifact is routed to
 		// refinement with the violating paths named, Rejected on repeat.

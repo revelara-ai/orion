@@ -40,3 +40,32 @@ func TestLanguageCapabilityFromRegistry(t *testing.T) {
 		t.Fatalf("a non-provable engine must still gap, got %+v", g)
 	}
 }
+
+// TestSplitLanguageRuntime (or-4y7.10): a direction.language answer may carry
+// the developer's runtime pin; the base language drives capability.
+func TestSplitLanguageRuntime(t *testing.T) {
+	for in, want := range map[string][2]string{
+		"python":        {"python", ""},
+		"python 3.12":   {"python", "3.12"},
+		"python3.12":    {"python", "3.12"},
+		"Python@3.12.4": {"python", "3.12.4"},
+		"go 1.22":       {"go", "1.22"},
+		"go":            {"go", ""},
+	} {
+		l, v := SplitLanguageRuntime(in)
+		if l != want[0] || v != want[1] {
+			t.Errorf("SplitLanguageRuntime(%q) = (%q, %q), want %v", in, l, v, want)
+		}
+	}
+}
+
+// TestVersionedLanguageAnswerIsProvable (or-4y7.10): "python 3.12" is judged by
+// its base language — no capability gap; an unregistered base still gaps.
+func TestVersionedLanguageAnswerIsProvable(t *testing.T) {
+	if gaps := DirectionGaps(map[string]string{"direction.language": "python 3.12"}); len(gaps) != 0 {
+		t.Fatalf("a versioned registered language must not gap, got %+v", gaps)
+	}
+	if gaps := DirectionGaps(map[string]string{"direction.language": "ruby 3.3"}); len(gaps) != 1 {
+		t.Fatalf("a versioned UNregistered language must still gap, got %+v", gaps)
+	}
+}

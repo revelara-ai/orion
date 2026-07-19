@@ -20,6 +20,12 @@ import (
 // capability refusal, no reduced-proof acknowledgment needed), unit-case
 // obligations declared as PYTHON expressions.
 func ratifiedPythonLibrary(t *testing.T) (*orchestrator.Conductor, context.Context) {
+	return ratifiedPythonLibraryLang(t, "python")
+}
+
+// ratifiedPythonLibraryLang ratifies with the given direction.language answer
+// (or-4y7.10: it may carry a version pin, e.g. "python 3.12").
+func ratifiedPythonLibraryLang(t *testing.T, langAnswer string) (*orchestrator.Conductor, context.Context) {
 	t.Helper()
 	withGitRepo(t)
 	oc := orchestrator.NewWithStore(openStore(t))
@@ -29,7 +35,7 @@ func ratifiedPythonLibrary(t *testing.T) (*orchestrator.Conductor, context.Conte
 	}
 	for _, a := range [][2]string{
 		{"direction.stack", "single python package"},
-		{"direction.language", "python"},
+		{"direction.language", langAnswer},
 		{"direction.engine", "none"},
 		{"direction.wire_protocol", "text"},
 		{"direction.repo_layout", "managed-repo"},
@@ -125,5 +131,50 @@ func TestBuildAndProvePythonLibrary(t *testing.T) {
 		if strings.Contains(joined, banned) {
 			t.Fatalf("export must not carry %q:\n%s", banned, joined)
 		}
+	}
+}
+
+// TestPythonRuntimePinFlowsToDelivery (or-4y7.10): the developer ratifies
+// "python X.Y"; the harness materializes the pin as the artifact's
+// .python-version, the proof toolchain resolves interpreter pythonX.Y from it
+// (a version the host lacks would refuse loudly), and the delivered artifact
+// SHIPS the pin.
+func TestPythonRuntimePinFlowsToDelivery(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs the sandboxed python proof pipeline; skipped in -short")
+	}
+	if _, err := exec.LookPath("bwrap"); err != nil {
+		t.Skip("bwrap not on host")
+	}
+	out, err := exec.Command("python3", "-c", "import sys; print('%d.%d' % sys.version_info[:2])").Output()
+	if err != nil {
+		t.Skip("python3 not on host")
+	}
+	minor := strings.TrimSpace(string(out))
+	if _, err := exec.LookPath("python" + minor); err != nil {
+		t.Skipf("host has no python%s binary to pin against", minor)
+	}
+	oc, ctx := ratifiedPythonLibraryLang(t, "python "+minor)
+	outRoot := t.TempDir()
+	res, berr := BuildAndProve(ctx, oc.Store(), pyLibGen, nil, nil, outRoot)
+	if berr != nil {
+		t.Fatalf("build: %v", berr)
+	}
+	if res.Verdict != "Accept" || !res.Closed {
+		t.Fatalf("the pinned python build must prove green: %+v", res)
+	}
+	var pinPath string
+	_ = filepath.WalkDir(outRoot, func(p string, d os.DirEntry, _ error) error {
+		if d != nil && !d.IsDir() && d.Name() == ".python-version" {
+			pinPath = p
+		}
+		return nil
+	})
+	if pinPath == "" {
+		t.Fatal("the delivered artifact must ship its .python-version pin")
+	}
+	data, rerr := os.ReadFile(pinPath)
+	if rerr != nil || strings.TrimSpace(string(data)) != minor {
+		t.Fatalf("the shipped pin must carry the ratified version %q, got %q (err %v)", minor, strings.TrimSpace(string(data)), rerr)
 	}
 }

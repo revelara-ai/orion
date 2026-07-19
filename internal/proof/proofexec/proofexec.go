@@ -128,7 +128,7 @@ func RunTool(ctx context.Context, workdir, lang, tool string, args ...string) (s
 	// or-tf8 H3 enabler: the toolchain roots (GOROOT + the HOST module cache)
 	// bind read-only so a dependency-bearing repo's synth_test resolves from
 	// cache with the network still denied.
-	roBinds := tc.Roots()
+	roBinds := tc.Roots(workdir)
 	// Decide the sandbox policy from the tool's ROLE before resolving its binary,
 	// so an auxiliary tool refuses the none backend BEFORE any host LookPath
 	// (preserving the original order + refusal reason).
@@ -152,7 +152,7 @@ func RunTool(ctx context.Context, workdir, lang, tool string, args ...string) (s
 			return "", "", -1, fmt.Errorf("proofexec: refusing to run %q without a namespace sandbox (install bwrap or set ORION_SANDBOX_ISOLATION=bwrap)", tool)
 		}
 	}
-	bin, berr := tc.ResolveBin(tool)
+	bin, berr := tc.ResolveBin(workdir, tool)
 	if berr != nil {
 		return "", "", -1, berr
 	}
@@ -166,7 +166,7 @@ func RunTool(ctx context.Context, workdir, lang, tool string, args ...string) (s
 	// loader dirs + usr-merge links must be visible in the jail or execvp
 	// ENOENTs. Static binaries contribute nothing here.
 	links := map[string]string{}
-	for d, t := range tc.Links() {
+	for d, t := range tc.Links(workdir) {
 		links[d] = t
 	}
 	lroots, llinks := hostLoaderDeps(bin)
