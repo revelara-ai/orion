@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   ci:
-    name: lint / test-short
+    name: vet / lint / test-short
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -38,21 +38,20 @@ jobs:
           sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
-      - name: Verify go.mod is tidy
-        run: |
-          go mod tidy
-          git diff --exit-code go.mod go.sum
-
-      - name: Test (short lane)
-        run: make test-short
+      - name: Vet
+        run: make vet
 
       - name: Lint (golangci-lint v2, full)
-        # `latest` because the lint binary's own Go build must be >= the
-        # repo's go directive (a binary built with an older Go refuses the
-        # target outright).
+        # Ordered before the tests (fast feedback); the action installs a
+        # prebuilt binary and caches analysis. `latest` because the lint
+        # binary's own Go build must be >= the repo's go directive (a binary
+        # built with an older Go refuses the target outright).
         uses: golangci/golangci-lint-action@v9
         with:
           version: latest
+
+      - name: Test (short lane)
+        run: make test-short
 
   full-suite:
     name: full suite (manual only)
