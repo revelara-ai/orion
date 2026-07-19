@@ -120,7 +120,13 @@ func TestGeneratorArtifactBuildsAndProves(t *testing.T) {
 	req := GenRequest{Module: "gen/proven", Route: "/time", Port: 8080, Format: "json", TimeZone: "UTC"}
 	art := genInto(t, req)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// CI runners are slow and the proof flock serializes execs machine-wide —
+	// give the shared-runner case real headroom (a local run stays snappy).
+	budget := 60 * time.Second
+	if os.Getenv("CI") != "" {
+		budget = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	outcome, err := proof.ProveBehavioral(ctx, art.Dir, testsynth.Contract{Route: req.Route, Format: req.Format, TimeZone: req.TimeZone})
 	if err != nil {

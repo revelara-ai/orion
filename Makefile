@@ -1,4 +1,4 @@
-.PHONY: vet lint check test test-short license-check
+.PHONY: vet lint check test test-short test-ci license-check
 
 default: build
 
@@ -14,6 +14,14 @@ build:
 # `go test ./...` would fail the default per-package timeout.
 test:
 	go test -timeout 1200s ./...
+
+# CI lane: the heavy proof packages all serialize through the machine-wide
+# proof flock (prooflock), so running packages in PARALLEL on a small shared
+# runner starves per-test deadlines while one package holds the lock. -p 1
+# runs packages sequentially — slower wall-clock, but honest and deterministic
+# on 2-core runners; the per-package cap is generous for the same reason.
+test-ci:
+	go test -timeout 2400s -p 1 ./...
 
 # Fast lane: skips the heavy build+prove e2e tests (each guarded by `if testing.Short()`) for quick
 # feedback while iterating. Run `make test` before relying on a green result.

@@ -61,15 +61,20 @@ jobs:
       - name: Lint (golangci-lint v2, full)
         # or-3p5.12 cleaned the tree to the bar — the gate is FULL on every
         # event; a red lint is a real regression, not legacy debt.
-        uses: golangci/golangci-lint-action@v7
+        # `latest` because the lint binary's own Go build must be >= the
+        # repo's go directive (a v2.1 binary built with go1.24 refuses a
+        # go1.26 target outright — the failure mode that kept this lane red).
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.1
+          version: latest
 
   full-lane:
     name: full suite (main + nightly)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Sequential heavy packages (see make test-ci) on a small shared runner:
+    # the conductor package alone is ~740s of compile+prove on a fast dev box.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
 
@@ -89,4 +94,7 @@ jobs:
         # TestV20Loop (the North-Star acceptance harness) is red by design
         # while deferred-epic predicates remain — tracked via the
         # deferredPredicates ratchet, evaluated out-of-band, never a CI gate.
-        run: ORION_RUN_ACCEPTANCE=false make test
+        # test-ci runs packages SEQUENTIALLY: every heavy proof package waits
+        # on the same machine-wide proof flock, so parallel packages on a
+        # 2-core runner starve each other into per-test deadline failures.
+        run: ORION_RUN_ACCEPTANCE=false make test-ci
