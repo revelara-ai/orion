@@ -192,19 +192,19 @@ var predicates = []predicate{
 	{"integration", "lease blocks overlapping scope", kindGoTest,
 		`go test -race ./internal/integration/... -run TestTryAcquireLeaseRefusesOverlap`},
 	{"integration", "rebase on moved head triggers re-proof", kindGoTest,
-		`go test ./integration/... -run TestRebaseOnMovedHeadTriggersReproof`},
+		`go test ./internal/integration/... -run TestRebaseOnMovedHeadTriggersReproof`},
 	{"integration", "rebase conflict dispatches resolver or escalates", kindGoTest,
-		`go test ./integration/... -run TestRebaseConflictDispatchesResolverOrEscalates`},
+		`go test ./internal/integration/... -run TestRebaseConflictDispatchesResolverOrEscalates`},
 	{"integration", "post-merge proof red causes rollback", kindGoTest,
 		`go test ./internal/integration/... -run TestIntegrateRollsBackOnRedReproof`},
 	{"integration", "stale integration lock recovery on restart", kindGoTest,
-		`go test ./integration/... -run TestIntegrationLockStaleLockRecoveryOnRestart`},
+		`go test ./internal/integration/... -run TestIntegrationLockStaleLockRecoveryOnRestart`},
 	{"integration", "worktree baseline restored after rollback", kindGoTest,
 		`go test ./internal/integration/... -run TestIntegrateRollsBackOnRedReproof`},
 	{"integration", "lease manager no deadlock under contested scopes", kindGoTest,
 		`go test -race ./internal/integration/... -run 'TestOverlappingIntegrationsSerialize|TestAcquireLeaseBlocksUntilRelease'`},
 	{"integration", "resolved merge proof covers all original obligations", kindGoTest,
-		`go test ./integration/... -run TestResolvedMergeProofCoversAllOriginalObligations`},
+		`go test ./internal/integration/... -run TestResolvedMergeProofCoversAllOriginalObligations`},
 
 	// ── Round-2: Packages / skills ───────────────────────────────────────────
 	// or-crmw: trust is scope-assigned and frontmatter cannot smuggle a claim, so no
@@ -213,9 +213,9 @@ var predicates = []predicate{
 	{"packages", "third-party package cannot register proof-domain skill", kindGoTest,
 		`go test ./internal/skill/... -run 'TestExtensionTrustIsReserved|TestTrustIsScopeAssigned|TestProofSkillNotShadowedByGeneration'`},
 	{"packages", "installed skill grants capped to role ceiling", kindGoTest,
-		`go test ./skill-registry/... -run TestInstalledSkillGrantsCappedToRoleCeiling`},
+		`go test ./internal/skill/... -run TestInstalledSkillGrantsCappedToRoleCeiling`},
 	{"packages", "eval harness rejects non-deterministic predicate", kindGoTest,
-		`go test ./skill-eval/... -run TestEvalHarnessRejectsNonDeterministicPredicate`},
+		`go test ./internal/skilleval/... -run TestEvalHarnessRejectsNonDeterministicPredicate`},
 
 	// ── Round-2: Polaris write integrity ─────────────────────────────────────
 	{"polaris", "evidence write is idempotent on retry", kindGoTest,

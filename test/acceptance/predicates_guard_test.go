@@ -24,10 +24,8 @@ var deferredPredicates = map[string]string{
 	"self-evolution/developer-scoped LTM redacts project literals":     "or-gb1.6: project-scoped memory + redaction unbuilt",
 	"integration/rebase on moved head triggers re-proof":               "or-dka: exercised by TestOverlappingIntegrationsSerialize but not asserted; needs a moved-head re-proof assertion",
 	"integration/rebase conflict dispatches resolver or escalates":     "or-dka: resolver dispatch unbuilt (conflict containment IS proven: TestIntegrateConflictLeavesHeadUntouched)",
-	"integration/stale integration lock recovery on restart":           "or-dka: restart recovery unbuilt",
 	"integration/resolved merge proof covers all original obligations": "or-dka: resolver flow unbuilt",
 	"packages/installed skill grants capped to role ceiling":           "or-ykz.2: package/extension system unbuilt",
-	"packages/eval harness rejects non-deterministic predicate":        "or-gb1.5: eval harness unbuilt",
 	"polaris/evidence write is idempotent on retry":                    "or-lrr: Polaris write-back deferred",
 	"polaris/knowledge contribution contains no raw code or paths":     "or-lrr: Polaris write-back deferred",
 }
@@ -51,6 +49,17 @@ func TestPredicateRunTargetsResolve(t *testing.T) {
 		if err != nil {
 			t.Errorf("%s: -run pattern %q does not compile: %v", key, runPat, err)
 			continue
+		}
+		// Package-path rot guard (or-obub): a predicate pointing at a
+		// NONEXISTENT directory silently walks an empty tree — which disarms the
+		// deferred-ratchet exactly when the surface lands (it masked two
+		// already-passing predicates for weeks). Same class as the or-xe7.3
+		// test-rename incident, one level up.
+		for _, pat := range pkgs {
+			rel := strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(pat, "./"), "..."), "/")
+			if st, serr := os.Stat(filepath.Join(root, rel)); serr != nil || !st.IsDir() {
+				t.Errorf("%s: package pattern %q resolves to no directory — path rot (fix the predicate's package path)", key, pat)
+			}
 		}
 		matched := false
 		for _, name := range testFuncsUnder(t, root, pkgs) {
