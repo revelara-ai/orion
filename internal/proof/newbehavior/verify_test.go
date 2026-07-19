@@ -203,7 +203,12 @@ func TestVerifyGolangciConfigOfflineFallback(t *testing.T) {
 
 	bad := t.TempDir()
 	write(t, filepath.Join(bad, "go.mod"), "module bad\n\ngo 1.24\n")
-	write(t, filepath.Join(bad, ".orion-golangci.yml"), "version: \"2\"\nlinters:\n  default: none\n  enable:\n    - not-a-real-linter-xyz\n")
+	// Structurally invalid (unsupported version): rejected by BOTH validation
+	// paths — a release binary's embedded-schema `config verify` AND the
+	// source-build fallback's `linters` load. (An unknown linter NAME is not
+	// enough: the schema validates shapes, not linter names, so a release
+	// binary would pass it — exactly what broke this test on CI runners.)
+	write(t, filepath.Join(bad, ".orion-golangci.yml"), "version: \"9\"\nlinters:\n  default: none\n")
 	mr, err = ProveNewBehavior(ctx, bad, []Case{
 		{Modality: "verify_command", Verify: &VerifyCommand{
 			Tool: "golangci-lint", Args: []string{"config", "verify", "--config", ".orion-golangci.yml"},
