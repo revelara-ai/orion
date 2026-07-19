@@ -12,7 +12,7 @@ require (
 	github.com/gomlx/go-huggingface v0.3.6-0.20260622114748-8bb56853eb44
 	github.com/gomlx/gomlx v0.27.4-0.20260622114551-65d00f0eac0f
 	github.com/gomlx/onnx-gomlx v0.4.3-0.20260622114817-3c87f4e9d5f1
-	golang.org/x/mod v0.35.0
+	golang.org/x/mod v0.38.0
 	golang.org/x/term v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.52.0
