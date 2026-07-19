@@ -14,7 +14,7 @@ func TestProverRegistry(t *testing.T) {
 	if proverFor("") == nil || proverFor("") != proverFor("go") || proverFor("go").Language() != "go" {
 		t.Fatal(`proverFor("") must resolve to the go prover`)
 	}
-	if proverFor("python") != nil {
+	if proverFor("ruby") != nil {
 		t.Fatal("an unregistered language must resolve to nil")
 	}
 }
@@ -23,8 +23,8 @@ func TestProverRegistry(t *testing.T) {
 // no registered prover is REFUSED loudly — running the Go corpus over non-Go
 // code would be a meaningless proof, and it must never happen silently.
 func TestProveRefusesUnregisteredLanguage(t *testing.T) {
-	_, err := Prove(context.Background(), t.TempDir(), testsynth.Contract{Language: "python"}, nil)
-	if err == nil || !strings.Contains(err.Error(), "python") {
+	_, err := Prove(context.Background(), t.TempDir(), testsynth.Contract{Language: "ruby"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "ruby") {
 		t.Fatalf("an unregistered language must refuse naming it, got %v", err)
 	}
 }
