@@ -63,13 +63,38 @@ func TestDoctorAgentPresetUnknownFails(t *testing.T) {
 	}
 }
 
-// or-c6zf.5: the embedder doctor probe's three states — off (ok,
-// informational), opted-in-but-unprovisioned (warn + the fetch hint), and
-// provisioned (ok).
+// or-c6zf.5 + or-o213 (opt-out): the embedder doctor probe's states —
+// unprovisioned (ok + the enable hint), explicitly disabled (ok), on by
+// default when provisioned (ok), explicitly-configured-but-broken (warn +
+// the fetch hint), and explicit config provisioned (ok).
 func TestEmbedderCheckStates(t *testing.T) {
 	t.Setenv("ORION_MEMORY_EMBEDDER", "")
-	if c := embedderCheck(t.TempDir()); c.Status != statusOK || !strings.Contains(c.Detail, "opt in") {
-		t.Fatalf("unset embedder must be informational ok: %+v", c)
+	if c := embedderCheck(t.TempDir()); c.Status != statusOK || !strings.Contains(c.Detail, "orion model fetch") {
+		t.Fatalf("unset+unprovisioned must be ok with the enable hint: %+v", c)
+	}
+
+	t.Setenv("ORION_MEMORY_EMBEDDER", "off")
+	if c := embedderCheck(t.TempDir()); c.Status != statusOK || !strings.Contains(c.Detail, "disabled") {
+		t.Fatalf("explicit off must report disabled ok: %+v", c)
+	}
+
+	// Provisioned + unset env: ON by default (the opt-out flip).
+	provDir := t.TempDir()
+	for _, a := range modelfetch.BGEBaseAssets() {
+		p := filepath.Join(provDir, "models", a.Name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Truncate(p, a.Size); err != nil { // sparse — the quick probe checks size, not content
+			t.Skipf("cannot allocate sparse fixture: %v", err)
+		}
+	}
+	t.Setenv("ORION_MEMORY_EMBEDDER", "")
+	if c := embedderCheck(provDir); c.Status != statusOK || !strings.Contains(c.Detail, "on (default)") {
+		t.Fatalf("provisioned + unset env must report semantic recall ON: %+v", c)
 	}
 
 	t.Setenv("ORION_MEMORY_EMBEDDER", "local")
