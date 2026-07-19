@@ -3,6 +3,8 @@ package conductor
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -225,6 +227,88 @@ func TestOrionAgentCapturesRequirementThenRatifies(t *testing.T) {
 	if len(es.ResponseContract.Cases) != 3 {
 		t.Fatalf("contract has %d cases, want 3 (default + 2 tz) — the requirement was dropped", len(es.ResponseContract.Cases))
 	}
+}
+
+// TestOrionAgentDoesNotReratifyOnUnrelatedTurn: "Spec ratified ✓" and the artifact
+// write are EDGE-triggered (the spec transitioned to accepted THIS turn), not
+// level-triggered (the spec happens to be accepted). A later Q&A turn on a session
+// with an already-ratified active spec must neither re-announce ratification nor
+// rewrite the artifact — the rewrite clobbered the durable grilling record with
+// the unrelated conversation (the mech-game dogfood bug).
+func TestOrionAgentDoesNotReratifyOnUnrelatedTurn(t *testing.T) {
+	t.Chdir(t.TempDir()) // greenfield cwd: or-3p5.10 routes brownfield workspaces to the change flow
+	st := openStore(t)
+	oc := orchestrator.NewWithStore(st)
+	prov := &fakeLLM{resp: []*llm.ChatResponse{
+		tuResp("1", "submit_intent", `{"intent":"build a time service"}`),
+		tuResp("2", "record_answer", `{"key":"response_format","value":"json"}`),
+		tuResp("3", "record_answer", `{"key":"timezone","value":"UTC"}`),
+		tuResp("4", "record_answer", `{"key":"port","value":"8080"}`),
+		tuResp("5", "record_answer", `{"key":"route","value":"/time"}`),
+		tuResp("6", "preview_spec", `{}`),
+		tuResp("6b", "approve_assumptions", `{}`),
+		tuResp("7", "ratify_spec", `{}`),
+		endTurn("Spec ratified ✓ — ready to build."),
+		endTurn("I read my skills from my system prompt."), // turn 2: pure Q&A, no spec activity
+	}}
+	agent := NewOrionAgent(prov, oc, RoleTemplate{Project: "demo"})
+	grant := func(acp.PermissionRequest) (acp.PermissionResult, error) {
+		return acp.PermissionResult{Outcome: "granted"}, nil
+	}
+
+	// Turn 1: the ratifying turn — the announcement and the artifact belong HERE.
+	var turn1 []acp.Update
+	if _, err := agent.Prompt(context.Background(), "s1", "build a time service",
+		func(u acp.Update) { turn1 = append(turn1, u) }, grant); err != nil {
+		t.Fatalf("turn 1: %v", err)
+	}
+	if !hasPlanUpdate(turn1) {
+		t.Fatalf("ratifying turn must announce the ratification: %+v", turn1)
+	}
+	arts, err := filepath.Glob(filepath.Join(st.Dir(), "spec-*.md"))
+	if err != nil || len(arts) != 1 {
+		t.Fatalf("ratifying turn must write exactly one spec artifact: %v (err=%v)", arts, err)
+	}
+	before, err := os.ReadFile(arts[0])
+	if err != nil {
+		t.Fatalf("read artifact: %v", err)
+	}
+
+	// Turn 2: a FRESH session asks an unrelated question while the accepted spec
+	// still occupies the active slot (ratified days ago, never delivered).
+	const question = "where do you read your skills from?"
+	var turn2 []acp.Update
+	if _, err := agent.Prompt(context.Background(), "s2", question,
+		func(u acp.Update) { turn2 = append(turn2, u) }, grant); err != nil {
+		t.Fatalf("turn 2: %v", err)
+	}
+	if hasPlanUpdate(turn2) {
+		t.Fatalf("non-ratifying turn re-announced ratification: %+v", turn2)
+	}
+	for _, u := range turn2 {
+		if strings.Contains(u.Text, "Spec artifact written") {
+			t.Fatalf("non-ratifying turn rewrote the spec artifact: %+v", turn2)
+		}
+	}
+	after, err := os.ReadFile(arts[0])
+	if err != nil {
+		t.Fatalf("re-read artifact: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("the durable grilling record was rewritten by an unrelated turn:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+	if strings.Contains(string(after), question) {
+		t.Fatalf("unrelated Q&A leaked into the spec artifact's provenance:\n%s", after)
+	}
+}
+
+func hasPlanUpdate(updates []acp.Update) bool {
+	for _, u := range updates {
+		if u.Kind == "plan" {
+			return true
+		}
+	}
+	return false
 }
 
 // TestOrionAgentRejectsBadDecisionKey: a hallucinated decision key is rejected by

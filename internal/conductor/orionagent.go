@@ -186,6 +186,16 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 	}
 	convo := append(history, userMsg)
 
+	// Ratification is announced EDGE-triggered: only the turn on which the spec
+	// BECOMES accepted may announce and write the artifact. A level check here
+	// re-announced a days-old ratification on every turn while the accepted spec
+	// held the active slot — and rewrote the artifact's grilling record with the
+	// current (unrelated) session's dialogue, destroying the provenance.
+	preAcceptedHash := ""
+	if sv, e := a.conductor.SpecView(ctx); e == nil && sv.Status == "accepted" {
+		preAcceptedHash = sv.Hash
+	}
+
 	loop := harness.Loop{
 		Provider: prov,
 		Tools:    reg,
@@ -284,8 +294,9 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 		stream(acp.Update{Kind: "agent_message", Text: "I hit a problem driving this turn: " + err.Error()})
 		return end, nil
 	}
-	// Surface ratification as a plan signal (the TUI renders it distinctly).
-	if sv, e := a.conductor.SpecView(ctx); e == nil && sv.Status == "accepted" {
+	// Surface ratification as a plan signal (the TUI renders it distinctly) —
+	// only when THIS turn ratified (a new accepted hash, not the pre-turn one).
+	if sv, e := a.conductor.SpecView(ctx); e == nil && sv.Status == "accepted" && sv.Hash != preAcceptedHash {
 		stream(acp.Update{Kind: "plan", Text: "Spec ratified ✓"})
 		// or-tcs.5: write the spec ARTIFACT — the durable record of the spec-definition phase
 		// (initial intent + the grilling Q&A + the final functional/testing/non-functional
