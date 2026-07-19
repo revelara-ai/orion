@@ -1,33 +1,26 @@
-# Orion CI (or-c6zf.2): two lanes, no secrets, green-able by any external PR.
+# Orion CI: one fast lane — lint + short tests — on every PR and main push.
+# No separate build step (the tests compile everything); no scheduled heavy
+# lane (the full generate→prove suite is `make test`, run locally and before
+# a release). Releases are release.yml: a human pushes a v* tag, goreleaser
+# builds and drafts.
 #
-#   pr-lane   — every PR and main push: tidy check, build, SHORT test lane
-#               (skips the heavy generate→prove e2e), golangci-lint v2.
-#   full-lane — main pushes + nightly: `make test` (the real suite; the
-#               conductor package alone is ~12min of compile+prove work).
-#               ORION_RUN_ACCEPTANCE=false skips TestV20Loop, the 56-predicate
-#               North-Star harness that is RED BY DESIGN while deferred-epic
-#               surfaces remain (see test/acceptance/v20_loop_test.go and the
-#               deferredPredicates ratchet) — a tracker, not a merge gate.
-#
-# bubblewrap: the proof sandbox (internal/sandbox, proofexec) requires bwrap
-# even in the short lane. Ubuntu 24.04 runners block unprivileged user
-# namespaces via AppArmor by default, which breaks `bwrap --unshare-user` —
-# the sysctl below is the documented mitigation.
+# bubblewrap: the proof sandbox (internal/sandbox, proofexec) is exercised by
+# several SHORT tests too. Ubuntu 24.04 runners block unprivileged user
+# namespaces via AppArmor by default; the sysctl is the documented mitigation.
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    - cron: "17 9 * * *" # nightly full lane
+  workflow_dispatch: # manual: run the full heavy suite on demand (full-suite job)
 
 permissions:
   contents: read
 
 jobs:
-  pr-lane:
-    name: build / test-short / lint
+  ci:
+    name: lint / test-short
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -43,8 +36,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bubblewrap
-          # Ubuntu 24.04 AppArmor blocks unprivileged userns by default; the
-          # proof sandbox needs it (bwrap --unshare-user).
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
       - name: Verify go.mod is tidy
@@ -52,28 +43,21 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
 
-      - name: Build
-        run: make build
-
       - name: Test (short lane)
         run: make test-short
 
       - name: Lint (golangci-lint v2, full)
-        # or-3p5.12 cleaned the tree to the bar — the gate is FULL on every
-        # event; a red lint is a real regression, not legacy debt.
         # `latest` because the lint binary's own Go build must be >= the
-        # repo's go directive (a v2.1 binary built with go1.24 refuses a
-        # go1.26 target outright — the failure mode that kept this lane red).
+        # repo's go directive (a binary built with an older Go refuses the
+        # target outright).
         uses: golangci/golangci-lint-action@v9
         with:
           version: latest
 
-  full-lane:
-    name: full suite (main + nightly)
-    if: github.event_name != 'pull_request'
+  full-suite:
+    name: full suite (manual only)
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    # Sequential heavy packages (see make test-ci) on a small shared runner:
-    # the conductor package alone is ~740s of compile+prove on a fast dev box.
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
@@ -90,11 +74,10 @@ jobs:
           sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
-      - name: Full test suite
-        # TestV20Loop (the North-Star acceptance harness) is red by design
-        # while deferred-epic predicates remain — tracked via the
-        # deferredPredicates ratchet, evaluated out-of-band, never a CI gate.
+      - name: Full test suite (sequential heavy packages)
         # test-ci runs packages SEQUENTIALLY: every heavy proof package waits
         # on the same machine-wide proof flock, so parallel packages on a
-        # 2-core runner starve each other into per-test deadline failures.
+        # small runner starve each other into per-test deadline failures.
+        # TestV20Loop (the North-Star harness) is evaluated out-of-band via
+        # the deferredPredicates ratchet, never a CI gate.
         run: ORION_RUN_ACCEPTANCE=false make test-ci
