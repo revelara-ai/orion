@@ -42,6 +42,6 @@ jobs:
         # self-resolves at flip time. Public repo → the step is REQUIRED (the
         # supply-chain posture Orion's own dependencyprovenance preaches).
         if: ${{ !github.event.repository.private }}
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/checksums.txt
