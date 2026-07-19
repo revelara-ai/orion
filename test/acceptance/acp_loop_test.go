@@ -101,7 +101,13 @@ func TestV20LoopOverACP(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds + proves a real service; skipped in -short")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	// CI headroom: shared runners + the machine-wide proof flock make the
+	// build+prove loop several times slower than a dev box.
+	budget := 90 * time.Second
+	if os.Getenv("CI") != "" {
+		budget = 6 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 
 	// spec-ratify is honored; a destructive op is gated (denied).
