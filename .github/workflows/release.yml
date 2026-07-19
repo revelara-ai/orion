@@ -37,6 +37,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Attest build provenance
+        # Attestations are unavailable on PRIVATE repos (plan-gated), so a
+        # pre-flip test tag would red the whole release for a reason that
+        # self-resolves at flip time. Public repo → the step is REQUIRED (the
+        # supply-chain posture Orion's own dependencyprovenance preaches).
+        if: ${{ !github.event.repository.private }}
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: dist/checksums.txt
