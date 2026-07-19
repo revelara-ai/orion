@@ -285,9 +285,10 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 			// (module paths, routes) must never travel into another project's
 			// generation prompt. '' items stay visible (explicitly global).
 			mem = m.ForProject(runProj.ID)
-			// or-hd3.7: opt-in semantic recall — wire an embedder from env (default off →
-			// keyword+heat recall, no model file needed).
-			if e, ok := embedderFromEnv(); ok {
+			// or-o213: semantic recall is opt-OUT — on by default once the model
+			// is provisioned (`orion model fetch`); ORION_MEMORY_EMBEDDER=off
+			// disables; unprovisioned falls back to keyword+heat recall.
+			if e, ok := resolveEmbedder(store.Dir()); ok {
 				mem.SetEmbedder(e)
 			}
 			// or-7et.3: recalled cognition is budgeted by TOKENS against the

@@ -45,16 +45,29 @@ func cmdModel(args []string) int {
 			fetched++
 		}
 	}
-	fmt.Printf("done: %d fetched, %d already present\nenable semantic recall with:\n  export ORION_MEMORY_EMBEDDER=local\n  export ORION_MEMORY_MODEL_PATH=%s\n", fetched, len(results)-fetched, target)
+	fmt.Printf("done: %d fetched, %d already present\nsemantic recall is now ON by default (no env needed; opt out with ORION_MEMORY_EMBEDDER=off)\n", fetched, len(results)-fetched)
 	return 0
 }
 
-// embedderCheck (or-c6zf.5): the doctor's semantic-recall provisioning probe.
-// ok when off (deliberate default) or provisioned; warn when opted in but
-// unprovisioned — recall silently degrades to keyword+heat, say so.
+// embedderCheck (or-c6zf.5, or-o213): the doctor's semantic-recall probe.
+// Semantic recall is opt-OUT: on by default once provisioned (`orion model
+// fetch`), so the states are — explicitly disabled (ok), on (ok), not yet
+// provisioned (ok with the enable hint), or explicitly configured but broken
+// (warn: recall silently degrades to keyword+heat, say so).
 func embedderCheck(dataDir string) doctorCheck {
-	if os.Getenv("ORION_MEMORY_EMBEDDER") == "" {
-		return doctorCheck{Name: "embedder", Status: statusOK, Detail: "semantic recall off (default keyword+heat) — opt in: ORION_MEMORY_EMBEDDER=local + orion model fetch"}
+	env := os.Getenv("ORION_MEMORY_EMBEDDER")
+	switch env {
+	case "off", "none", "0":
+		return doctorCheck{Name: "embedder", Status: statusOK, Detail: "semantic recall disabled (ORION_MEMORY_EMBEDDER=" + env + ")"}
+	case "":
+		if dataDir == "" {
+			return doctorCheck{Name: "embedder", Status: statusOK, Detail: "semantic recall not provisioned (no data dir)"}
+		}
+		dir := filepath.Join(dataDir, "models")
+		if ok, _ := modelfetch.VerifyQuick(dir, modelfetch.BGEBaseAssets()); !ok {
+			return doctorCheck{Name: "embedder", Status: statusOK, Detail: "semantic recall not provisioned (keyword+heat recall) — run `orion model fetch` to enable it"}
+		}
+		return doctorCheck{Name: "embedder", Status: statusOK, Detail: "semantic recall on (default) — assets present (" + dir + ")"}
 	}
 	dir := os.Getenv("ORION_MEMORY_MODEL_PATH")
 	if dir == "" && dataDir != "" {

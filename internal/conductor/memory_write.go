@@ -5,30 +5,57 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/embed"
 	"github.com/revelara-ai/orion/internal/memory"
+	"github.com/revelara-ai/orion/internal/modelfetch"
 	"github.com/revelara-ai/orion/internal/proof"
 	"github.com/revelara-ai/orion/internal/proof/truthalign"
 )
 
-// embedderFromEnv builds the memory embedder from env — opt-in semantic recall (or-hd3.7).
-// ORION_MEMORY_EMBEDDER (e.g. "local") selects the in-process GoMLX embedder;
-// ORION_MEMORY_EMBEDDING_MODEL + ORION_MEMORY_MODEL_PATH point at the ONNX model. Unset →
-// keyword+heat recall (no embedder, no model file needed). A misconfiguration logs and falls
-// back to keyword recall — it never fails a build.
-func embedderFromEnv() (embed.Embedder, bool) {
-	provider := os.Getenv("ORION_MEMORY_EMBEDDER")
-	if provider == "" {
-		return nil, false
+// chooseEmbedder is the semantic-recall decision (or-o213: opt-OUT, was opt-in).
+// Explicit env wins both ways: ORION_MEMORY_EMBEDDER=off|none|0 disables;
+// any other non-empty value selects that provider (with the model/path env
+// vars). Unset → ON by default whenever the provisioned assets exist under
+// <dataDir>/models (`orion model fetch`); not provisioned → keyword+heat
+// recall, silently. provisioned is injected so the decision is testable
+// without multi-hundred-MB assets.
+func chooseEmbedder(env, dataDir string, provisioned func(dir string) bool) (embed.Config, bool) {
+	switch env {
+	case "off", "none", "0":
+		return embed.Config{}, false
+	case "":
+		if dataDir == "" {
+			return embed.Config{}, false
+		}
+		dir := filepath.Join(dataDir, "models")
+		if !provisioned(dir) {
+			return embed.Config{}, false
+		}
+		return embed.Config{Provider: "local", ModelPath: dir}, true
 	}
-	e, err := embed.New(embed.Config{
-		Provider:  provider,
+	return embed.Config{
+		Provider:  env,
 		Model:     os.Getenv("ORION_MEMORY_EMBEDDING_MODEL"),
 		ModelPath: os.Getenv("ORION_MEMORY_MODEL_PATH"),
+	}, true
+}
+
+// resolveEmbedder builds the memory embedder per chooseEmbedder. A
+// misconfiguration (or unloadable assets) logs and falls back to keyword+heat
+// recall — it never fails a build.
+func resolveEmbedder(dataDir string) (embed.Embedder, bool) {
+	cfg, on := chooseEmbedder(os.Getenv("ORION_MEMORY_EMBEDDER"), dataDir, func(dir string) bool {
+		ok, _ := modelfetch.VerifyQuick(dir, modelfetch.BGEBaseAssets())
+		return ok
 	})
+	if !on {
+		return nil, false
+	}
+	e, err := embed.New(cfg)
 	if err != nil {
 		slog.Warn("memory embedder disabled; falling back to keyword+heat recall", "err", err)
 		return nil, false
