@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/revelara-ai/orion/internal/contextstore"
+	"github.com/revelara-ai/orion/internal/memory"
 	"github.com/revelara-ai/orion/internal/modelfetch"
+	"github.com/revelara-ai/orion/internal/orchestrator"
 )
 
 func okLook(string) (string, error)   { return "/usr/bin/x", nil }
@@ -117,5 +121,53 @@ func TestEmbedderCheckStates(t *testing.T) {
 	t.Setenv("ORION_MEMORY_MODEL_PATH", dir)
 	if c := embedderCheck(""); c.Status != statusOK {
 		t.Fatalf("provisioned assets must be ok: %+v", c)
+	}
+}
+
+// or-ha0z: the divergence check — informational with nothing to compare; FAIL
+// naming the key when pinned memory contradicts the ratified decision.
+func TestDivergenceCheckStates(t *testing.T) {
+	if c := divergenceCheck(t.TempDir()); c.Status != statusOK {
+		t.Fatalf("empty data dir must be informational ok: %+v", c)
+	}
+
+	dir := t.TempDir()
+	store, err := contextstore.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oc := orchestrator.NewWithStore(store)
+	ctx := context.Background()
+	if _, err := oc.Submit(ctx, "Build an HTTP service that returns the current time."); err != nil {
+		t.Fatal(err)
+	}
+	if err := oc.RecordAnswer(ctx, "response_format", "json"); err != nil {
+		t.Fatal(err)
+	}
+	proj, _, err := store.CurrentProjectSpec(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "memory"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mem, err := memory.Open(filepath.Join(dir, "memory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := mem.ForProject(proj.ID).Write(ctx, memory.Item{
+		Tier: memory.MTM, Kind: memory.KindDecision, TrustTier: memory.TrustProof, Heat: 1.0,
+		Content: "decision response_format = xml",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = id
+	_ = mem.Close()
+	_ = store.Close()
+
+	c := divergenceCheck(dir)
+	if c.Status != statusFail || !strings.Contains(c.Detail, "response_format") || !strings.Contains(c.Detail, "xml") || !strings.Contains(c.Detail, "json") {
+		t.Fatalf("a contradicted decision must FAIL naming key + both values: %+v", c)
 	}
 }

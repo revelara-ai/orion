@@ -1,16 +1,20 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"golang.org/x/term"
 
+	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/harnessconfig"
 	"github.com/revelara-ai/orion/internal/health"
+	"github.com/revelara-ai/orion/internal/memory"
 	"github.com/revelara-ai/orion/internal/polaris"
 	"github.com/revelara-ai/orion/internal/preflight"
 )
@@ -124,6 +128,8 @@ func doctorChecks(dir string, lookPath func(string) (string, error), agentEnv st
 	}
 	// or-c6zf.5: semantic-recall provisioning state (opt-in feature).
 	out = append(out, embedderCheck(dir))
+	// or-ha0z: stale pinned memory vs the ratified spec (trust-wall integrity).
+	out = append(out, divergenceCheck(dir))
 	return out
 }
 
@@ -143,4 +149,59 @@ func cachedPolarisCheck() health.Check {
 		return health.Check{Name: "revelara.ai", Status: health.Warn, Detail: "not logged in"}
 	}
 	return health.Check{Name: "revelara.ai", Status: health.OK, Detail: "cached credential for " + tok.BaseURL}
+}
+
+// divergenceCheck (or-ha0z): compare the ACTIVE project's ratified decisions
+// (the context store — the spec of record) against pinned/decision memory
+// items. A contradiction is stale recall that could steer generation against
+// the ratified spec — a FAIL naming every diverging key. No active project (or
+// no stores yet) is ok/informational: nothing to compare.
+func divergenceCheck(dataDir string) doctorCheck {
+	if dataDir == "" || !health.DirExists(dataDir) {
+		return doctorCheck{Name: "memory-divergence", Status: statusOK, Detail: "no data dir yet — nothing to compare"}
+	}
+	store, err := contextstore.Open(dataDir)
+	if err != nil {
+		return doctorCheck{Name: "memory-divergence", Status: statusWarn, Detail: "context store: " + err.Error()}
+	}
+	defer func() { _ = store.Close() }()
+	ctx := context.Background()
+	proj, sp, err := store.CurrentProjectSpec(ctx)
+	if err != nil {
+		return doctorCheck{Name: "memory-divergence", Status: statusOK, Detail: "no active project — nothing to compare"}
+	}
+	current := map[string]string{}
+	if err := store.WithTx(ctx, func(tx *contextstore.Tx) error {
+		ds, derr := tx.Decisions().ListForSpec(ctx, sp.ID)
+		if derr != nil {
+			return derr
+		}
+		for _, d := range ds {
+			current[d.Key] = d.Value
+		}
+		return nil
+	}); err != nil {
+		return doctorCheck{Name: "memory-divergence", Status: statusWarn, Detail: "decisions: " + err.Error()}
+	}
+	memDir := filepath.Join(dataDir, "memory")
+	if !health.DirExists(memDir) {
+		return doctorCheck{Name: "memory-divergence", Status: statusOK, Detail: "no memory store yet — nothing to compare"}
+	}
+	mem, err := memory.Open(memDir)
+	if err != nil {
+		return doctorCheck{Name: "memory-divergence", Status: statusWarn, Detail: "memory store: " + err.Error()}
+	}
+	defer func() { _ = mem.Close() }()
+	div, err := mem.ForProject(proj.ID).DetectDivergence(ctx, current)
+	if err != nil {
+		return doctorCheck{Name: "memory-divergence", Status: statusWarn, Detail: err.Error()}
+	}
+	if len(div) > 0 {
+		parts := make([]string, 0, len(div))
+		for _, d := range div {
+			parts = append(parts, fmt.Sprintf("%s: memory says %q, spec says %q (item %s)", d.Key, d.Stored, d.Current, d.ItemID))
+		}
+		return doctorCheck{Name: "memory-divergence", Status: statusFail, Detail: "stale pinned memory contradicts the ratified spec — " + strings.Join(parts, "; ")}
+	}
+	return doctorCheck{Name: "memory-divergence", Status: statusOK, Detail: fmt.Sprintf("pinned memory agrees with the ratified spec (%d decisions checked)", len(current))}
 }
