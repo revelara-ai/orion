@@ -56,14 +56,14 @@ func TestGoToolchainSnapshot(t *testing.T) {
 	if !tc.IsPrimary("go") || tc.IsPrimary("golangci-lint") {
 		t.Fatalf("IsPrimary: go must be primary, golangci-lint auxiliary")
 	}
-	p, err := tc.ResolveBin("go")
+	p, err := tc.ResolveBin("", "go")
 	if err != nil || !strings.HasSuffix(p, "/bin/go") {
 		t.Fatalf("ResolveBin(go) = %q err=%v", p, err)
 	}
 	if !tc.UnsafeNoneOverride() {
 		t.Error("the Go toolchain must permit the operator unisolated-backend override")
 	}
-	if len(tc.Roots()) == 0 || !strings.HasSuffix(tc.Roots()[0], strings.TrimSuffix(p, "/bin/go")) {
-		t.Errorf("Roots must include GOROOT (%v)", tc.Roots())
+	if len(tc.Roots("")) == 0 || !strings.HasSuffix(tc.Roots("")[0], strings.TrimSuffix(p, "/bin/go")) {
+		t.Errorf("Roots must include GOROOT (%v)", tc.Roots(""))
 	}
 }

@@ -28,13 +28,15 @@ type Toolchain interface {
 	IsPrimary(tool string) bool
 	// ResolveBin returns the absolute host path to a tool's binary (never the
 	// worktree). It is called only after the sandbox policy admitted the exec.
-	ResolveBin(tool string) (path string, err error)
+	// workdir lets a version-aware toolchain honor the project's stack pin
+	// (.python-version in the proof dir — or-4y7.10); Go ignores it.
+	ResolveBin(workdir, tool string) (path string, err error)
 	// Roots are directories bound read-only into the sandbox (toolchain root + caches).
-	Roots() []string
+	Roots(workdir string) []string
 	// Links are dest→target symlinks the sandbox must recreate for the toolchain's
 	// binary to load — the usr-merge (/lib64→usr/lib64, …) links a dynamically-linked
 	// interpreter's ELF loader resolves through. Go (static) needs none, so returns nil.
-	Links() map[string]string
+	Links(workdir string) map[string]string
 	// Env is the hermetic, secret-scrubbed environment for a run in workdir.
 	Env(workdir string) map[string]string
 	// UnsafeNoneOverride reports whether the language permits the operator's
@@ -74,7 +76,7 @@ func (goToolchain) Allow(tool string, args []string) error {
 
 func (goToolchain) IsPrimary(tool string) bool { return tool == "go" }
 
-func (goToolchain) ResolveBin(tool string) (string, error) {
+func (goToolchain) ResolveBin(_, tool string) (string, error) {
 	if tool == "go" {
 		return filepath.Join(goRoot(), "bin", "go"), nil
 	}
@@ -89,7 +91,7 @@ func (goToolchain) ResolveBin(tool string) (string, error) {
 	return bin, nil
 }
 
-func (goToolchain) Roots() []string {
+func (goToolchain) Roots(_ string) []string {
 	roots := []string{goRoot()}
 	if mc := hostModCache(); mc != "" {
 		roots = append(roots, mc)
@@ -105,7 +107,7 @@ func (goToolchain) Env(workdir string) map[string]string {
 	return env
 }
 
-func (goToolchain) Links() map[string]string { return nil } // the Go binary is static — no loader, no usr-merge dependency
+func (goToolchain) Links(_ string) map[string]string { return nil } // the Go binary is static — no loader, no usr-merge dependency
 
 func (goToolchain) UnsafeNoneOverride() bool { return true }
 

@@ -95,7 +95,7 @@ func Compile(intent string, answers map[string]string, kinds map[string]string, 
 
 	s := ExecutableSpec{
 		Intent:           strings.TrimSpace(intent),
-		Decisions:        cloneStrMap(answers),
+		Decisions:        normalizeDirectionDecisions(cloneStrMap(answers)),
 		Dimensions:       dims,
 		ResponseContract: rc,
 		Requirements:     reqs,
@@ -297,4 +297,20 @@ func cloneStrMap(m map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// normalizeDirectionDecisions (or-4y7.10): a direction.language answer may
+// carry the developer's runtime pin ("python 3.12"). The compiled spec stores
+// the BASE language under direction.language (every consumer dispatches on it)
+// and the version under direction.runtime — an explicit direction.runtime
+// answer is never overwritten.
+func normalizeDirectionDecisions(d map[string]string) map[string]string {
+	if v := d["direction.language"]; v != "" {
+		lang, ver := completeness.SplitLanguageRuntime(v)
+		d["direction.language"] = lang
+		if ver != "" && d["direction.runtime"] == "" {
+			d["direction.runtime"] = ver
+		}
+	}
+	return d
 }

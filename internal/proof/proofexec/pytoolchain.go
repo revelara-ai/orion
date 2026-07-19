@@ -52,16 +52,16 @@ func (pyToolchain) Allow(tool string, args []string) error {
 
 func (pyToolchain) IsPrimary(tool string) bool { return tool == "python3" }
 
-func (pyToolchain) ResolveBin(_ string) (string, error) {
-	rt, err := pyRuntime()
+func (pyToolchain) ResolveBin(workdir, _ string) (string, error) {
+	rt, err := pyRuntimeFor(workdir)
 	if err != nil {
 		return "", err
 	}
 	return rt.bin, nil
 }
 
-func (pyToolchain) Roots() []string {
-	rt, err := pyRuntime()
+func (pyToolchain) Roots(workdir string) []string {
+	rt, err := pyRuntimeFor(workdir)
 	if err != nil {
 		return nil
 	}
@@ -69,9 +69,9 @@ func (pyToolchain) Roots() []string {
 }
 
 // Links recreates the host's usr-merge symlinks (/lib64→usr/lib64, …) inside the
-// jail so the dynamically-linked interpreter's ELF loader resolves (see pyRuntime).
-func (pyToolchain) Links() map[string]string {
-	rt, err := pyRuntime()
+// jail so the dynamically-linked interpreter's ELF loader resolves (see pyRuntimeFor).
+func (pyToolchain) Links(workdir string) map[string]string {
+	rt, err := pyRuntimeFor(workdir)
 	if err != nil {
 		return nil
 	}
@@ -81,7 +81,7 @@ func (pyToolchain) Links() map[string]string {
 func (pyToolchain) Env(workdir string) map[string]string {
 	env := safeenv.Map() // scrubbed allowlist (no secrets)
 	binDir := "/usr/bin"
-	if rt, err := pyRuntime(); err == nil {
+	if rt, err := pyRuntimeFor(workdir); err == nil {
 		binDir = filepath.Dir(rt.bin)
 	}
 	env["PATH"] = binDir + ":/usr/bin:/bin"
@@ -110,9 +110,8 @@ type pyRT struct {
 }
 
 var (
-	pyOnce sync.Once
-	pyVal  pyRT
-	pyErr  error
+	pyMu    sync.Mutex
+	pyCache = map[string]pyRT{} // resolved runtime per interpreter spec
 )
 
 // usrMergeTops are the top-level LOADER dirs that are symlinks under usr-merge
@@ -124,28 +123,71 @@ var (
 // by absolute path, and generated code gets no host binaries to shell out to.
 var usrMergeTops = []string{"/lib", "/lib64"}
 
-// pyRuntime resolves the pinned-or-default interpreter ONCE from the trusted
-// host: ORION_PYTHON (name or path) else python3 on PATH; then its real binary,
+// pyInterpFor picks the interpreter SPEC for a workdir (or-4y7.10 resolution
+// order): the operator's explicit ORION_PYTHON (name or path) → the project's
+// stack pin (.python-version in the workdir — materialized from the ratified
+// direction, or the developer's own file in a brownfield tree; "3.12" →
+// python3.12) → the user's python3 as PATH resolves it. A version the stack
+// pins but the host lacks REFUSES loudly downstream — never a silent
+// substitution with a different version.
+func pyInterpFor(workdir string) string {
+	if v := strings.TrimSpace(os.Getenv("ORION_PYTHON")); v != "" {
+		return v
+	}
+	if workdir != "" {
+		if data, err := os.ReadFile(filepath.Join(workdir, ".python-version")); err == nil {
+			if ver := pyMajorMinor(string(data)); ver != "" {
+				return "python" + ver
+			}
+		}
+	}
+	return "python3"
+}
+
+// pyMajorMinor extracts "X" or "X.Y" from a .python-version line ("3.12.4" →
+// "3.12") — interpreter binaries are named at minor granularity (python3.12).
+func pyMajorMinor(raw string) string {
+	line := strings.TrimSpace(strings.SplitN(raw, "\n", 2)[0])
+	parts := strings.Split(line, ".")
+	if len(parts) == 0 || parts[0] == "" || strings.TrimLeft(parts[0], "0123456789") != "" {
+		return ""
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	if strings.TrimLeft(parts[1], "0123456789") != "" {
+		return ""
+	}
+	return parts[0] + "." + parts[1]
+}
+
+// pyRuntimeFor resolves the workdir's pinned-or-default interpreter from the
+// trusted host (cached per interpreter spec): the real binary,
 // sys.base_prefix/sys.prefix (stdlib + site-packages), the directories of its
 // dynamically linked libraries (ldd), the system libdirs, and the usr-merge
 // symlinks — the exact RO set the sandbox needs, independent of layout (system,
 // brew, pyenv, venv) so a dynamically-linked interpreter actually loads.
-func pyRuntime() (pyRT, error) {
-	pyOnce.Do(func() {
-		// Resolution order (the or-4y7.10 hook): the developer's explicit
-		// ORION_PYTHON pin (name or path) → the user's python3 as their PATH
-		// resolves it. Orion uses whatever version the developer has; a missing
-		// interpreter is the startup preflight's job (offer to install), never a
-		// silent substitution here.
-		interp := strings.TrimSpace(os.Getenv("ORION_PYTHON"))
-		if interp == "" {
-			interp = "python3"
-		}
-		bin, err := exec.LookPath(interp)
-		if err != nil {
-			pyErr = fmt.Errorf("proofexec: python interpreter %q not found on host (pin one with ORION_PYTHON): %w", interp, err)
-			return
-		}
+func pyRuntimeFor(workdir string) (pyRT, error) {
+	interp := pyInterpFor(workdir)
+	pyMu.Lock()
+	defer pyMu.Unlock()
+	if rt, ok := pyCache[interp]; ok {
+		return rt, nil
+	}
+	rt, err := resolvePyRuntime(interp)
+	if err != nil {
+		return pyRT{}, err
+	}
+	pyCache[interp] = rt
+	return rt, nil
+}
+
+func resolvePyRuntime(interp string) (pyRT, error) {
+	bin, err := exec.LookPath(interp)
+	if err != nil {
+		return pyRT{}, fmt.Errorf("proofexec: python interpreter %q not found on host — install it (e.g. `sudo apt-get install %s`), or pin a different one with ORION_PYTHON / the project's .python-version: %w", interp, interp, err)
+	}
+	{
 		if resolved, serr := filepath.EvalSymlinks(bin); serr == nil {
 			bin = resolved
 		}
@@ -197,10 +239,9 @@ func pyRuntime() (pyRT, error) {
 		// The interpreter's own tree (bin + lib live under <root>/bin/python3.x).
 		addReal(filepath.Dir(filepath.Dir(bin)))
 		// Trusted-host prefix query (the python analog of `go env GOROOT`).
-		out, err := exec.Command(bin, "-E", "-S", "-c", "import sys;print(sys.base_prefix);print(sys.prefix)").Output() //nolint:gosec // trusted host interpreter resolution, no generated code
-		if err != nil {
-			pyErr = fmt.Errorf("proofexec: resolving %s prefix: %w", bin, err)
-			return
+		out, perr := exec.Command(bin, "-E", "-S", "-c", "import sys;print(sys.base_prefix);print(sys.prefix)").Output() //nolint:gosec // trusted host interpreter resolution, no generated code
+		if perr != nil {
+			return pyRT{}, fmt.Errorf("proofexec: resolving %s prefix: %w", bin, perr)
 		}
 		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 			addReal(strings.TrimSpace(line))
@@ -226,9 +267,8 @@ func pyRuntime() (pyRT, error) {
 		for _, top := range usrMergeTops {
 			add(top)
 		}
-		pyVal = pyRT{bin: bin, roots: roots, links: links}
-	})
-	return pyVal, pyErr
+		return pyRT{bin: bin, roots: roots, links: links}, nil
+	}
 }
 
 func init() { registerToolchain(pyToolchain{}) }

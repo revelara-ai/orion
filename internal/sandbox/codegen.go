@@ -45,6 +45,11 @@ type GenSpec struct {
 	// Go); honoring them end-to-end is or-4rxw. Threaded now so the generator can
 	// branch on them once that capability lands.
 	Language string
+	// Runtime is the developer's pinned language version ("3.12"), from the
+	// ratified direction ("python 3.12") — or-4y7.10. The harness materializes
+	// it into the artifact's stack pin (.python-version) so proof and delivery
+	// validate against the version the developer prefers; empty = unpinned.
+	Runtime string
 	Engine   string
 	// Context is the assembled, trust-tiered recalled context (spec constraints +
 	// retrieved memory, with generation-tier memory quarantined) that the Conductor
