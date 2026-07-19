@@ -40,7 +40,7 @@ func TestOrionAgentBreakerOpensAndRefusesTurns(t *testing.T) {
 	turn := func(text string) {
 		_, err := agent.Prompt(context.Background(), "s1", text,
 			func(u acp.Update) { out.WriteString(u.Text + "\n") },
-			func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil })
+			func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{Outcome: "granted"}, nil })
 		if err != nil {
 			t.Fatalf("prompt must not hard-error (escalation is a message): %v", err)
 		}
@@ -79,7 +79,7 @@ func TestOrionAgentModelSwitchResetsBreaker(t *testing.T) {
 	}, nil)
 
 	_, _ = agent.Prompt(context.Background(), "s1", "hi",
-		func(acp.Update) {}, func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil })
+		func(acp.Update) {}, func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{Outcome: "granted"}, nil })
 	if !agent.breaker.Open() {
 		t.Fatal("breaker must be open after the failed turn")
 	}

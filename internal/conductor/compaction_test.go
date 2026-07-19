@@ -157,7 +157,7 @@ func TestPromptPersistsSessionToDisk(t *testing.T) {
 	a := NewOrionAgent(prov, orchestrator.NewWithStore(st), RoleTemplate{})
 	if _, err := a.Prompt(context.Background(), "sess/1", "build a time service",
 		func(acp.Update) {},
-		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil }); err != nil {
+		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{Outcome: "granted"}, nil }); err != nil {
 		t.Fatal(err)
 	}
 	var found, foundName string
@@ -261,7 +261,7 @@ func TestReactiveCompactionFailureKeepsCleanSession(t *testing.T) {
 
 	_, err := a.Prompt(context.Background(), "s", "go",
 		func(acp.Update) {},
-		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil })
+		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{Outcome: "granted"}, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestReactiveGiantMessageSurfacesCleanly(t *testing.T) {
 	var updates []acp.Update
 	_, err := a.Prompt(context.Background(), "s", huge,
 		func(u acp.Update) { updates = append(updates, u) },
-		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil })
+		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{Outcome: "granted"}, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +415,7 @@ func TestPromptProactivelyCompactsWhenDialogueDominates(t *testing.T) {
 	var updates []acp.Update
 	_, err := a.Prompt(context.Background(), "s", "continue please",
 		func(u acp.Update) { updates = append(updates, u) },
-		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil })
+		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{Outcome: "granted"}, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +449,7 @@ func TestPromptReactivelyCompactsOnOverflow(t *testing.T) {
 	var updates []acp.Update
 	_, err := a.Prompt(context.Background(), "s", "continue please",
 		func(u acp.Update) { updates = append(updates, u) },
-		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil })
+		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{Outcome: "granted"}, nil })
 	if err != nil {
 		t.Fatal(err)
 	}

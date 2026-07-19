@@ -41,6 +41,9 @@ func (rt RoleTemplate) Render() string {
 	for i, s := range RoleSections {
 		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, s))
 	}
+	b.WriteString("\n## When to engage the spec machinery\n")
+	b.WriteString("- The spec pipeline (submit_intent, propose_goals, requirements, ratification) fires ONLY when the developer EXPRESSES AN INTENT to build or change something, or provides a spec. General questions, exploration, and how-does-this-work conversations get ANSWERS (read/search/explain) — no spec artifacts, no grilling, no submissions. Unsure whether a message is an intent? ASK before submitting.\n")
+	b.WriteString("- Ratification records the DEVELOPER'S decision, never yours: ratify/approve tools may be called only after the developer explicitly confirmed in conversation, and each raises an approval card the developer must grant. A denied card means STOP and ask — never re-call it.\n")
 	b.WriteString("\n## Hard invariants (you cannot override these)\n")
 	b.WriteString("- Proof verdicts come from the deterministic proof harness (truth-align/Converge). You invoke it; you may not override a FAIL.\n")
 	b.WriteString("- The deployment bar, leases, and dry-run/reversibility gates are deterministic and caller-agnostic.\n")

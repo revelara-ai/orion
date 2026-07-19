@@ -295,6 +295,7 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 		Name:        "ratify_cases",
 		Description: "Lock the behavioral cases as the proof ORACLE, BEFORE any code is generated — the trust gate: the oracle predates the diff, so the proof is independent of the generated code. Call once the developer has reviewed and confirmed the cases. For a TEST-ONLY or purely additive change where the regression gate itself is a sufficient oracle (the new tests must compile and pass in green-after), skip case drafting and call ratify_cases with {\"regression_only\": true}. Then call build_change.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"regression_only":{"type":"boolean","description":"ratify WITHOUT behavioral cases: the regression gate (do-no-harm, which runs any newly added tests) is the oracle. For test-only/additive changes; CLI parity with 'orion change' without --cases."}}}`),
+		Safety:      tools.Safety{Destructive: true, RequiresApproval: true}, // consent-recording: the human gate (or-7xw1)
 		Run: func(_ context.Context, in json.RawMessage) (string, error) {
 			var p struct {
 				RegressionOnly bool `json:"regression_only"`

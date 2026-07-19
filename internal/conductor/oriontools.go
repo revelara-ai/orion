@@ -136,7 +136,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	r.Register(tools.Tool{
 		Name:        "approve_assumptions",
 		Description: "Record the developer's EXPLICIT confirmation of the open fallback assumptions (shown by preview_spec). Call this ONLY after the developer has seen each assumption and confirmed or overridden it — ratify_spec deterministically REFUSES while unapproved assumptions remain. Returns what was approved.",
-		Safety:      tools.Safety{Destructive: true},
+		Safety:      tools.Safety{Destructive: true, RequiresApproval: true}, // consent-recording: the human gate (or-7xw1)
 		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
 			approved, err := c.ApproveAssumptions(ctx)
 			if err != nil {
@@ -229,7 +229,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 		Name:        "ratify_stamp_baseline",
 		Description: "Persist the developer's CONFIRMED STAMP baseline: each UCA the developer ratified (controlled / accepted-gap) with the code tokens proving the control exists. Call ONLY after the developer reviewed propose_stamp_baseline's output and confirmed each row. CONTROLLED UCAs arm the change flow's hazard gate: a later change that deletes a control's token is escalated instead of silently shipping.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"ucas":{"type":"array","minItems":1,"items":{"type":"object","properties":{"id":{"type":"string"},"hazard":{"type":"string"},"disposition":{"type":"string","enum":["controlled","accepted-gap"]},"tokens":{"type":"array","items":{"type":"string"},"description":"code tokens proving the control is present (function/guard names)"}},"required":["id","hazard","disposition"]}}},"required":["ucas"]}`),
-		Safety:      tools.Safety{Destructive: true},
+		Safety:      tools.Safety{Destructive: true, RequiresApproval: true}, // consent-recording: the human gate (or-7xw1)
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
 			var p struct {
 				UCAs []struct {
@@ -350,7 +350,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 		Name:        "ratify_goals",
 		Description: "Anchor the proposed goals document with a content hash after the DEVELOPER CONFIRMS it (or-045a.2). Call only once they have reviewed propose_goals' draft. The ratified goals persist in the context store and steer subsequent elicitation.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
-		Safety:      tools.Safety{Destructive: true},
+		Safety:      tools.Safety{Destructive: true, RequiresApproval: true}, // consent-recording: the human gate (or-7xw1)
 		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
 			hash, err := c.RatifyGoals(ctx)
 			if err != nil {
@@ -461,7 +461,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			"losses":{"type":"array","minItems":1,"items":{"type":"object","properties":{"id":{"type":"string"},"description":{"type":"string"}},"required":["id","description"]}},
 			"scenarios":{"type":"array","minItems":1,"items":{"type":"object","properties":{"id":{"type":"string"},"trigger":{"type":"string"},"sustaining_condition":{"type":"string"},"loss":{"type":"string"}},"required":["id","trigger","loss"]}}
 		},"required":["losses","scenarios"]}`),
-		Safety: tools.Safety{Destructive: true},
+		Safety: tools.Safety{Destructive: true, RequiresApproval: true}, // consent-recording: the human gate (or-7xw1)
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
 			var p GoalHazardDraft
 			if err := json.Unmarshal(in, &p); err != nil {
@@ -478,7 +478,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 		Name:        "acknowledge_reduced_proof",
 		Description: "Record the developer's EXPLICIT, considered choice to accept a REDUCED PROOF for a ratified direction decision the harness cannot fully prove today (e.g. direction.wire_protocol=grpc) — a recorded engineering trade-off, not a failure or a lesser choice. The build then proceeds with the provable subset of obligations, the rest recorded as acknowledged-unproven (or-045a.5). Call ONLY after ratification surfaced the capability gap AND the developer chose reduced proof over changing direction. Audited (gold-labeled).",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"keys":{"type":"array","minItems":1,"items":{"type":"string"},"description":"the direction keys the developer accepted reduced proof for"}},"required":["keys"]}`),
-		Safety:      tools.Safety{Destructive: true},
+		Safety:      tools.Safety{Destructive: true, RequiresApproval: true}, // consent-recording: the human gate (or-7xw1)
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
 			var p struct {
 				Keys []string `json:"keys"`
@@ -497,7 +497,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 		Name:        "ratify_split",
 		Description: "Record the developer-CONFIRMED spec-of-specs split (or-045a.4): decompose a large ratified-goals project into ~5 sub-specs — each a FULL FEATURE without which the top-level spec is unfulfilled, each becoming its own child project that runs the normal grill→ratify→build loop with its own anchor hash. Draft the split IN CONVERSATION from the ratified goals, present it for review, and call this only after the developer confirms it. Children inherit the parent's direction decisions and hazard model (re-ratifiable per child); the first sub-spec is activated immediately and the parent delivers only when every child has delivered (roll-up gate). Requires a resolved project type and ratified goals; blocked by open questions.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"subs":{"type":"array","minItems":2,"items":{"type":"object","properties":{"name":{"type":"string","description":"short kebab-case feature name"},"intent":{"type":"string","description":"the sub-spec's full intent, self-contained enough to intake on its own"}},"required":["name","intent"]}}},"required":["subs"]}`),
-		Safety:      tools.Safety{Destructive: true},
+		Safety:      tools.Safety{Destructive: true, RequiresApproval: true}, // consent-recording: the human gate (or-7xw1)
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
 			var p struct {
 				Subs []orchestrator.SubIntent `json:"subs"`
@@ -678,7 +678,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	r.Register(tools.Tool{
 		Name:        "ratify_spec",
 		Description: "Accept + anchor the spec. Call ONLY after the developer has reviewed it and confirmed it is correct. Returns the ratified spec DOCUMENT (Markdown) to show the developer.",
-		Safety:      tools.Safety{Destructive: true},
+		Safety:      tools.Safety{Destructive: true, RequiresApproval: true}, // consent-recording: the human gate (or-7xw1)
 		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
 			es, err := c.ApproveSpec(ctx)
 			if err != nil {

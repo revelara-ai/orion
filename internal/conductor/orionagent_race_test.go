@@ -53,7 +53,7 @@ func TestConcurrentSameSessionTurnsDoNotLoseUpdates(t *testing.T) {
 			defer wg.Done()
 			_, err := agent.Prompt(context.Background(), "s1", fmt.Sprintf("turn %d", i),
 				func(acp.Update) {},
-				func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil })
+				func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{Outcome: "granted"}, nil })
 			if err != nil {
 				t.Errorf("prompt %d: %v", i, err)
 			}

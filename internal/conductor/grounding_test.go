@@ -48,7 +48,7 @@ func TestSubmitIntentAutoGroundsInBrownfieldRepo(t *testing.T) {
 	agent := NewOrionAgent(prov, oc, RoleTemplate{Project: "demo"})
 	if _, err := agent.Prompt(context.Background(), "s1", "refactor the widget storage",
 		func(acp.Update) {},
-		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil }); err != nil {
+		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{Outcome: "granted"}, nil }); err != nil {
 		t.Fatal(err)
 	}
 
