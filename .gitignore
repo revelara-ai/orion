@@ -22,3 +22,5 @@ debug/
 .agents/
 .codex/
 dist/
+.env
+.env.*
