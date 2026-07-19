@@ -30,7 +30,7 @@ func (pyProver) Language() string { return "python" }
 // into generated source, so only a plain (dotted) module identifier is allowed.
 var pyIdentRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
 
-func (pyProver) SynthesizeCorpus(c testsynth.Contract, proofDir string) (map[string]string, error) {
+func (pyProver) SynthesizeCorpus(c testsynth.Contract, _ string) (map[string]string, error) {
 	var unit []spec.BehavioralCase
 	for _, cs := range c.Cases {
 		if cs.Kind == spec.KindUnit && cs.Unit != nil {
