@@ -18,7 +18,6 @@ import (
 // TestLoopProceedsWhenPolarisUnreachable was renamed and the predicate read as
 // deferred-red for 11 days).
 var deferredPredicates = map[string]string{
-	"memory/memory-store / context-store divergence detected":          "or-gb1: divergence detector unbuilt (V2 memory-hardening)",
 	"self-evolution/developer-scoped LTM redacts project literals":     "or-gb1.6: project-scoped memory + redaction unbuilt",
 	"integration/rebase on moved head triggers re-proof":               "or-dka: exercised by TestOverlappingIntegrationsSerialize but not asserted; needs a moved-head re-proof assertion",
 	"integration/rebase conflict dispatches resolver or escalates":     "or-dka: resolver dispatch unbuilt (conflict containment IS proven: TestIntegrateConflictLeavesHeadUntouched)",
