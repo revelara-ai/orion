@@ -3,6 +3,7 @@ package newbehavior
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -164,5 +165,56 @@ func TestVerifyEmptyInconclusive(t *testing.T) {
 	}
 	if !mr.Inconclusive || mr.Pass {
 		t.Fatalf("empty case set should be Inconclusive (not Pass): %+v", mr)
+	}
+}
+
+// TestVerifyGolangciConfigOfflineFallback (or-yyhq follow-on): a source-built
+// golangci-lint has no embedded config schema, so `config verify` fails trying
+// to FETCH it (network denied under proof) — a tool-build failure, not a config
+// failure. proveVerify degrades to the offline-equivalent `linters --config`
+// load: a VALID config passes, and a BROKEN config (unknown linter) still fails
+// — the fallback must never weaken the gate. Both hold regardless of which
+// golangci-lint build (embedded schema or not) is on the host.
+func TestVerifyGolangciConfigOfflineFallback(t *testing.T) {
+	if _, err := exec.LookPath("golangci-lint"); err != nil {
+		t.Skip("golangci-lint not on PATH")
+	}
+	if _, err := exec.LookPath("bwrap"); err != nil {
+		t.Skip("bwrap not on host (verify tools refuse the none backend)")
+	}
+	ctx := context.Background()
+
+	good := t.TempDir()
+	write(t, filepath.Join(good, "go.mod"), "module good\n\ngo 1.24\n")
+	write(t, filepath.Join(good, ".orion-golangci.yml"), "version: \"2\"\nlinters:\n  default: none\n  enable:\n    - staticcheck\n")
+	mr, err := ProveNewBehavior(ctx, good, []Case{
+		{Modality: "verify_command", Verify: &VerifyCommand{
+			Tool: "golangci-lint", Args: []string{"config", "verify", "--config", ".orion-golangci.yml"},
+			MustExitZero: true, ConfigValidates: true,
+			ConfigFailRE: "(can't load|cannot load|unknown linter|unsupported version|invalid config)",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mr.Pass {
+		t.Fatalf("a valid config must verify (directly or via the offline fallback):\n%s", mr.Output)
+	}
+
+	bad := t.TempDir()
+	write(t, filepath.Join(bad, "go.mod"), "module bad\n\ngo 1.24\n")
+	write(t, filepath.Join(bad, ".orion-golangci.yml"), "version: \"2\"\nlinters:\n  default: none\n  enable:\n    - not-a-real-linter-xyz\n")
+	mr, err = ProveNewBehavior(ctx, bad, []Case{
+		{Modality: "verify_command", Verify: &VerifyCommand{
+			Tool: "golangci-lint", Args: []string{"config", "verify", "--config", ".orion-golangci.yml"},
+			MustExitZero: true, ConfigValidates: true,
+			ConfigFailRE: "(can't load|cannot load|unknown linter|unsupported version|invalid config)",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mr.Pass {
+		t.Fatalf("a broken config must FAIL even through the offline fallback:\n%s", mr.Output)
 	}
 }

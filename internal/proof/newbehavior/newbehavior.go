@@ -265,6 +265,21 @@ func proveVerify(ctx context.Context, dir string, v VerifyCommand) (truthalign.O
 		return truthalign.ObligationStatus{Executed: false}, "verifier refused/failed to launch: " + err.Error()
 	}
 	out := stdout + stderr
+	// A source-built golangci-lint has no embedded config schema and fetches it
+	// over the (correctly denied) network, so `config verify` fails for TOOL-BUILD
+	// reasons, not config reasons. Degrade to the offline-equivalent load check —
+	// `linters --config <same>` parses and resolves the config with no network; a
+	// broken config (unknown linter, bad key) still fails loudly, so the gate is
+	// not weakened. Orion runs whatever build of the tool the developer has.
+	if v.Tool == "golangci-lint" && exit != 0 && offlineSchemaRE.MatchString(out) {
+		if cfg := configArgValue(v.Args); cfg != "" {
+			so2, se2, exit2, err2 := proofexec.RunTool(ctx, dir, "go", "golangci-lint", "linters", "--config", cfg)
+			if err2 == nil {
+				out = so2 + se2 + "\n[config schema not embedded in this golangci-lint build (network denied under proof); validated offline via `golangci-lint linters --config " + cfg + "`]"
+				exit = exit2
+			}
+		}
+	}
 	passed := true
 	if v.MustExitZero && exit != 0 {
 		passed = false
@@ -279,6 +294,24 @@ func proveVerify(ctx context.Context, dir string, v VerifyCommand) (truthalign.O
 	}
 	return truthalign.ObligationStatus{Executed: true, Passed: passed},
 		fmt.Sprintf("%s %v exit=%d configValidates=%v passed=%v: %s", v.Tool, v.Args, exit, v.ConfigValidates, passed, clip(out, 300))
+}
+
+// offlineSchemaRE recognizes golangci-lint's schema-fetch-over-network failure
+// (a build without the embedded schema under the egress-denied sandbox).
+var offlineSchemaRE = regexp.MustCompile(`jsonschema|compile schema|failing loading "https?://`)
+
+// configArgValue extracts the value following a --config flag (either
+// "--config x" or "--config=x"); "" when absent.
+func configArgValue(args []string) string {
+	for i, a := range args {
+		if a == "--config" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if v, ok := strings.CutPrefix(a, "--config="); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 // reMatch reports whether pattern (a regexp) matches s; a malformed pattern never matches.
