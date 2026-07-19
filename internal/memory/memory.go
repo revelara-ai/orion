@@ -624,6 +624,10 @@ func (s *Store) EvictToCapacity(ctx context.Context, tier Tier, keep int) error 
 	return tx.Commit()
 }
 
+// promoteFaultHook is a test-only fault-injection point inside the promotion
+// transaction (or-mija: crash-safety proof). nil in production.
+var promoteFaultHook func() error
+
 // Promotion thresholds (or-hd3.6): an MTM item earns durable LTM status once it is both hot
 // and repeatedly useful. Config-driven tuning is a later refinement (like the heat weights).
 const (
@@ -674,6 +678,15 @@ func (s *Store) Promote(ctx context.Context) (string, int, error) {
 		return "", 0, fmt.Errorf("memory promote: %w", err)
 	}
 	for _, id := range ids {
+		// Crash-safety fault point (or-mija): the whole batch lives in ONE tx, so
+		// an interruption here — injected in tests, a real crash in production —
+		// rolls back to a consistent pre-promotion state, never a partial batch.
+		if promoteFaultHook != nil {
+			if herr := promoteFaultHook(); herr != nil {
+				_ = tx.Rollback()
+				return "", 0, fmt.Errorf("memory promote: %w", herr)
+			}
+		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE memory_items SET tier=?, promotion_id=? WHERE id=?`, string(LTM), promotionID, id); err != nil {
 			_ = tx.Rollback()
