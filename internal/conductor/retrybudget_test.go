@@ -50,7 +50,7 @@ func TestPromptInstallsStackWideRetryBudget(t *testing.T) {
 	prov := &budgetProbeLLM{}
 	agent := NewOrionAgent(prov, oc, RoleTemplate{Project: "demo"})
 	_, err := agent.Prompt(context.Background(), "s1", "hi",
-		func(acp.Update) {}, func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil })
+		func(acp.Update) {}, func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{Outcome: "granted"}, nil })
 	if err != nil {
 		t.Fatalf("prompt: %v", err)
 	}

@@ -18,7 +18,7 @@ func toolResultContaining(t *testing.T, prov *fakeLLM, marker string) string {
 	agent := NewOrionAgent(prov, oc, RoleTemplate{Project: "demo"})
 	if _, err := agent.Prompt(context.Background(), "s1", "go",
 		func(acp.Update) {},
-		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil }); err != nil {
+		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{Outcome: "granted"}, nil }); err != nil {
 		t.Fatal(err)
 	}
 	for _, m := range prov.lastReq.Messages {

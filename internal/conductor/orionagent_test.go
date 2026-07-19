@@ -89,7 +89,12 @@ func TestOrionAgentDrivesSpecToRatification(t *testing.T) {
 	var updates []acp.Update
 	_, err := agent.Prompt(context.Background(), "s1", "build a time service",
 		func(u acp.Update) { updates = append(updates, u) },
-		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil })
+		func(acp.PermissionRequest) (acp.PermissionResult, error) {
+			// or-7xw1: consent-recording tools (ratify_spec, …) now raise a real
+			// approval card; this scripted developer grants — the one-shot flow is
+			// agent-driven WITH the human's consent, never instead of it.
+			return acp.PermissionResult{Outcome: "granted"}, nil
+		})
 	if err != nil {
 		t.Fatalf("prompt: %v", err)
 	}
@@ -145,7 +150,10 @@ func TestOrionAgentRatifiesThenBuildsInOneShot(t *testing.T) {
 	var updates []acp.Update
 	_, err := agent.Prompt(context.Background(), "s1", "build a time service",
 		func(u acp.Update) { updates = append(updates, u) },
-		func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil })
+		func(acp.PermissionRequest) (acp.PermissionResult, error) {
+			// or-7xw1: the consent card fires for ratify_spec; the scripted developer grants.
+			return acp.PermissionResult{Outcome: "granted"}, nil
+		})
 	if err != nil {
 		t.Fatalf("prompt: %v", err)
 	}
@@ -205,7 +213,7 @@ func TestOrionAgentCapturesRequirementThenRatifies(t *testing.T) {
 	agent := NewOrionAgent(prov, oc, RoleTemplate{Project: "demo"})
 
 	_, err := agent.Prompt(context.Background(), "s1", "time service with tz",
-		func(acp.Update) {}, func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil })
+		func(acp.Update) {}, func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{Outcome: "granted"}, nil })
 	if err != nil {
 		t.Fatalf("prompt: %v", err)
 	}
@@ -231,7 +239,7 @@ func TestOrionAgentRejectsBadDecisionKey(t *testing.T) {
 	}}
 	agent := NewOrionAgent(prov, oc, RoleTemplate{Project: "demo"})
 	_, err := agent.Prompt(context.Background(), "s1", "build a time service",
-		func(acp.Update) {}, func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{}, nil })
+		func(acp.Update) {}, func(acp.PermissionRequest) (acp.PermissionResult, error) { return acp.PermissionResult{Outcome: "granted"}, nil })
 	if err != nil {
 		t.Fatalf("prompt: %v", err)
 	}
