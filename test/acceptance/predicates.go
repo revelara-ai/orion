@@ -172,7 +172,7 @@ var predicates = []predicate{
 	{"self-evolution", "generation LTM never reaches proof prompt", kindGoTest,
 		`go test ./internal/contextengine/... -run TestProofDomainExcludesGenerationMemory`},
 	{"self-evolution", "self-evolution regression gate", kindGoTest,
-		`go test ./internal/memory/... -run TestSelfEvolutionRegressionGate`},
+		`go test ./internal/selfevolve/... -run TestPromoteCandidatesFailsClosed`},
 	{"self-evolution", "LTM evolution rollback", kindGoTest,
 		`go test ./internal/memory/... -run TestPromotionReversible`},
 	{"self-evolution", "developer-scoped LTM redacts project literals", kindGoTest,
