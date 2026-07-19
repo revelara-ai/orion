@@ -2,6 +2,7 @@ package behavioral
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -33,6 +34,13 @@ type LangProver interface {
 	// artifact: killed/total behavior-changing mutants. total==0 = unmeasured.
 	MutationScore(ctx context.Context, artifactDir string, corpusFiles map[string]string, entrySym string, unitPkgs []string) (killed, total int, err error)
 }
+
+// ErrMutationUnsupported is returned by a LangProver whose language has no
+// mutation engine — a declared capability fact. The shared gate labels the mode
+// REDUCED (test-pass without a fault-catching measurement) instead of
+// Inconclusive: Inconclusive is reserved for an engine that exists but could
+// not measure (a corpus-quality/infra signal).
+var ErrMutationUnsupported = errors.New("mutation testing not supported for this language")
 
 var provers = map[string]LangProver{}
 

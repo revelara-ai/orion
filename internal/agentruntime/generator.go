@@ -116,6 +116,21 @@ func (g AgentGenerator) Generate(ctx context.Context, req GenRequest, dir string
 // the program into the working directory via fs/write_text_file.
 func RenderPrompt(req GenRequest) string {
 	var b strings.Builder
+	// or-4y7.9: the language header dispatches on the ratified language; Go stays
+	// byte-identical, python states the library contract (no compile step — the
+	// proof imports the module and calls its surface).
+	if req.Language == "python" {
+		b.WriteString("Write a complete, runnable Python library for the following specification.\n")
+		if req.Description != "" {
+			b.WriteString("Goal: " + req.Description + "\n")
+		}
+		if req.Module != "" {
+			b.WriteString("Package (importable module) name: " + pyPkgName(req.Module) + "\n")
+		}
+		b.WriteString("The proof harness imports the module and calls its exported functions directly; signatures must match the case expressions exactly. Use only the standard library.\n")
+		b.WriteString("Write all files into the working directory via fs/write_text_file, then end the turn.\n")
+		return b.String()
+	}
 	b.WriteString("Write a complete, compilable Go program for the following specification.\n")
 	if req.Description != "" {
 		b.WriteString("Goal: " + req.Description + "\n")
@@ -181,4 +196,20 @@ func IsRefusalStop(stop string) bool {
 		return true
 	}
 	return false
+}
+
+// pyPkgName derives the importable python package name from the ratified module
+// path: the last path segment, lowered, with dashes/dots flattened to
+// underscores (python identifiers cannot carry them).
+func pyPkgName(module string) string {
+	seg := module
+	if i := strings.LastIndex(seg, "/"); i >= 0 {
+		seg = seg[i+1:]
+	}
+	seg = strings.ToLower(seg)
+	seg = strings.NewReplacer("-", "_", ".", "_").Replace(seg)
+	if seg == "" {
+		seg = "artifact"
+	}
+	return seg
 }

@@ -70,6 +70,11 @@ func ExportProvenCode(srcDir, destDir string, es spec.ExecutableSpec) ([]string,
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create output dir: %w", err)
 	}
+	// or-4y7.9: the export manifest dispatches on the ratified language; the Go
+	// path below is V2.0 verbatim.
+	if es.Decisions["direction.language"] == "python" {
+		return exportPyProvenCode(srcDir, destDir, es)
+	}
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
 		return nil, fmt.Errorf("read build dir: %w", err)
@@ -109,6 +114,58 @@ func ExportProvenCode(srcDir, destDir string, es spec.ExecutableSpec) ([]string,
 			return nil, fmt.Errorf("write analyzer: %w", err)
 		}
 		written = append(written, "cmd/analyze/main.go")
+	}
+	if err := os.WriteFile(filepath.Join(destDir, "ORION.md"), []byte(provenanceNote(es)), 0o644); err != nil {
+		return nil, fmt.Errorf("write provenance: %w", err)
+	}
+	written = append(written, "ORION.md")
+	sort.Strings(written)
+	return written, nil
+}
+
+// exportPyProvenCode exports a python artifact: every production *.py under the
+// build dir (package subtrees included), excluding the harness-authored corpus
+// and drivers (orion_*), test files (test_*), caches, and dot-dirs — the proof
+// corpus never ships (trust wall), same as the Go arm.
+func exportPyProvenCode(srcDir, destDir string, es spec.ExecutableSpec) ([]string, error) {
+	var written []string
+	err := filepath.WalkDir(srcDir, func(p string, d os.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		name := d.Name()
+		if d.IsDir() {
+			if strings.HasPrefix(name, ".") || name == "__pycache__" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(name, ".py") || strings.HasPrefix(name, "orion_") || strings.HasPrefix(name, "test_") {
+			return nil
+		}
+		rel, rerr := filepath.Rel(srcDir, p)
+		if rerr != nil {
+			return rerr
+		}
+		data, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return rerr
+		}
+		dst := filepath.Join(destDir, rel)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, data, 0o644); err != nil {
+			return err
+		}
+		written = append(written, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("export python sources: %w", err)
+	}
+	if len(written) == 0 {
+		return nil, fmt.Errorf("no python source files in build dir %s", srcDir)
 	}
 	if err := os.WriteFile(filepath.Join(destDir, "ORION.md"), []byte(provenanceNote(es)), 0o644); err != nil {
 		return nil, fmt.Errorf("write provenance: %w", err)

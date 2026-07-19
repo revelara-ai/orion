@@ -104,6 +104,14 @@ func (e *Engine) assemble(ctx context.Context, taskID, query string, domain Doma
 			for _, d := range fb.Decisions {
 				b.Constraints = append(b.Constraints, fmt.Sprintf("decision %s = %s", d.Key, d.Value))
 			}
+			// The ratified requirements/cases are categorical spec facts — the
+			// E2.5 sufficiency gate counts them as evidence (a greenfield unit
+			// case's package name has no other possible source: recall cannot
+			// know a surface that does not exist yet — found by the python
+			// tracer, or-4y7.9; the same holds for any greenfield unit case).
+			if fb.Spec.Requirements != "" {
+				b.Constraints = append(b.Constraints, "requirements: "+fb.Spec.Requirements)
+			}
 		}
 	}
 

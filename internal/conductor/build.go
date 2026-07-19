@@ -111,6 +111,13 @@ func directionBuildRefusal(es spec.ExecutableSpec) error {
 func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, aligner Aligner, onPhase PhaseSink, outRoot string) (finalRes BuildResult, finalErr error) {
 	if gen == nil {
 		gen = func(_ context.Context, gs sandbox.GenSpec, dir, _ string) (sandbox.GeneratedArtifact, error) {
+			// or-4y7.9: the deterministic fixture is a GO demo vehicle. Any other
+			// ratified language has no fixture — refuse loudly rather than emit a
+			// Go artifact that contradicts the direction; a real generator (vendor
+			// agent or native provider) is the non-Go path.
+			if gs.Language != "" && gs.Language != "go" {
+				return sandbox.GeneratedArtifact{}, fmt.Errorf("no deterministic fixture generator for language %q — configure a generation agent (ORION_AGENT) or a native provider", gs.Language)
+			}
 			return sandbox.GenerateTimeServiceFixture(dir, gs)
 		}
 	}
@@ -376,7 +383,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	})
 	conform := conformanceGate(ctx, store, proj.ID, pv.Tasks, onPhase)
 	observed := observedScopeFor(ctx, store, proj.ID)
-	intDir, integrated, ierr := integrateEpic(ctx, wtMgr, clusters, clusterWT, results, managed.Base, reprove, scopedWaveReprove(reprove), conform, observed, onPhase)
+	intDir, integrated, ierr := integrateEpic(ctx, wtMgr, clusters, clusterWT, results, managed.Base, reprove, scopedWaveReprove(reprove, es.Decisions["direction.language"]), conform, observed, onPhase)
 	if ierr != nil {
 		return BuildResult{}, fmt.Errorf("epic integration: %w", ierr)
 	}
@@ -756,13 +763,18 @@ func buildOneTask(ctx context.Context, store *contextstore.Store, gen Generator,
 			// not produce (the human answers, then the task re-runs).
 			onPhase.emit("Context", PhaseWarn, suffRep.String())
 			withLock(stateMu, func() {
+				// Resolve the project BEFORE opening the tx: the store holds ONE
+				// connection (SetMaxOpenConns(1)), so a read issued inside WithTx
+				// self-deadlocks the whole DAG (found by the python tracer — the
+				// Go spine never fails a task, so this branch had never run).
+				proj, _, perr := store.CurrentProjectSpec(ctx)
+				if perr != nil {
+					return
+				}
 				_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
-					if proj, _, perr := store.CurrentProjectSpec(ctx); perr == nil {
-						_, e := tx.Escalations().CreateDetailed(ctx, proj.ID, taskID,
-							"evidence insufficient for generation (E2.5 gate)", suffRep.String())
-						return e
-					}
-					return nil
+					_, e := tx.Escalations().CreateDetailed(ctx, proj.ID, taskID,
+						"evidence insufficient for generation (E2.5 gate)", suffRep.String())
+					return e
 				})
 			})
 			return taskResult{TaskID: taskID, Verdict: "Reject", Blocked: true,

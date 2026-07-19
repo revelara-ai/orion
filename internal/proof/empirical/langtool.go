@@ -6,6 +6,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/orchestrator/spec"
 	"github.com/revelara-ai/orion/internal/proof/proofexec"
+	"github.com/revelara-ai/orion/internal/proof/truthalign"
 	"github.com/revelara-ai/orion/internal/proof/unitprobe"
 )
 
@@ -28,6 +29,9 @@ type langTool interface {
 	// BuildUnitDriver builds the sandboxed unit-case driver (or-v9f.23):
 	// driver path, whether it built, and the build detail when it did not.
 	BuildUnitDriver(ctx context.Context, binDir string, unitCases []spec.BehavioralCase) (string, bool, string, error)
+	// UnitRound executes one round of unit cases against the built driver in the
+	// language's sandbox (or-4y7.9): per-case obligation statuses + failure detail.
+	UnitRound(ctx context.Context, driver string, unitCases []spec.BehavioralCase) (map[string]truthalign.ObligationStatus, string)
 }
 
 var langTools = map[string]langTool{}
@@ -58,6 +62,10 @@ func (goTool) Build(ctx context.Context, binDir string) (string, string, int, er
 
 func (goTool) BuildUnitDriver(ctx context.Context, binDir string, unitCases []spec.BehavioralCase) (string, bool, string, error) {
 	return unitprobe.BuildDriver(ctx, binDir, unitCases)
+}
+
+func (goTool) UnitRound(ctx context.Context, driver string, unitCases []spec.BehavioralCase) (map[string]truthalign.ObligationStatus, string) {
+	return unitprobe.RunRound(ctx, driver, unitCases)
 }
 
 func init() { registerLangTool(goTool{}) }

@@ -71,8 +71,12 @@ const (
 	fileMaxAssertions = 32
 )
 
-// validateUnitCase: the compile-time battery for unit cases.
-func validateUnitCase(c BehavioralCase) error {
+// validateUnitCaseFor is the compile-time battery for unit cases with the ratified language: the
+// expression checks dispatch (or-4y7.9) — Go parses with go/parser (verbatim);
+// python gets a shallow well-formedness gate here (balanced brackets/quotes),
+// with the AUTHORITATIVE `compile()` check done by the sandboxed interpreter in
+// the fast diagnostics tier (a Go parser cannot judge python syntax).
+func validateUnitCaseFor(c BehavioralCase, language string) error {
 	if c.Unit == nil {
 		return fmt.Errorf("unit case carries no unit payload")
 	}
@@ -101,15 +105,26 @@ func validateUnitCase(c BehavioralCase) error {
 				return fmt.Errorf("unit step %d: %w", i, err)
 			}
 		}
-		// The call must at least parse as a Go expression — a case the corpus
-		// cannot compile from must not anchor (deeper resolution is the corpus
-		// compile + the fast-tier diagnostic's job).
-		if _, err := parser.ParseExpr(st.Call); err != nil {
-			return fmt.Errorf("unit step %d: call does not parse as a Go expression: %v", i, err)
-		}
-		if st.Want != "" {
-			if _, err := parser.ParseExpr(st.Want); err != nil {
-				return fmt.Errorf("unit step %d: want does not parse as a Go literal/expression: %v", i, err)
+		// The call must at least parse as an expression of the ratified language —
+		// a case the corpus cannot compile from must not anchor (deeper resolution
+		// is the corpus compile + the fast-tier diagnostic's job).
+		if language == "python" {
+			if err := pyExprShallow(st.Call); err != nil {
+				return fmt.Errorf("unit step %d: call is not a plausible python expression: %v", i, err)
+			}
+			if st.Want != "" {
+				if err := pyExprShallow(st.Want); err != nil {
+					return fmt.Errorf("unit step %d: want is not a plausible python literal: %v", i, err)
+				}
+			}
+		} else {
+			if _, err := parser.ParseExpr(st.Call); err != nil {
+				return fmt.Errorf("unit step %d: call does not parse as a Go expression: %v", i, err)
+			}
+			if st.Want != "" {
+				if _, err := parser.ParseExpr(st.Want); err != nil {
+					return fmt.Errorf("unit step %d: want does not parse as a Go literal/expression: %v", i, err)
+				}
 			}
 		}
 		if st.Restart {
@@ -165,6 +180,47 @@ func validateFileCase(c BehavioralCase) error {
 				return fmt.Errorf("file assertion %d: %s takes no value", i, a.Kind)
 			}
 		}
+	}
+	return nil
+}
+
+// pyExprShallow is the intake-time well-formedness gate for a python
+// expression: brackets balanced outside string literals, quotes closed. The
+// sandboxed interpreter's compile() in the diagnostics tier is authoritative.
+func pyExprShallow(expr string) error {
+	var stack []rune
+	pairs := map[rune]rune{')': '(', ']': '[', '}': '{'}
+	var quote rune
+	escaped := false
+	for _, r := range expr {
+		if quote != 0 {
+			switch {
+			case escaped:
+				escaped = false
+			case r == '\\':
+				escaped = true
+			case r == quote:
+				quote = 0
+			}
+			continue
+		}
+		switch r {
+		case '\'', '"':
+			quote = r
+		case '(', '[', '{':
+			stack = append(stack, r)
+		case ')', ']', '}':
+			if len(stack) == 0 || stack[len(stack)-1] != pairs[r] {
+				return fmt.Errorf("unbalanced %q", string(r))
+			}
+			stack = stack[:len(stack)-1]
+		}
+	}
+	if quote != 0 {
+		return fmt.Errorf("unclosed string literal")
+	}
+	if len(stack) != 0 {
+		return fmt.Errorf("unclosed %q", string(stack[len(stack)-1]))
 	}
 	return nil
 }

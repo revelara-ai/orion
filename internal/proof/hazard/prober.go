@@ -65,3 +65,39 @@ func (goProber) SourceText(artifactDir string) string {
 func (goProber) ControlPresent(src string, u stpa.UCA) bool { return controlPresent(src, u) }
 
 func init() { registerProber(goProber{}) }
+
+// pyProber is Python's hazard source (or-4y7.9): all production *.py (test and
+// harness-authored orion_* files excluded), same order-independent token grep.
+type pyProber struct{}
+
+func (pyProber) Language() string { return "python" }
+
+func (pyProber) SourceText(artifactDir string) string {
+	var b strings.Builder
+	_ = filepath.WalkDir(artifactDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		name := d.Name()
+		if d.IsDir() {
+			if strings.HasPrefix(name, ".") || name == "__pycache__" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(name, ".py") && !strings.HasPrefix(name, "test_") && !strings.HasPrefix(name, "orion_") {
+			if data, rerr := os.ReadFile(p); rerr == nil {
+				b.Write(data)
+				b.WriteByte('\n')
+			}
+		}
+		return nil
+	})
+	return b.String()
+}
+
+func (pyProber) ControlPresent(src string, u stpa.UCA) bool {
+	return goProber{}.ControlPresent(src, u) // token grep is language-neutral
+}
+
+func init() { registerProber(pyProber{}) }

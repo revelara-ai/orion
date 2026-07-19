@@ -8,7 +8,8 @@ import (
 
 // TestLanguageCapabilityFromRegistry (or-4y7.1): direction.language's provable
 // set is sourced from the language registry, not a literal — so a registered
-// language (go) is provable and an unregistered one (python) is still refused.
+// language (go, and python since or-4y7.9) is provable and an unregistered one
+// (ruby) is still refused.
 // Registering a language is the ONLY way to make it provable.
 func TestLanguageCapabilityFromRegistry(t *testing.T) {
 	provable, ok := provableFor("direction.language")
@@ -30,9 +31,9 @@ func TestLanguageCapabilityFromRegistry(t *testing.T) {
 	if g := DirectionGaps(map[string]string{"direction.language": "go"}); len(g) != 0 {
 		t.Fatalf("go is registered → no gap, got %+v", g)
 	}
-	pyGaps := DirectionGaps(map[string]string{"direction.language": "python"})
+	pyGaps := DirectionGaps(map[string]string{"direction.language": "ruby"})
 	if len(pyGaps) != 1 || pyGaps[0].Key != "direction.language" {
-		t.Fatalf("python is not registered → must be a capability gap, got %+v", pyGaps)
+		t.Fatalf("ruby is not registered → must be a capability gap, got %+v", pyGaps)
 	}
 	// The other constrained rows stay static (not registry-driven).
 	if g := DirectionGaps(map[string]string{"direction.engine": "unreal"}); len(g) != 1 {

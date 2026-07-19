@@ -19,10 +19,17 @@ import (
 // The scoped pass is the regression posture (build the whole tree, test the
 // affected packages); the mandatory FULL bookend still proves the delivered
 // head whole.
-func scopedWaveReprove(full func(ctx context.Context, dir string) (bool, error)) WaveReprove {
+func scopedWaveReprove(full func(ctx context.Context, dir string) (bool, error), language string) WaveReprove {
 	return func(ctx context.Context, dir string, wave []decomposer.TaskCluster, preRev string) (bool, error) {
 		if full == nil {
 			return true, nil
+		}
+		// or-4y7.9: the scoped shortcut below is a GO blast-radius optimization
+		// (`go build ./...` + package-scoped `go test`). Any other ratified
+		// language takes the FULL language-aware reprove (proof.ProveAll
+		// dispatches by contract language) — never a Go build over non-Go trees.
+		if language != "" && language != "go" {
+			return full(ctx, dir)
 		}
 		// Soundness rule 1: an undeclared FileScope means the cluster may have
 		// touched anything — scope cannot be trusted; escalate to full.

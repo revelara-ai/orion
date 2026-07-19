@@ -14,7 +14,7 @@ func TestGenAdapterRegistry(t *testing.T) {
 	if genFor("") == nil || genFor("") != genFor("go") || genFor("go").Language() != "go" {
 		t.Fatal(`genFor("") must resolve to the go adapter`)
 	}
-	if genFor("python") != nil {
+	if genFor("ruby") != nil {
 		t.Fatal("an unregistered language must resolve to nil")
 	}
 

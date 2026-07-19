@@ -14,7 +14,7 @@ func TestProberRegistry(t *testing.T) {
 	if proberFor("") == nil || proberFor("") != proberFor("go") || proberFor("go").Language() != "go" {
 		t.Fatal(`proberFor("") must resolve to the go prober`)
 	}
-	if proberFor("python") != nil {
+	if proberFor("ruby") != nil {
 		t.Fatal("an unregistered language must resolve to nil")
 	}
 }

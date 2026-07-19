@@ -59,7 +59,7 @@ func (pyProver) SynthesizeCorpus(c testsynth.Contract, _ string) (map[string]str
 				fmt.Fprintf(&b, "        except Exception as e:\n")
 				fmt.Fprintf(&b, "            self.assertTrue(re.search(%q, str(e)), 'error %%r does not match %%r' %% (str(e), %q))\n", st.WantErrRE, st.WantErrRE)
 				fmt.Fprintf(&b, "        else:\n")
-				fmt.Fprintf(&b, "            self.fail('call %q was required to raise')\n", st.Call)
+				fmt.Fprintf(&b, "            self.fail('case %s: the call was required to raise')\n", cs.ID)
 			} else {
 				fmt.Fprintf(&b, "        got = eval(compile(%q, '<case>', 'eval'), env)\n", st.Call)
 				fmt.Fprintf(&b, "        want = eval(compile(%q, '<want>', 'eval'), {})\n", st.Want)
@@ -78,10 +78,10 @@ func (pyProver) RunTests(ctx context.Context, proofDir string) (string, int, err
 	return stdout + stderr, code, err
 }
 
-// MutationScore: UNMEASURED — no Python mutation engine yet. The shared
-// mutationGate turns (0, 0) into Inconclusive, never a silent pass.
+// MutationScore: python has no mutation engine yet — a DECLARED capability
+// fact; the shared gate labels the mode REDUCED (test-pass, quality unmeasured).
 func (pyProver) MutationScore(context.Context, string, map[string]string, string, []string) (int, int, error) {
-	return 0, 0, nil
+	return 0, 0, ErrMutationUnsupported
 }
 
 func init() { registerProver(pyProver{}) }

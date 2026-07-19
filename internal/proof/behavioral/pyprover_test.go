@@ -83,8 +83,9 @@ func TestPyCorpusRefusals(t *testing.T) {
 
 // TestPyProveEndToEndGreen (or-4y7.9): the full behavioral mode over a real
 // python library inside the sandbox — both obligation kinds (value + raise)
-// execute and pass, and the mode lands Inconclusive (mutation UNMEASURED),
-// never a silent pass.
+// execute and pass, and the mode PASSES with the explicit REDUCED label
+// (python declares no mutation engine — a capability fact, not Inconclusive;
+// the caveat must be visible in the output, never silent).
 func TestPyProveEndToEndGreen(t *testing.T) {
 	requirePySandbox(t)
 	art := t.TempDir()
@@ -105,11 +106,17 @@ func TestPyProveEndToEndGreen(t *testing.T) {
 			t.Errorf("obligation %s must execute and pass, got %+v\n%s", id, ob, mr.Output)
 		}
 	}
-	if !mr.Inconclusive {
-		t.Fatalf("python mutation is UNMEASURED — the mode must be Inconclusive, not a silent pass: %+v", mr)
+	if !mr.Pass || mr.Inconclusive {
+		t.Fatalf("a green python corpus is a REDUCED pass (declared no-engine), got %+v\n%s", mr, mr.Output)
 	}
-	if mr.Pass {
-		t.Fatal("Inconclusive must not read as Pass")
+	if !strings.Contains(mr.Output, "REDUCED") || !strings.Contains(mr.Output, "NOT SUPPORTED") {
+		t.Fatalf("the reduced-proof caveat must be explicit in the output:\n%s", mr.Output)
+	}
+	if _, ok := mr.Metrics["mutation_score"]; ok {
+		t.Fatal("an unmeasured mutation score must not be reported as a number")
+	}
+	if v, ok := mr.Metrics["mutation_supported"]; !ok || v != 0 {
+		t.Fatalf("the metrics must carry mutation_supported=0, got %v", mr.Metrics)
 	}
 }
 
