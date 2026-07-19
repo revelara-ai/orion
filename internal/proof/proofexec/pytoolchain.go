@@ -197,7 +197,7 @@ func pyRuntime() (pyRT, error) {
 		// The interpreter's own tree (bin + lib live under <root>/bin/python3.x).
 		addReal(filepath.Dir(filepath.Dir(bin)))
 		// Trusted-host prefix query (the python analog of `go env GOROOT`).
-		out, err := exec.Command(bin, "-E", "-S", "-c", "import sys;print(sys.base_prefix);print(sys.prefix)").Output() // #nosec G204 G702 -- trusted host interpreter resolution, no generated code
+		out, err := exec.Command(bin, "-E", "-S", "-c", "import sys;print(sys.base_prefix);print(sys.prefix)").Output() //nolint:gosec // trusted host interpreter resolution, no generated code
 		if err != nil {
 			pyErr = fmt.Errorf("proofexec: resolving %s prefix: %w", bin, err)
 			return
@@ -208,7 +208,7 @@ func pyRuntime() (pyRT, error) {
 		// Dynamic-library dirs (python is not static like go): ldd on the trusted
 		// host names every lib dir the interpreter loads. Best-effort — a static
 		// or musl python simply has none.
-		if lout, lerr := exec.Command("ldd", bin).Output(); lerr == nil { // #nosec G204 G702 -- trusted host binary inspection
+		if lout, lerr := exec.Command("ldd", bin).Output(); lerr == nil { //nolint:gosec // trusted host binary inspection
 			for _, line := range strings.Split(string(lout), "\n") {
 				// "libX.so => /path/libX.so (0x…)" and the loader line
 				// "<brew>/lib/ld.so => /lib64/ld-linux….so (0x…)" — take BOTH sides

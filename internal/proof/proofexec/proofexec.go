@@ -161,6 +161,19 @@ func RunTool(ctx context.Context, workdir, lang, tool string, args ...string) (s
 		// tool's host binary is bound here.
 		roBinds = append(roBinds, bin)
 	}
+	// Orion runs whatever build of a tool the user has — if the resolved binary
+	// is dynamically linked (a CGO-built golangci-lint, an interpreter), its
+	// loader dirs + usr-merge links must be visible in the jail or execvp
+	// ENOENTs. Static binaries contribute nothing here.
+	links := map[string]string{}
+	for d, t := range tc.Links() {
+		links[d] = t
+	}
+	lroots, llinks := hostLoaderDeps(bin)
+	roBinds = append(roBinds, lroots...)
+	for d, t := range llinks {
+		links[d] = t
+	}
 	argv := append([]string{bin}, args...)
 	env := tc.Env(workdir)
 	res, runErr := be.Run(ctx, sandbox.Spec{
@@ -168,8 +181,8 @@ func RunTool(ctx context.Context, workdir, lang, tool string, args ...string) (s
 		Argv:     argv,
 		Env:      env,
 		ROBinds:  roBinds,
-		Symlinks: tc.Links(), // usr-merge links for a dynamically-linked tool's loader (nil for Go)
-		AllowNet: false,       // default-deny egress — never true on this path
+		Symlinks: links,
+		AllowNet: false, // default-deny egress — never true on this path
 	})
 	return res.Stdout, res.Stderr, res.ExitCode, runErr
 }

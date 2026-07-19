@@ -159,14 +159,14 @@ func bringUpLoopback() error {
 		_     [22]byte
 	}
 	copy(ifr.Name[:], "lo")
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), syscall.SIOCGIFFLAGS, uintptr(unsafe.Pointer(&ifr))); errno != 0 { // #nosec G103 -- fixed-layout ifreq ioctl (lo up inside the netns)
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), syscall.SIOCGIFFLAGS, uintptr(unsafe.Pointer(&ifr))); errno != 0 { //nolint:gosec // fixed-layout ifreq ioctl (lo up inside the netns)
 		return fmt.Errorf("SIOCGIFFLAGS: %v", errno)
 	}
 	if ifr.Flags&syscall.IFF_UP != 0 {
 		return nil // already up (host run, or a kernel that pre-ups lo) — setting flags needs CAP_NET_ADMIN we may not have
 	}
 	ifr.Flags |= syscall.IFF_UP | syscall.IFF_RUNNING
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), syscall.SIOCSIFFLAGS, uintptr(unsafe.Pointer(&ifr))); errno != 0 { // #nosec G103 -- fixed-layout ifreq ioctl (lo up inside the netns)
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), syscall.SIOCSIFFLAGS, uintptr(unsafe.Pointer(&ifr))); errno != 0 { //nolint:gosec // fixed-layout ifreq ioctl (lo up inside the netns)
 		return fmt.Errorf("SIOCSIFFLAGS: %v", errno)
 	}
 	return nil
