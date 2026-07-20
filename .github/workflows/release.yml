@@ -35,6 +35,10 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT with contents:write on revelara-ai/homebrew-tap so goreleaser
+          # can push the generated Homebrew cask (GITHUB_TOKEN can't reach the
+          # tap repo). Set this secret before tagging or the release step fails.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       - name: Attest build provenance
         # Attestations are unavailable on PRIVATE repos (plan-gated), so a
