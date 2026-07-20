@@ -46,7 +46,7 @@ command exits 2 with a `not implemented` marker.
 | Command | What it does |
 |---|---|
 | `orion agent [show\|set <chain>\|clear]` | Coding agent for generation: show presets + status, set `claude[,gemini,codex]` (applies now, persists; `ORION_AGENT` env overrides), or clear back to the native provider. |
-| `orion agents` | Registered vendor-agent presets (claude / gemini / codex over ACP). |
+| `orion agents` | Discovered SUBAGENT definitions (~/.claude/agents, ./agents, AGENTS.md) — for the coding agent use `orion agent`. |
 | `orion skills` | The skill registry (trust-tiered; proof-tier skills are immutable at runtime). |
 | `orion conductor start --supervise` / `status` | Watchdog with bounded-backoff restarts (crash/restart/exhausted notify events); status reports running / WEDGED (live pid, stale heartbeat) / stopped. |
 | `orion service install\|uninstall\|status [--dry-run]` | User-level init unit (systemd/launchd) pointing at `orion boot --stay`: stale-pid cleanup, worktree reconcile, incomplete-run re-dispatch (run.resumed), then supervised conductor. |
