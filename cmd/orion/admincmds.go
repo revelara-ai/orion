@@ -23,7 +23,8 @@ func tuiCommands() []tui.Command {
 		{Name: "status", Help: "identity + component readiness summary", Run: func(string) string { return statusText() }},
 		{Name: "doctor", Help: "run a fresh component-health check", Run: func(string) string { return doctorText() }},
 		{Name: "skills", Help: "list discovered skills (agentskills.io)", Run: func(string) string { return skillsListText() }},
-		{Name: "agents", Help: "list discovered agent definitions", Run: func(string) string { return agentsListText() }},
+		{Name: "agent", Help: "coding agent for generation: show / set claude[,gemini,codex] / clear", Run: agentCommandText},
+		{Name: "agents", Help: "list discovered SUBAGENT definitions (~/.claude/agents etc.) — for the coding agent use /agent", Run: func(string) string { return agentsListText() }},
 		{Name: "evolve", Help: "promote proof-passed candidates into skills", Run: func(string) string { return evolveText() }},
 		{Name: "mcp", Help: "configure the revelara.ai MCP server (show/set <url>/clear/login/logout)", Async: mcpCommandAsync},
 	}

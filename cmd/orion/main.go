@@ -104,6 +104,8 @@ func run(args []string) int {
 			return cmdLogs(args[1:])
 		case "skills":
 			return cmdSkills(args[1:])
+		case "agent":
+			return cmdAgent(args[1:])
 		case "agents":
 			return cmdAgents(args[1:])
 		case "evolve":
@@ -161,6 +163,9 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, "orion: worktree reconcile:", err)
 		}
 	}
+
+	// or-wmv1: restore the persisted coding-agent choice (ORION_AGENT env wins).
+	restoreAgentPref(dir)
 
 	// or-f96q: before the TUI takes the terminal, offer to install any missing
 	// dependent tools ("you're missing {foo} — install now? [Y/n]"). Interactive
