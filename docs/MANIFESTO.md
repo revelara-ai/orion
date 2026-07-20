@@ -13,7 +13,7 @@ And Orion's reliability does not come from the model. Microservice architecture 
 
 Orion is the reliability layer of the agentic software development lifecycle.
 
-**In one line:** *Orion is an agentic coding chat — in the lineage of Claude Code, Pi, and Hermes — driven by an opinionated, proof-gated workflow that turns a developer's intent into proven, operable software. It is a control plane for agents, not an LLM client: it spawns and drives the developer's own coding agent (over the Agent Client Protocol) and gates everything it produces with independent, multi-modal proof — done means proven, never merely asserted.*
+**In one line:** *Orion is an agentic coding chat — in the lineage of Claude Code, Pi, and Hermes — driven by an opinionated, proof-gated workflow that turns a developer's intent into proven, operable software. It is a control plane for generation, not a generator: the coding arm is pluggable — the developer's own coding agent (Claude Code, Gemini CLI, or Codex, spawned and driven over the Agent Client Protocol) or Orion's built-in native provider — and either way, everything produced is gated by independent, multi-modal proof — done means proven, never merely asserted.*
 
 ---
 
@@ -233,7 +233,7 @@ On every task, Orion reasons with Polaris's controls catalog, knowledge base, an
 
 Orion is not a linter, a code-review tool, or a static analyzer. It does not run after the development loop; it governs the loop itself.
 
-Orion is not *just* another coding agent. Its interface is an agentic chat (Claude Code / Pi / Hermes lineage), but it does not write the code itself — it spawns and drives the developer's own coding agent and governs the loop, assuming adversarial behavior from the agents it orchestrates. Its value is the opinionated, proof-gated workflow, the governance, and the operability — not the generation.
+Orion is not *just* another coding agent. Its interface is an agentic chat (Claude Code / Pi / Hermes lineage), but generation is deliberately commodity and interchangeable: Orion can spawn and drive the developer's own coding agent over ACP (Claude Code, Gemini CLI, Codex — with failover), or generate through its built-in native provider. Either way it governs the loop and assumes adversarial behavior from whatever generated the code — the generator is structurally separated from the proof that grades it. Its value is the opinionated, proof-gated workflow, the governance, and the operability — not the generation.
 
 Orion is not an LLM client. It holds no API key and makes no inference calls; it spawns the developer's coding agent (which uses that agent's own auth — e.g. a Claude Max/Pro login) and drives it over the Agent Client Protocol. Orion's job is the workflow and the proof, not the model call.
 
