@@ -32,3 +32,36 @@ changelog:
 
 release:
   draft: true # a human clicks publish — releases are outward-facing
+
+# Homebrew distribution via the org's self-hosted tap (same pattern as
+# rvl-cli). Install: `brew install revelara-ai/tap/orion`.
+#
+# Requires a HOMEBREW_TAP_TOKEN secret (a PAT with contents:write on
+# revelara-ai/homebrew-tap) exported into the release job env — the default
+# GITHUB_TOKEN only has access to this repo, not the tap.
+homebrew_casks:
+  - name: orion
+    binaries:
+      - orion
+    repository:
+      owner: revelara-ai
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    homepage: "https://revelara.ai"
+    description: "The reliability layer of the agentic SDLC — a proof-gated harness from intent to independently proven software"
+    commit_author:
+      name: revelara-release-bot
+      email: release@revelara.ai
+    commit_msg_template: "brew: orion {{ .Tag }}"
+    # Skip publishing the cask for pre-releases.
+    skip_upload: auto
+    # Not Apple-notarised: strip the Gatekeeper quarantine attribute on
+    # install (no-op on Linux brew).
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/orion"]
+          end
