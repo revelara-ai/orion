@@ -11,6 +11,14 @@ builds:
       - CGO_ENABLED=0
     goos: [linux, darwin]
     goarch: [amd64, arm64]
+    # Reproducible builds: -trimpath strips absolute paths and mod_timestamp
+    # pins the binary mtime to the commit, so every run of a given tag produces
+    # BYTE-IDENTICAL archives → identical checksums. This guarantees the
+    # Homebrew cask (pushed during a run) always matches the published release
+    # assets, no matter how many times the release workflow runs for a tag.
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
       - -s -w -X main.version={{.Version}}
 
