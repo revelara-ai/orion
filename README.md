@@ -31,16 +31,21 @@ The developer converses with a single orchestrator — the **Conductor** — thr
 ## Install
 
 ```bash
-# From a release (linux/darwin × amd64/arm64, checksummed + provenance-attested):
-#   download from GitHub Releases, or once tags are published:
+# Homebrew (macOS + Linux) — the easiest path:
+brew install revelara-ai/tap/orion
+
+# Or with Go:
 go install github.com/revelara-ai/orion/cmd/orion@latest
 
-# From source:
+# Or from source:
 git clone https://github.com/revelara-ai/orion.git
 cd orion
 make build            # → bin/orion (version-stamped via git describe)
 make install          # → ~/.local/bin/orion
 ```
+
+Prebuilt binaries for every release (linux/darwin × amd64/arm64), checksummed
+and build-provenance-attested, are on the [Releases](https://github.com/revelara-ai/orion/releases) page.
 
 Prerequisites:
 
