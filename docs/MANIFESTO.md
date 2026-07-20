@@ -254,7 +254,7 @@ These are not idiosyncratic positions. Google SRE, describing how it is engineer
 - **Oversight moves up the abstraction ladder** to reviewing *designs, intent, and policies*, with humans co-authoring and approving specifications **before** code generation.
 - **Safety lives in deterministic, caller-agnostic boundaries** that hold "regardless of who or what is calling them," with the reasoning engine decoupled from the execution engine, least-privilege agent identity, circuit breakers, and dry-run actuation.
 
-When the team operating planet-scale production reaches the same conclusions independently, the thesis is not speculative. (See [docs/research/Google-SRE-AI-practices-2026-06-18.md](research/Google-SRE-AI-practices-2026-06-18.md) for the full mapping and the practices Orion adopts from it — autonomy levels, golden-data tiers, dynamic risk evaluation, fix-forward.)
+When the team operating planet-scale production reaches the same conclusions independently, the thesis is not speculative. Orion adopts several of the practices Google's SRE organization has published for AI-assisted operations — autonomy levels, golden-data tiers, dynamic risk evaluation, and a fix-forward posture.
 
 ---
 
