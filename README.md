@@ -83,8 +83,6 @@ The optional **revelara.ai** connection (reliability controls, incident knowledg
 | [docs/PRD/orion-v3.md](docs/PRD/orion-v3.md) | The current product direction (the Anchored Module Pipeline). |
 | [docs/PRD/orion-v2.md](docs/PRD/orion-v2.md) | The V2 spec — the proven spine V3 evolves (kept as the migration oracle). |
 | [docs/INDEX.md](docs/INDEX.md) | Master index of all design docs. |
-| [docs/SPEC/](docs/SPEC/) | Component specs: proof triad reconciliation, worktree/git handling, module proposer. |
-| [docs/research/](docs/research/) | Research feeding the design (harness-reliability, Google SRE practices, …). |
 
 ## Status
 
