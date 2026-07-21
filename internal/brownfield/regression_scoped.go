@@ -61,6 +61,7 @@ func baselineScopedSkip(ctx context.Context, repoDir string, patterns, skip []st
 		return TestResult{
 			Detected: true, Toolchain: tc.Name, Command: cmdShown,
 			Passed: pass, Output: clip(b.String(), 8000),
+			Failures: parseTestFailures(b.String()),
 		}, nil
 	}
 
@@ -72,6 +73,7 @@ func baselineScopedSkip(ctx context.Context, repoDir string, patterns, skip []st
 		Command:   strings.Join(argv, " "),
 		Passed:    err == nil,
 		Output:    clip(out, 8000),
+		Failures:  parseTestFailures(out),
 	}, nil
 }
 
@@ -176,8 +178,11 @@ func RegressionGateScoped(ctx context.Context, repoDir string, m RepoMap, skip [
 	}
 	res := RegressionResult{Before: before, Scope: scopeStamp}
 	if !before.Passed {
-		res.Reason = "baseline is RED before the change (within scope) — fix it green first"
-		return res, nil
+		if !baselineDeltaMode() {
+			res.Reason = "baseline is RED before the change (within scope) — fix it green first"
+			return res, nil
+		}
+		progress.emit("green-before", fmt.Sprintf("scoped baseline is RED (%d pre-existing failure(s)) — delta mode: requiring no NEW failures", len(before.Failures)))
 	}
 
 	progress.emit("green-after", "re-running the scoped suite with the change applied")
@@ -186,11 +191,7 @@ func RegressionGateScoped(ctx context.Context, repoDir string, m RepoMap, skip [
 		return RegressionResult{}, err
 	}
 	res.After = after
-	if !after.Passed {
-		res.Reason = "the change regressed the existing tests (green→red) within scope"
-		return res, nil
-	}
-	res.Held = true
+	doNoHarmVerdict(&res, " within scope")
 	return res, nil
 }
 

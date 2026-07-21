@@ -271,7 +271,9 @@ func TestChangeFailureWritesThenSecondRunConsults(t *testing.T) {
 	if _, err := ChangeAndProve(context.Background(), repo, store, gen2, "add a Note helper", nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(gen2.systems) == 0 || !strings.Contains(gen2.systems[0], "RECALLED MEMORY") || !strings.Contains(gen2.systems[0], "regressed the existing tests") {
+	// or-cp90: the delta verdict names the introduced failures instead of the
+	// old blanket "regressed the existing tests (green→red)" phrasing.
+	if len(gen2.systems) == 0 || !strings.Contains(gen2.systems[0], "RECALLED MEMORY") || !strings.Contains(gen2.systems[0], "introduced NEW test failures") {
 		t.Fatalf("the second run must consult the first run's failure analysis:\n%.600s", gen2.systems[0])
 	}
 }

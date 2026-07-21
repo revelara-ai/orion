@@ -122,8 +122,13 @@ func TestRegressionGateScopedTestOnlyFastPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if r.Held {
-			t.Fatalf("prod diff must gate on dependent c's red baseline: %+v", r)
+		// or-cp90 delta: c's pre-existing red no longer blocks, but its presence
+		// in PreExisting PROVES the dependent ran — the blast path was taken.
+		if !r.Held {
+			t.Fatalf("prod diff must hold under delta (c's red is pre-existing): %+v", r)
+		}
+		if len(r.PreExisting) != 1 || r.PreExisting[0] != "TestC" {
+			t.Fatalf("dependent c must have run and been named pre-existing: %+v", r.PreExisting)
 		}
 		if strings.Contains(r.Scope, "test-only") {
 			t.Fatalf("prod diff must not fast-path, scope: %q", r.Scope)

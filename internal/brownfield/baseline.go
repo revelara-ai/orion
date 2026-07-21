@@ -39,6 +39,35 @@ type TestResult struct {
 	Passed    bool   // the suite passed (the baseline is green)
 	Output    string // combined stdout+stderr (capped)
 	Skipped   string // why, if not detected
+	// Failures (or-cp90) are the run's failure identities (test names and
+	// build-failed packages), parsed from the UNCLIPPED output — Output is
+	// capped for display and can lose names the delta verdict needs.
+	Failures []string
+}
+
+// parseTestFailures collects the failure identities from a `go test` run's
+// combined output: top-level and subtest `--- FAIL:` names plus package-level
+// `FAIL <pkg> [build failed]` entries. This is the set the baseline-delta
+// verdict diffs (or-cp90); it MUST parse the unclipped output — TestResult.
+// Output is clipped for display and can lose failure names.
+func parseTestFailures(out string) []string {
+	var fails []string
+	for _, line := range strings.Split(out, "\n") {
+		trimmed := strings.TrimLeft(line, " \t")
+		if name, ok := strings.CutPrefix(trimmed, "--- FAIL: "); ok {
+			if i := strings.LastIndex(name, " ("); i > 0 {
+				name = name[:i]
+			}
+			fails = append(fails, strings.TrimSpace(name))
+			continue
+		}
+		if rest, ok := strings.CutPrefix(line, "FAIL\t"); ok {
+			if rest = strings.TrimSpace(rest); strings.HasSuffix(rest, "[build failed]") {
+				fails = append(fails, rest)
+			}
+		}
+	}
+	return fails
 }
 
 // DetectToolchain inspects repoDir for a known build/test toolchain. Go-only for
@@ -89,6 +118,7 @@ func baselineSkip(ctx context.Context, repoDir string, skip []string, progress P
 		Command:   strings.Join(argv, " "),
 		Passed:    err == nil,
 		Output:    clip(out, 8000),
+		Failures:  parseTestFailures(out),
 	}, nil
 }
 

@@ -71,8 +71,13 @@ func TestRegressionGateScopedExcludesOutOfScopePackage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fr.Held {
-		t.Fatalf("full gate must NOT hold (b is red): %+v", fr)
+	// or-cp90 delta semantics: b's pre-existing red no longer blocks the full
+	// gate, but it MUST be named as excluded — the full suite saw it.
+	if !fr.Held {
+		t.Fatalf("full gate must hold under delta (b's red is pre-existing): %+v", fr)
+	}
+	if len(fr.PreExisting) != 1 || fr.PreExisting[0] != "TestB" {
+		t.Fatalf("full gate must name b's pre-existing failure: %+v", fr.PreExisting)
 	}
 
 	scoped := newScopeRepo(t)
@@ -86,6 +91,11 @@ func TestRegressionGateScopedExcludesOutOfScopePackage(t *testing.T) {
 	}
 	if !sr.Held {
 		t.Fatalf("scoped gate must hold (b is out of a's blast radius): %+v", sr)
+	}
+	// The scope-exclusion contrast under delta: the scoped gate never RAN b, so
+	// it has nothing to exclude — unlike the full gate's named PreExisting.
+	if len(sr.PreExisting) != 0 {
+		t.Fatalf("scoped gate must not see out-of-scope b at all: %+v", sr.PreExisting)
 	}
 }
 
