@@ -167,3 +167,30 @@ func TestLoopIdenticalInputErrorsStillStall(t *testing.T) {
 		t.Error("streak nudge fired on an identical-input loop (the stall guard owns it)")
 	}
 }
+
+// or-nos3: the abort error must CARRY the per-strike evidence (inputs + error
+// text) — a bare "failed 6× consecutively" made live failures undiagnosable
+// from the session log (dogfood 2026-07-21: diffgen read_file streak).
+func TestLoopErrorStreakCarriesEvidence(t *testing.T) {
+	prov := &scriptedProvider{resp: []*llm.ChatResponse{
+		stallToolUse("add_case", `{"x":1}`),
+		stallToolUse("add_case", `{"x":2}`),
+		stallToolUse("add_case", `{"x":3}`),
+		stallToolUse("add_case", `{"x":4}`),
+		stallToolUse("add_case", `{"x":5}`),
+		stallToolUse("add_case", `{"x":6}`),
+	}}
+	reg := tools.NewRegistry()
+	failingCaseTool(reg)
+	loop := Loop{Provider: prov, Tools: reg, Supervisor: Supervisor{MaxIterations: 20}}
+	_, _, err := loop.Run(context.Background(), []llm.Message{llm.TextMessage(llm.RoleUser, "go")}, nil)
+	if !errors.Is(err, ErrErrorStreak) {
+		t.Fatalf("turn must end with the named error-streak error, got: %v", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{`{"x":1}`, `{"x":3}`, "ungrounded case", "not executed"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("abort error must carry strike evidence %q, got:\n%s", want, msg)
+		}
+	}
+}
