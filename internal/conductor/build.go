@@ -407,6 +407,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	//    extends once builds produce distinct modules.
 	wired := true
 	var driftLine string // the SystemValidate re-evaluation, cited in the PR handoff (or-tcs.7)
+	var untraced []string // dimension-3 surface (or-g2qf.1): feeds the tier-gated scope-creep gate at the bar
 	if integrated {
 		// or-4y7.8: dispatch the wireup analyzer by the ratified language; only an
 		// Orphaned verdict blocks (Wired + Unverified stay non-blocking), but an
@@ -420,7 +421,7 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		if haveAssembled {
 			driftProof = assembledReport
 		}
-		untraced := untracedSurface(es, contract.EntrySymbol, intDir)
+		untraced = untracedSurface(es, contract.EntrySymbol, intDir)
 		dr, drift := driftReport(es, driftProof, verdict, orphans, untraced)
 		driftLine = dr
 		status := PhaseDone
@@ -429,12 +430,14 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 		}
 		onPhase.emit("SystemValidate", status, dr)
 		// or-hik: scope creep ESCALATES — an inbox row the developer must
-		// answer, not just a warn line in the phase stream.
+		// answer, not just a warn line in the phase stream. The reason carries a
+		// surface fingerprint so a CHANGED surface files a fresh row (or-g2qf.1);
+		// resolving the row is the waiver the bar-time gate honors.
 		if len(untraced) > 0 {
+			reason, detail := scopeCreepEscalation(dr, untraced)
 			withLock(&stateMu, func() {
 				_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
-					_, e := tx.Escalations().CreateDetailed(ctx, proj.ID, "",
-						"scope creep (built not in spec)", dr)
+					_, e := tx.Escalations().CreateDetailed(ctx, proj.ID, "", reason, detail)
 					return e
 				})
 			})
@@ -514,8 +517,24 @@ func BuildDAG(ctx context.Context, store *contextstore.Store, gen Generator, ali
 	if b, rerr := os.ReadFile(filepath.Join(buildDir, "main.go")); rerr == nil { // #nosec G304 -- store-owned build dir
 		runbook, missingOps = delivery.VerifyRunbook(runbook, string(b))
 	}
-	res := delivery.EvaluateBar(outcome.barVerdict, barProof.PresentModes(), reliabilitytier.PolicyFor(tier), env, securityOK, missingOps)
+	policy := reliabilitytier.PolicyFor(tier)
+	res := delivery.EvaluateBar(outcome.barVerdict, barProof.PresentModes(), policy, env, securityOK, missingOps)
 	res = delivery.ApplySupplyChain(res, osv.Summary(), len(osv.Findings))
+	// or-g2qf.1: at a tier that rejects untraced surface, scope creep blocks the
+	// delivery unless a resolved scope-creep escalation covers every current
+	// entry (the developer waiver); new surface re-blocks. Other tiers keep the
+	// escalate-only behavior — the inbox row above is their whole gate.
+	if len(untraced) > 0 && policy.RejectUntracedSurface {
+		var resolved []contextstore.Escalation
+		withLock(&stateMu, func() {
+			_ = store.WithTx(ctx, func(tx *contextstore.Tx) error {
+				var e error
+				resolved, e = tx.Escalations().ResolvedByReason(ctx, proj.ID, scopeCreepReason)
+				return e
+			})
+		})
+		res = delivery.ApplyScopeCreep(res, untraced, scopeCreepCovered(resolved, untraced), policy)
+	}
 	// or-v9f.30: the earned-autonomy ladder — track record earns the tier
 	// policy's AutonomyAllowed; the red button must ALSO be clear (the
 	// permitting direction of AutonomousDeliverPermitted). Any escalation row

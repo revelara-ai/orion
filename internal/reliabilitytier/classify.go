@@ -44,7 +44,12 @@ type Policy struct {
 	// delivery decided WITHOUT live revelara.ai reliability context cannot
 	// attest the org's known controls/risks were considered, so it escalates.
 	RequireLiveReliabilityContext bool
-	AutonomyAllowed               bool // V2.3 only; always false in V2.0
+	// RejectUntracedSurface (or-g2qf.1): critical only — untraced artifact
+	// surface (routes/exports with no spec lineage, drift dimension 3) blocks
+	// delivery instead of only escalating; a resolved scope-creep escalation
+	// covering the surface is the developer waiver that unblocks.
+	RejectUntracedSurface bool
+	AutonomyAllowed       bool // V2.3 only; always false in V2.0
 }
 
 // PolicyFor returns the policy for a tier.
@@ -55,6 +60,7 @@ func PolicyFor(t Tier) Policy {
 		RequireAllModes:               t != Throwaway, // throwaway tools may ship on fewer modes
 		RequireEnvelope:               t == Critical,  // critical ships only with proven load + controlled fault classes documented
 		RequireLiveReliabilityContext: t == Critical,  // critical ships only on ATTESTED reliability context (or-xe7.6)
+		RejectUntracedSurface:         t == Critical,  // critical: scope creep blocks delivery, not just an inbox row (or-g2qf.1)
 		AutonomyAllowed:               false,          // V2.0/V2.1: human-mergeable only
 	}
 }
