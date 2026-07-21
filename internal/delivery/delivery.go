@@ -93,6 +93,19 @@ func ApplySupplyChain(res Result, findingSummary string, findings int) Result {
 	return Result{Decision: Escalate, Reason: "supply-chain gate failed: " + findingSummary}
 }
 
+// ApplyScopeCreep (or-g2qf.1): at a tier that rejects untraced surface, scope
+// creep blocks a bar-cleared delivery — untraced routes/exports (drift
+// dimension 3) escalate a Deliver unless the developer waived them. An
+// already-escalated result keeps its first (more fundamental) reason, and
+// non-enforcing tiers keep the escalate-only behavior (the caller's warn +
+// inbox escalation surface it there).
+func ApplyScopeCreep(res Result, untraced []string, waived bool, policy reliabilitytier.Policy) Result {
+	if res.Decision != Deliver || len(untraced) == 0 || waived || !policy.RejectUntracedSurface {
+		return res
+	}
+	return Result{Decision: Escalate, Reason: fmt.Sprintf("scope-creep gate failed: tier %s rejects artifact surface with no spec lineage: %s — remove it, add it to the spec, or waive via the scope-creep escalation", policy.Tier, strings.Join(untraced, ", "))}
+}
+
 func hasAllModes(modes []string) bool {
 	present := map[string]bool{}
 	for _, m := range modes {

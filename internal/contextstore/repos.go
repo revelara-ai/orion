@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ErrNotFound is returned when a requested row does not exist.
@@ -1099,6 +1100,40 @@ func (r *EscalationRepo) HasOpenForTask(ctx context.Context, projectID, taskID s
 		`SELECT count(*) FROM escalations WHERE project_id=? AND task_id=? AND resolved=0`,
 		projectID, taskID).Scan(&n)
 	return n > 0, err
+}
+
+// ResolvedByReason returns a project's RESOLVED escalations whose reason
+// starts with the given prefix — the scope-creep waiver lookup (or-g2qf.1).
+func (r *EscalationRepo) ResolvedByReason(ctx context.Context, projectID, reasonPrefix string) ([]Escalation, error) {
+	rows, err := r.tx.QueryContext(ctx,
+		`SELECT id, project_id, COALESCE(task_id,''), reason, detail, resolution, resolved, created_at, COALESCE(resolved_at,'')
+		 FROM escalations WHERE project_id=? AND resolved=1 AND reason LIKE ? ESCAPE '\'
+		 ORDER BY created_at ASC, id ASC`,
+		projectID, likePrefix(reasonPrefix))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Escalation
+	for rows.Next() {
+		var e Escalation
+		var resolved int
+		if err := rows.Scan(&e.ID, &e.ProjectID, &e.TaskID, &e.Reason, &e.Detail, &e.Resolution, &resolved, &e.CreatedAt, &e.ResolvedAt); err != nil {
+			return nil, err
+		}
+		e.Resolved = resolved != 0
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// likePrefix escapes LIKE metacharacters in s and appends the wildcard, so a
+// literal prefix match cannot be widened by % or _ in the input.
+func likePrefix(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s + "%"
 }
 
 // Resolve closes an escalation with the human's decision note.
