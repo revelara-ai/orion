@@ -130,7 +130,9 @@ func TestStatusChromeShowsCwdAndContext(t *testing.T) {
 	m = feed(m, tea.WindowSizeMsg{Width: 100, Height: 24})
 	m = feed(m, streamMsg{u: acp.Update{Kind: "agent_message", Text: "hi"}})
 	v := m.View()
-	if !strings.Contains(v, "ctx") {
-		t.Errorf("status chrome should show a context indicator:\n%s", v)
+	// or-un7z: the cumulative figure is labeled 'total' — 'ctx' implied
+	// window occupancy and sent a developer chasing an impossible number.
+	if !strings.Contains(v, "total") {
+		t.Errorf("status chrome should show the cumulative-total indicator:\n%s", v)
 	}
 }
