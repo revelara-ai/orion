@@ -12,6 +12,7 @@ import (
 	"github.com/revelara-ai/orion/internal/brownfield"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/proof/newbehavior"
+	"github.com/revelara-ai/orion/internal/proof/proofexec"
 	"github.com/revelara-ai/orion/internal/tools"
 	"github.com/revelara-ai/orion/pkg/llm"
 )
@@ -173,7 +174,14 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 			cs.mu.Lock()
 			cs.intent, cs.cases, cs.supersedes, cs.ratified, cs.consumed = p.Intent, nil, nil, false, false
 			cs.mu.Unlock()
-			return fmt.Sprintf("change intent recorded: %s\n\n%s\n\nNext: propose_cases to draft the behavioral proof oracle.", p.Intent, clip(m.Digest(), 4000)), nil
+			out := fmt.Sprintf("change intent recorded: %s\n\n%s\n\n%s", p.Intent, clip(m.Digest(), 4000), proofexec.CapabilityManifest())
+			// or-fvkm: an intent implying a generation-time tool the host lacks
+			// surfaces the gap NOW — before cases, before any generation attempt
+			// burns a budget against an environmental invariant (CAST F2).
+			if gaps := capabilityGaps(p.Intent); len(gaps) > 0 {
+				out += "\n\nCAPABILITY GAP — resolve with the developer BEFORE proposing cases:\n- " + strings.Join(gaps, "\n- ")
+			}
+			return out + "\n\nNext: propose_cases to draft the behavioral proof oracle.", nil
 		},
 	})
 

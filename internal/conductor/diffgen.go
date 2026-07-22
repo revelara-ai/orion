@@ -10,6 +10,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/harness"
 	"github.com/revelara-ai/orion/internal/harnessconfig"
+	"github.com/revelara-ai/orion/internal/proof/proofexec"
 	"github.com/revelara-ai/orion/internal/tools"
 	"github.com/revelara-ai/orion/pkg/llm"
 )
@@ -92,6 +93,11 @@ func diffGenRole(intent, repoContext string, supersedes []string) string {
 		b.WriteString("- EXCEPTION — intentional behavior change: the change below DELIBERATELY changes behavior asserted by these existing tests: " + strings.Join(supersedes, ", ") + ". UPDATE those tests to assert the NEW behavior (do NOT preserve their old assertions). The regression check skips them; every OTHER test must still pass.\n")
 	}
 	b.WriteString("\n")
+	// or-fvkm: the generator must know the environment its output is proven
+	// under — code that fetches at build time or expects protoc under proof
+	// is an invariant failure the model cannot see coming otherwise.
+	b.WriteString(proofexec.CapabilityManifest())
+	b.WriteString("\n\n")
 	fmt.Fprintf(&b, "# Change intent\n%s\n\n", strings.TrimSpace(intent))
 	if repoContext != "" {
 		b.WriteString("# Codebase map (orient yourself here)\n")
