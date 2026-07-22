@@ -81,6 +81,14 @@ func toolEnv(root, workdir string) map[string]string {
 	env["GOROOT"] = root
 	env["GOCACHE"] = filepath.Join(workdir, ".orion-gocache") // writable: inside the workdir
 	env["GOPATH"] = filepath.Join(workdir, ".orion-gopath")
+	// or-mkxd: deps are provisioned OUTSIDE (generation time, host network),
+	// proven INSIDE — the hermetic build READS the host module cache while
+	// GOPROXY stays off. Without this, generated code importing any module
+	// not in the empty workdir GOPATH is an invariant '[build failed]'
+	// (or-4rxw: grpc-svc, three burned attempts). The cache is read-mostly,
+	// content-addressed, and holds no secrets; resolved from the HOST env
+	// before the HOME/GOPATH overrides above take effect.
+	env["GOMODCACHE"] = hostModCache()
 	env["GOTOOLCHAIN"] = "local" // never fetch a toolchain over the (denied) network
 	env["GOPROXY"] = "off"       // no module downloads under proof
 	env["GOENV"] = "off"         // never read/write the host go env file (no `go env -w` side effects)

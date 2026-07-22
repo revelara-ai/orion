@@ -226,7 +226,21 @@ func changeAttempt(ctx context.Context, repoRoot string, store *contextstore.Sto
 		// Use TWICE, part 1: floor signals ride the repo digest as advisory generator context.
 		// Use TWICE, part 1 (floor) + self-correction evidence (or-sk7u): the
 		// failure digest from the prior attempt rides the same generator context.
-		return DiffGenerator(ctx, provider, wt.Path, intent, m.Digest()+"\n"+reliabilityfloor.RenderContext(sigs)+feedback, supersedes)
+		if err := DiffGenerator(ctx, provider, wt.Path, intent, m.Digest()+"\n"+reliabilityfloor.RenderContext(sigs)+feedback, supersedes); err != nil {
+			return err
+		}
+		// or-mkxd: provision any NEW module deps host-side so the hermetic
+		// proof env (GOPROXY=off + host-GOMODCACHE read) can build them. A
+		// provisioning failure fails the attempt with a NAMED reason — far
+		// better evidence than the downstream '[build failed]' it prevents.
+		// (A resulting go.mod change correctly escalates the scoped gate to
+		// the full suite — dependency changes have repo-wide impact.)
+		if changed, err := ensureModDeps(ctx, wt.Path); err != nil {
+			return err
+		} else if changed {
+			sink.emit("apply-change", PhaseRunning, "new module deps detected — tidied and pre-fetched for the hermetic proof env")
+		}
+		return nil
 	}
 	// The gate's Progress heartbeat rides the same sink as the phase events —
 	// per-package completions land in Detail, so a 10-minute suite is visibly
