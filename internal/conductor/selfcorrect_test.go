@@ -298,3 +298,31 @@ func TestSessionMemoryBrief(t *testing.T) {
 		t.Fatalf("a seeded store must yield the brief, got %q", got)
 	}
 }
+
+// TestFailedAttemptsReclaimBranches (or-5g9k): EVERY failed attempt's branch
+// is reclaimed, not just the final one's — the dogfood leak that accumulated
+// orion-change-*-2..-6 branches and made a retry collide outright.
+func TestFailedAttemptsReclaimBranches(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs regression gates")
+	}
+	t.Setenv("ORION_CHANGE_ATTEMPTS", "2")
+	repo := initDogfoodRepo(t)
+	store := openStore(t)
+
+	gen := &seqGen{attempts: []map[string]string{
+		{"broken.go": breakingNote},
+		{"broken.go": breakingNote},
+	}}
+	res, err := ChangeAndProve(context.Background(), repo, store, gen, "add a Note helper", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Committed {
+		t.Fatal("both attempts break the suite; nothing must commit")
+	}
+	out, _ := exec.Command("git", "-C", repo, "branch", "--list", "orion-change-*").Output()
+	if strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("ALL failed attempts' branches must be reclaimed, still present:\n%s", out)
+	}
+}

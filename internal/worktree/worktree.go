@@ -351,7 +351,14 @@ func (m *Manager) Remove(ctx context.Context, issueID string, opts RemoveOpts) e
 // Remove's refusals apply), then force-deletes the branch (the branch name is
 // the issue id by construction). A missing branch is not an error.
 func (m *Manager) RemoveWithBranch(ctx context.Context, issueID string, opts RemoveOpts) error {
-	if err := m.Remove(ctx, issueID, opts); err != nil {
+	if _, statErr := os.Stat(m.PathFor(issueID)); statErr != nil {
+		// or-5g9k: the worktree dir is already gone (a prior per-attempt Remove,
+		// a crash) — early-returning here leaked the branch and made retries
+		// collide on `worktree add -b`. Prune the ghost registration (git still
+		// considers the branch checked out by it, so -D would refuse), then fall
+		// through to the branch delete. Idempotent: both gone → no-op success.
+		_ = m.Prune()
+	} else if err := m.Remove(ctx, issueID, opts); err != nil {
 		return err
 	}
 	if out, err := m.git("branch", "-D", issueID); err != nil && !strings.Contains(out, "not found") {
