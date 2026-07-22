@@ -398,9 +398,34 @@ func TestRemoveWithBranchOneStep(t *testing.T) {
 	if out, _ := runGit(repo, "branch", "--list", "orion-change-x"); strings.TrimSpace(out) != "" {
 		t.Fatalf("the branch must be gone, got %q", out)
 	}
-	// Idempotence-ish: removing again errors on the unknown worktree (Remove's
-	// contract), never on the branch.
-	if err := m.RemoveWithBranch(ctx, "orion-change-x", RemoveOpts{Force: true}); err == nil || !strings.Contains(err.Error(), "unknown worktree") {
-		t.Fatalf("re-removal surfaces the worktree error: %v", err)
+	// or-5g9k: teardown is IDEMPOTENT — removing again (worktree and branch
+	// both already gone) succeeds as a no-op instead of erroring, so callers
+	// can always converge on "fully reclaimed".
+	if err := m.RemoveWithBranch(ctx, "orion-change-x", RemoveOpts{Force: true}); err != nil {
+		t.Fatalf("re-removal must be a no-op, got: %v", err)
+	}
+}
+
+// TestRemoveWithBranchAfterOutOfBandDirRemoval (or-5g9k): the leak that made
+// dogfood retries collide — the worktree dir already gone (a prior Remove or a
+// crash), the branch still held by a ghost registration. Teardown must prune
+// the ghost and still delete the branch instead of early-returning on
+// "unknown worktree" and leaking it.
+func TestRemoveWithBranchAfterOutOfBandDirRemoval(t *testing.T) {
+	ctx := context.Background()
+	repo := newRepo(t)
+	m := New(repo, nil)
+	wt, err := m.Create(ctx, "orion-change-leaky", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(wt.Path); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RemoveWithBranch(ctx, "orion-change-leaky", RemoveOpts{Force: true}); err != nil {
+		t.Fatalf("teardown with the dir already gone must still reclaim the branch: %v", err)
+	}
+	if out, _ := runGit(repo, "branch", "--list", "orion-change-leaky"); strings.TrimSpace(out) != "" {
+		t.Fatalf("the branch must be gone, got %q", out)
 	}
 }

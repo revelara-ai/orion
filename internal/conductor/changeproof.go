@@ -153,10 +153,12 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 		}
 		prevSnap = cur
 		if attempt < attempts {
-			// The failed attempt's worktree is uncommitted scratch — reclaim it
-			// best-effort so retries don't accumulate junk (or-kt5 tracks the
-			// general cleanup).
-			_ = mgr.Remove(ctx, res.issueID, worktree.RemoveOpts{Force: true})
+			// The failed attempt's worktree AND branch are uncommitted scratch —
+			// reclaim both best-effort (or-5g9k: Remove alone left one branch per
+			// failed attempt, and the accumulated debris eventually collided a
+			// retry outright). The evidence is persisted; the checkout is not
+			// the record.
+			_ = mgr.RemoveWithBranch(ctx, res.issueID, worktree.RemoveOpts{Force: true})
 			feedback = "\n\nPREVIOUS ATTEMPT FAILED — fix and retry. Do not repeat the same mistake. Evidence:\n" + digests[len(digests)-1]
 		}
 	}
