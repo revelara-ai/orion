@@ -38,6 +38,12 @@ type Tool struct {
 	// Run executes the tool with the model-provided JSON input and returns the
 	// tool_result content (a string the model reads back).
 	Run func(ctx context.Context, input json.RawMessage) (string, error)
+	// Preview, when set, renders the approval-card preview for a pending call
+	// (or-8noc): unlike the generic input-based preview, a closure here can
+	// carry SESSION state — e.g. the ratify card shows the oracle being
+	// locked, not the raw input JSON. Empty return falls back to the generic
+	// preview.
+	Preview func(input json.RawMessage) string
 }
 
 // Registry is an explicit, per-agent set of exposed tools.

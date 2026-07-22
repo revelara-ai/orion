@@ -43,3 +43,18 @@ func capabilityGaps(intent string) []string {
 	}
 	return gaps
 }
+
+// featureLikeIntent reports whether a change intent reads like NEW behavior
+// (or-fr0d): a regression-only oracle cannot prove a feature — a no-op
+// implementation passes it — so feature-shaped intents need either behavioral
+// cases or the developer's explicit regression-only agreement. Conservative
+// keyword scan; false negatives fall to the developer's card review.
+func featureLikeIntent(intent string) bool {
+	low := strings.ToLower(intent)
+	for _, w := range []string{"add ", "adds ", "support", "implement", "introduce", "new ", "feature", "create ", "build ", "expose "} {
+		if strings.Contains(low, w) {
+			return true
+		}
+	}
+	return false
+}
