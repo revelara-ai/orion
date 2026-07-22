@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -132,6 +133,7 @@ type sessionResetMsg struct {
 	sid string
 	err error
 }
+
 // drainTimeoutMsg unblocks a drain whose agent never acknowledged the cancel
 // (or-or3j): the gate is safe by default, but a wedged agent must not brick
 // the UI — the timeout surfaces a note and accepts input again.
@@ -145,7 +147,7 @@ func drainTimeoutCmd(gen int) tea.Cmd {
 	return tea.Tick(drainTimeout, func(time.Time) tea.Msg { return drainTimeoutMsg{gen: gen} })
 }
 
-type permMsg struct {                 // the agent requested a permission
+type permMsg struct { // the agent requested a permission
 	req   acp.PermissionRequest
 	reply chan acp.PermissionResult
 }
@@ -197,11 +199,12 @@ type Conversation struct {
 	// next. A single slot would let a second concurrent request overwrite — and
 	// orphan — the first gate goroutine; the queue serializes them, and
 	// cancel/quit denies every entry so no gate goroutine is left blocked.
-	permQueue     []pendingPermission
-	permExpanded  bool // a tool-permission card's diff preview is expanded
-	quitting      bool
-	quitArmed     bool   // a Ctrl+C at an idle empty prompt arms quit; a second one exits
-	brain         string // active brain label (native · model / offline …)
+	permQueue    []pendingPermission
+	permExpanded bool // a tool-permission card's diff preview is expanded
+	permBadKey   bool // last keypress on the card was unrecognized → flash the key hint (or-37d1)
+	quitting     bool
+	quitArmed    bool   // a Ctrl+C at an idle empty prompt arms quit; a second one exits
+	brain        string // active brain label (native · model / offline …)
 
 	// Init status banner (or-gik.3): the readiness report + identity, supplied by the launcher
 	// (which owns version/branch + the cached Polaris probe). Rendered as the empty-state body.
@@ -449,21 +452,30 @@ func (m Conversation) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// A pending TOOL-permission card is answered by single keys (y/a/n/e), never by
-		// typing into the input or recalling history.
+		// typing into the input or recalling history. Keys fold case (or-37d1: a
+		// caps-locked 'A' was silently ignored and the reflexive follow-up Enter
+		// picked allow_once — the developer chose always, got once).
 		if m.hasPerm() && m.permKind() == "tool" {
 			switch {
-			case t.Type == tea.KeyEnter, isRuneKey(t, 'y'):
+			case t.Type == tea.KeyEnter, isRuneKeyFold(t, 'y'):
 				return m, m.answerToolPerm("allow_once")
-			case isRuneKey(t, 'a'):
+			case isRuneKeyFold(t, 'a'):
 				return m, m.answerToolPerm("allow_always")
-			case t.Type == tea.KeyEsc, isRuneKey(t, 'n'):
+			case t.Type == tea.KeyEsc, isRuneKeyFold(t, 'n'):
 				return m, m.answerToolPerm("deny")
-			case isRuneKey(t, 'e'):
+			case isRuneKeyFold(t, 'e'):
+				m.permBadKey = false
 				m.permExpanded = !m.permExpanded
 				m.render()
 				return m, nil
 			}
-			return m, nil // ignore other keys while the card is up
+			// Any other key: visible feedback, never a silent swallow — a dead
+			// keypress followed by Enter must not silently pick the default.
+			if t.Type == tea.KeyRunes || t.Type == tea.KeySpace {
+				m.permBadKey = true
+				m.render()
+			}
+			return m, nil
 		}
 		switch t.Type {
 		case tea.KeyUp:
@@ -647,8 +659,11 @@ func (m *Conversation) handleEnter() tea.Cmd {
 
 // isRuneKey reports whether a key message is a single bare rune r (a tool-permission
 // shortcut like y/a/n/e).
-func isRuneKey(t tea.KeyMsg, r rune) bool {
-	return t.Type == tea.KeyRunes && len(t.Runes) == 1 && t.Runes[0] == r && !t.Alt
+// isRuneKeyFold matches a single-key answer regardless of case, so caps lock
+// or shift never turns a chosen answer into a silent no-op (or-37d1).
+func isRuneKeyFold(t tea.KeyMsg, r rune) bool {
+	return t.Type == tea.KeyRunes && len(t.Runes) == 1 && !t.Alt &&
+		unicode.ToLower(t.Runes[0]) == unicode.ToLower(r)
 }
 
 // hasPerm reports whether a permission is awaiting the human's answer.
@@ -665,7 +680,7 @@ func (m Conversation) permKind() string {
 
 // surfacePerm renders p's approval card as the active prompt and scrolls it in.
 func (m *Conversation) surfacePerm(p pendingPermission) {
-	m.permExpanded = false
+	m.permExpanded, m.permBadKey = false, false
 	if p.req.Kind == "tool" {
 		m.msgs = append(m.msgs, msg{role: "orion", kind: "tool_permission", tool: p.req.Tool, text: p.req.Preview, rationale: p.req.Rationale})
 		m.input.Placeholder = "y allow · a always · n deny"
@@ -704,7 +719,7 @@ func (m *Conversation) denyAllPerms() bool {
 		p.reply <- acp.PermissionResult{Outcome: "denied"}
 	}
 	m.permQueue = nil
-	m.permExpanded = false
+	m.permExpanded, m.permBadKey = false, false
 	return true
 }
 
@@ -723,7 +738,7 @@ func (m *Conversation) answerToolPerm(outcome string) tea.Cmd {
 	m.msgs = append(m.msgs, msg{role: "orion", text: decision})
 	m.resolveHeadPerm(outcome) // reply + pop + surface the next queued card, if any
 	if !m.hasPerm() {
-		m.permExpanded = false
+		m.permExpanded, m.permBadKey = false, false
 		m.input.Placeholder = ""
 	}
 	m.render()
@@ -1056,6 +1071,9 @@ func (m Conversation) toolPermCard(mm msg) string {
 	foot := choices
 	if truncated {
 		foot = dimStyle.Render(fmt.Sprintf("… +%d more · e expand", len(all)-len(shown))) + "\n" + choices
+	}
+	if m.permBadKey {
+		foot += "\n" + failGlyph.Render("unrecognized key") + dimStyle.Render(" — y allow once · a allow always · n deny · e expand")
 	}
 	return title + "\n" + why + body + "\n\n" + foot
 }

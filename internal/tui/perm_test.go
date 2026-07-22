@@ -149,6 +149,68 @@ func TestCancelDeniesAllQueuedPermissions(t *testing.T) {
 	}
 }
 
+// TestToolPermissionKeysCaseInsensitive (or-37d1): caps lock must not change
+// the answer — 'A' pressed for allow-always was silently ignored, and the
+// follow-up Enter picked allow_once. Every card key folds case.
+func TestToolPermissionKeysCaseInsensitive(t *testing.T) {
+	cases := map[string]string{"Y": "allow_once", "A": "allow_always", "N": "deny"}
+	for key, want := range cases {
+		m := newTestConvo(t)
+		reply := make(chan acp.PermissionResult, 1)
+		m = feed(m, permMsg{req: acp.PermissionRequest{Kind: "tool", Tool: "bash", Preview: "$ ls"}, reply: reply})
+		_ = feed(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+		select {
+		case res := <-reply:
+			if res.Outcome != want {
+				t.Errorf("key %q should resolve %q, got %q", key, want, res.Outcome)
+			}
+		default:
+			t.Errorf("key %q was silently ignored (case-sensitive match)", key)
+		}
+	}
+	// 'E' expands like 'e' — and must not resolve the permission.
+	m := newTestConvo(t)
+	m = feed(m, tea.WindowSizeMsg{Width: 70, Height: 30})
+	var b strings.Builder
+	for i := 0; i < 20; i++ {
+		b.WriteString("+added line placeholder\n")
+	}
+	reply := make(chan acp.PermissionResult, 1)
+	m = feed(m, permMsg{req: acp.PermissionRequest{Kind: "tool", Tool: "write_file", Preview: b.String()}, reply: reply})
+	m = feed(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("E")})
+	if strings.Contains(m.renderTranscript(), "more · e expand") {
+		t.Error("'E' should expand the preview like 'e'")
+	}
+	if !m.hasPerm() {
+		t.Error("'E' must not resolve the permission")
+	}
+	reply <- acp.PermissionResult{Outcome: "deny"} // drain
+}
+
+// TestToolPermissionBadKeyFeedback (or-37d1): an unrecognized key while the
+// card is up must produce VISIBLE feedback, not a silent swallow — a dead
+// keypress followed by a reflexive Enter silently picked the default.
+func TestToolPermissionBadKeyFeedback(t *testing.T) {
+	m := newTestConvo(t)
+	m = feed(m, tea.WindowSizeMsg{Width: 70, Height: 20})
+	reply := make(chan acp.PermissionResult, 1)
+	m = feed(m, permMsg{req: acp.PermissionRequest{Kind: "tool", Tool: "bash", Preview: "$ ls"}, reply: reply})
+	m = feed(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")})
+	select {
+	case <-reply:
+		t.Fatal("an unrecognized key must not answer the card")
+	default:
+	}
+	if !strings.Contains(ansi.Strip(m.renderTranscript()), "unrecognized key") {
+		t.Fatal("an unrecognized key must surface visible feedback on the card")
+	}
+	// A valid answer still works and the flash never sticks around after.
+	_ = feed(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if res := <-reply; res.Outcome != "allow_once" {
+		t.Fatalf("'y' after a bad key should still allow once, got %q", res.Outcome)
+	}
+}
+
 // 'e' toggles the preview expansion for a long diff (progressive disclosure).
 func TestToolPermissionExpand(t *testing.T) {
 	m := newTestConvo(t)
