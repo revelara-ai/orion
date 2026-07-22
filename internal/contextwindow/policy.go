@@ -9,7 +9,12 @@
 // (EstimateTokens, TokenCounter, ErrContextOverflow) live in package llm.
 package contextwindow
 
-import "github.com/revelara-ai/orion/pkg/llm"
+import (
+	"os"
+	"strconv"
+
+	"github.com/revelara-ai/orion/pkg/llm"
+)
 
 // Fractions of the window at which each layer engages. Guard sits below 1.0 to
 // leave room for the response tokens the model still needs to generate.
@@ -32,14 +37,38 @@ type Policy struct {
 	GuardAt   int // estimate ≥ this → hard limit; force-shrink before sending
 }
 
-// For derives the threshold policy from a context window.
+// DefaultContextTarget is the absolute ClearAt ceiling (tokens). Overflow
+// safety is correctly window-relative, but RE-SEND COST is not: on a
+// 1M-window model the 40% fraction let a ~400K steady-state context be
+// re-billed every loop iteration (or-txyn: 13M cumulative tokens on a small
+// change). Old tool-result bodies are re-fetchable from disk, so a tighter
+// working set trades cheap re-reads for a bounded bill. ORION_CONTEXT_TARGET
+// overrides; junk or non-positive values keep this default.
+const DefaultContextTarget = 100_000
+
+// For derives the threshold policy from a context window. ClearAt is the
+// LOWER of the window fraction and the absolute cost target; CompactAt and
+// GuardAt stay window-relative (they guard overflow, not spend).
 func For(window int) Policy {
+	clearAt := int(float64(window) * ClearFraction)
+	if t := contextTarget(); clearAt > t {
+		clearAt = t
+	}
 	return Policy{
 		Window:    window,
-		ClearAt:   int(float64(window) * ClearFraction),
+		ClearAt:   clearAt,
 		CompactAt: int(float64(window) * CompactFraction),
 		GuardAt:   int(float64(window) * GuardFraction),
 	}
+}
+
+func contextTarget() int {
+	if v := os.Getenv("ORION_CONTEXT_TARGET"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+			return n
+		}
+	}
+	return DefaultContextTarget
 }
 
 // WindowOf returns the provider's advertised context window, or fallback when it

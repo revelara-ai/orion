@@ -15,7 +15,9 @@ func TestThresholdsScaleWithWindow(t *testing.T) {
 		window                            int
 		wantClear, wantCompact, wantGuard int
 	}{
-		{1_000_000, 400_000, 700_000, 850_000},
+		// or-txyn: ClearAt is min(fraction·window, absolute cost target) — a
+		// 1M window caps at 100K instead of re-billing a 400K working set.
+		{1_000_000, 100_000, 700_000, 850_000},
 		{8_192, 3_276, 5_734, 6_963},
 	} {
 		p := For(tc.window)
@@ -67,3 +69,27 @@ func (noWindowProvider) ChatStream(context.Context, llm.ChatRequest, func(string
 }
 func (noWindowProvider) Models(context.Context) ([]llm.ModelInfo, error) { return nil, nil }
 func (noWindowProvider) Ping(context.Context) error                      { return nil }
+
+// or-txyn: ClearAt is capped by an ABSOLUTE cost target, not just a window
+// fraction — a 1M-window model otherwise re-bills a ~400K steady-state
+// context every loop iteration (observed: 13M cumulative tokens on a small
+// change). Overflow thresholds (CompactAt/GuardAt) stay window-relative.
+func TestClearAtAbsoluteCostTarget(t *testing.T) {
+	if got := For(1_000_000).ClearAt; got != 100_000 {
+		t.Fatalf("1M window must cap ClearAt at the 100K default cost target, got %d", got)
+	}
+	if got := For(128_000).ClearAt; got != int(128_000*ClearFraction) {
+		t.Fatalf("a small window keeps the fractional ClearAt, got %d", got)
+	}
+	t.Setenv("ORION_CONTEXT_TARGET", "50000")
+	if got := For(1_000_000).ClearAt; got != 50_000 {
+		t.Fatalf("ORION_CONTEXT_TARGET must override the cap, got %d", got)
+	}
+	t.Setenv("ORION_CONTEXT_TARGET", "junk")
+	if got := For(1_000_000).ClearAt; got != 100_000 {
+		t.Fatalf("junk env degrades to the default cap, got %d", got)
+	}
+	if got := For(1_000_000); got.CompactAt != 700_000 || got.GuardAt != 850_000 {
+		t.Fatalf("overflow thresholds stay window-relative, got %+v", got)
+	}
+}
