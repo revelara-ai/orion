@@ -63,6 +63,9 @@ func TestRegressionGateNeedsGreenBaseline(t *testing.T) {
 	if testing.Short() {
 		t.Skip("runs go test")
 	}
+	// or-cp90: green-before-required is now the STRICT mode; the default (delta)
+	// holds a harmless change against a red baseline (see regression_delta_test).
+	t.Setenv("ORION_REGRESSION_BASELINE", "strict")
 	dir := t.TempDir()
 	must(t, filepath.Join(dir, "go.mod"), "module example.com/t\n\ngo 1.25\n")
 	must(t, filepath.Join(dir, "lib.go"), "package t\n\nfunc Add(a, b int) int { return a + b }\n")

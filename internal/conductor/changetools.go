@@ -389,6 +389,14 @@ func renderChangeResult(intent string, res ChangeResult) string {
 		fmt.Fprintf(&b, "  files: %s\n", strings.Join(res.FilesChanged, ", "))
 	}
 	fmt.Fprintf(&b, "  regression: do-no-harm held=%v\n", res.Regression.Held)
+	// or-cp90: the delta verdict's evidence — excluded pre-existing failures are
+	// named honestly (never a silent pass), and new failures name the blockers.
+	if n := len(res.Regression.PreExisting); n > 0 {
+		fmt.Fprintf(&b, "  pre-existing failures excluded from do-no-harm (%d): %s\n", n, strings.Join(res.Regression.PreExisting, ", "))
+	}
+	if len(res.Regression.NewFailures) > 0 {
+		fmt.Fprintf(&b, "  NEW failures introduced by the change: %s\n", strings.Join(res.Regression.NewFailures, ", "))
+	}
 	if d := res.FailureDigest(); d != "" {
 		// The failing run's evidence goes INTO the tool result so the model can
 		// self-correct (fix the diff / the cases) instead of asking a human for
