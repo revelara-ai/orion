@@ -13,6 +13,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/harness"
+	"github.com/revelara-ai/orion/internal/harnessconfig"
 	"github.com/revelara-ai/orion/internal/hookbus"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/pkg/llm"
@@ -330,6 +331,17 @@ func (a *OrionAgent) writeSpecArtifact(ctx context.Context, convo []llm.Message)
 	return path, nil
 }
 
+// conductorExtraRules is the Conductor's hot-read rules.md seam (or-vfy7) —
+// the grill and nativegen already had one; an edit to ~/.orion/harness/rules.md
+// applies on the next turn, no rebuild (harnessconfig hot-read contract).
+func conductorExtraRules() string {
+	extra := harnessconfig.Rules("conductor")
+	if extra == "" {
+		return ""
+	}
+	return "\n\n## Extra rules (harness config)\n" + extra
+}
+
 // systemPrompt primes Orion: the role persona + invariants + how to use the spec
 // tools to grill the intent into a ratified spec.
 func (a *OrionAgent) systemPrompt() string {
@@ -383,5 +395,8 @@ A proven change is committed on a REVIEW branch, not on the base branch (main) �
 
 ## Reliability grounding (revelara.ai)
 When your toolset includes revelara_* tools, you have the developer's revelara.ai reliability corpus: production incidents, the org's risk register, the controls catalog, distilled SRE knowledge, the service catalog, and a knowledge graph (e.g. revelara_search_incidents, revelara_search_risks, revelara_search_controls, revelara_search_knowledge, revelara_explore_graph). When a question touches reliability — assessing a change's risk, learning from past incidents, choosing controls, reviewing a design — GROUND it in these tools rather than answering from general knowledge, and cite what you find. If the developer asks for that reliability context and you have NO revelara_* tools in your toolset, do NOT claim the capability doesn't exist — the surface is simply not connected: tell them to run /mcp login to authenticate their revelara.ai session, after which the tools appear automatically.
-Keep replies short and conversational. You propose; the deterministic gates verify.` + maybeBeadsGuidance() + hookbus.Default.PromptAppends()
+Keep replies short and conversational. You propose; the deterministic gates verify.
+
+## Tool-call rationale (approval card)
+Immediately before ANY tool call that needs developer approval, state ONE short sentence of rationale in your visible text. The approval card shows the developer exactly what you said — and shows "(the model gave no explanation for this call)" when you said nothing. Never skip it to save tokens; an unexplained gated call reads as suspicious and gets denied.` + maybeBeadsGuidance() + conductorExtraRules() + hookbus.Default.PromptAppends()
 }
