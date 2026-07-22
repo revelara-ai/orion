@@ -9,6 +9,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/harness"
+	"github.com/revelara-ai/orion/internal/harnessconfig"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/internal/tools"
 	"github.com/revelara-ai/orion/pkg/llm"
@@ -159,7 +160,7 @@ func registerSubagentTool(r *tools.Registry, c *orchestrator.Conductor, provider
 				Provider:   provider,
 				Tools:      sub,
 				System:     subagentSystemPrompt(granted),
-				Supervisor: harness.Supervisor{MaxIterations: 12, Budget: c.Budget(), CapHint: "the subagent's conversation is discarded; its partial answer (if any) is returned to the caller"},
+				Supervisor: harness.Supervisor{MaxIterations: harnessconfig.ToolTurns("SUBAGENT", 60), Budget: c.Budget(), CapHint: "the subagent's conversation is discarded; its partial answer (if any) is returned to the caller"}, // or-csmy
 				Role:       "subagent",
 			}
 			var trace []string

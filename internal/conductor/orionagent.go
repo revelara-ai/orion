@@ -13,6 +13,7 @@ import (
 
 	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/harness"
+	"github.com/revelara-ai/orion/internal/harnessconfig"
 	"github.com/revelara-ai/orion/internal/hookbus"
 	"github.com/revelara-ai/orion/internal/orchestrator"
 	"github.com/revelara-ai/orion/pkg/llm"
@@ -204,7 +205,9 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 		// exploration + spec flow + edits, and 16 proved too small for real
 		// work (gemini finished or-4gib's edits and hit the cap before
 		// ratifying — the budget went to legitimate full-file reads).
-		Supervisor: harness.Supervisor{MaxIterations: 40, Budget: a.conductor.Budget()},
+		// or-csmy: sized for large-project work (a 40 cap died mid-recon on a
+		// cross-package feature); ORION_TOOL_TURNS[_MAIN] tunes without rebuild.
+		Supervisor: harness.Supervisor{MaxIterations: harnessconfig.ToolTurns("MAIN", 200), Budget: a.conductor.Budget()},
 		Role:       "conductor",
 		Approve:    a.approver(sessionID, ask), // per-tool approval prompt for mutating tools
 	}
