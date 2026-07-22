@@ -396,15 +396,20 @@ func (l *Loop) Run(ctx context.Context, convo []llm.Message, onEvent func(Event)
 				// Error-streak guard (or-mvr.13): ONE tool erroring over and over
 				// with VARYING inputs evades the identical-input detector but burns
 				// the iteration budget just the same (observed live: add_case
-				// grounding failures) — stop the turn cleanly with a named error.
-				return convo, resp, fmt.Errorf("harness: %w — %s failed %d× consecutively with varying inputs; the turn was stopped so the loop can regroup", ErrErrorStreak, tu.Name, errStreakAbortAt)
+				// grounding failures) — stop the turn cleanly with a named error
+				// carrying the per-strike evidence (or-nos3: a bare summary made
+				// live streaks undiagnosable from the session log).
+				return convo, resp, fmt.Errorf("harness: %w — %s failed %d× consecutively with varying inputs; the turn was stopped so the loop can regroup%s", ErrErrorStreak, tu.Name, errStreakAbortAt, streak.detail())
 			} else if streak.count >= errStreakNudgeAt {
 				content = fmt.Sprintf("strategy stall: %s has now failed %d times in a row with different inputs — the approach is not working. Re-read the last error carefully; try a fundamentally different approach or a different tool; or end your turn and report the blocker to the developer.", tu.Name, streak.count)
 				isErr = true
+				streak.strike(string(tu.Input), "(intercepted: streak nudge — not executed)")
 			} else {
 				content, isErr = l.dispatch(ctx, tu, resp.Text())
 				if !isErr {
 					streak.reset()
+				} else {
+					streak.strike(string(tu.Input), content)
 				}
 				// Boundary guard (or-mvr.7): whatever the tool returned becomes
 				// loop-safe text HERE — binary quarantined, oversized elided

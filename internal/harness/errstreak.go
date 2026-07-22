@@ -1,6 +1,10 @@
 package harness
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
 
 // ErrErrorStreak marks a turn stopped because ONE tool kept returning errors
 // past the abort threshold — with VARYING inputs, so the identical-input stall
@@ -25,8 +29,42 @@ const (
 // between read_file calls) are interleaved with other tools and never
 // accumulate. Complements stallTracker, which needs the input to be IDENTICAL.
 type errStreakTracker struct {
-	name  string
-	count int
+	name    string
+	count   int
+	strikes []streakStrike
+}
+
+// streakStrike is one recorded failure in a streak — the evidence the abort
+// error carries so a live streak is diagnosable from the session log
+// (or-nos3: a bare "failed 6×" left the dogfood diffgen failure opaque).
+type streakStrike struct {
+	input  string
+	result string
+}
+
+// strike records a failed (or guard-intercepted) call's evidence. Bounded:
+// inputs/results are clipped and only the newest errStreakAbortAt kept.
+func (s *errStreakTracker) strike(input, result string) {
+	s.strikes = append(s.strikes, streakStrike{input: clipStreak(input, 120), result: clipStreak(result, 200)})
+	if len(s.strikes) > errStreakAbortAt {
+		s.strikes = s.strikes[len(s.strikes)-errStreakAbortAt:]
+	}
+}
+
+// detail renders the recorded strikes as numbered evidence lines.
+func (s *errStreakTracker) detail() string {
+	var b strings.Builder
+	for i, st := range s.strikes {
+		fmt.Fprintf(&b, "\n  strike %d: input=%s → %s", i+1, st.input, st.result)
+	}
+	return b.String()
+}
+
+func clipStreak(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 // observe records a call to name and returns the consecutive same-tool error
@@ -43,4 +81,4 @@ func (s *errStreakTracker) observe(name string) int {
 }
 
 // reset clears the streak after the tool succeeded — the approach works.
-func (s *errStreakTracker) reset() { s.count = 0 }
+func (s *errStreakTracker) reset() { s.count, s.strikes = 0, nil }
