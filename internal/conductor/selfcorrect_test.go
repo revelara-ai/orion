@@ -328,3 +328,60 @@ func TestFailedAttemptsReclaimBranches(t *testing.T) {
 		t.Fatalf("ALL failed attempts' branches must be reclaimed, still present:\n%s", out)
 	}
 }
+
+// TestInvariantFailureStopsRetries (or-kf7o): an identical failure signature
+// across consecutive attempts marks an environmental wall — no code edit can
+// fix it, so the loop escalates instead of burning the remaining budget
+// (dogfood 2026-07-22: three attempts against 'grpc-svc [build failed]').
+func TestInvariantFailureStopsRetries(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs regression gates")
+	}
+	t.Setenv("ORION_CHANGE_ATTEMPTS", "3")
+	repo := initDogfoodRepo(t)
+	store := openStore(t)
+
+	gen := &seqGen{attempts: []map[string]string{
+		{"broken.go": breakingNote},
+		{"broken.go": breakingNote},
+		{"broken.go": breakingNote},
+	}}
+	res, err := ChangeAndProve(context.Background(), repo, store, gen, "add a Note helper", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Committed {
+		t.Fatal("identical breaking attempts must not commit")
+	}
+	if got := len(gen.systems); got != 2 {
+		t.Fatalf("the loop must stop after the SECOND identical failure (2 generator consults), got %d", got)
+	}
+	low := strings.ToLower(res.Reason)
+	if !strings.Contains(low, "invariant") || !strings.Contains(low, "environmental") {
+		t.Fatalf("the verdict must name the invariance and the environmental suspicion:\n%s", res.Reason)
+	}
+}
+
+// or-kf7o: the fingerprint is stable under ordering, includes environmental
+// candidates from the digest, and ignores post-newline detail (or-nos3 strike
+// evidence varies per attempt and must not defeat the match).
+func TestFailureFingerprint(t *testing.T) {
+	a := ChangeResult{Reason: "the change introduced NEW test failures within scope: TestX\nstrike 1: input=a"}
+	a.Regression.NewFailures = []string{"TestB", "TestA"}
+	b := ChangeResult{Reason: "the change introduced NEW test failures within scope: TestX\nstrike 1: input=DIFFERENT"}
+	b.Regression.NewFailures = []string{"TestA", "TestB"}
+	if failureFingerprint(a) != failureFingerprint(b) {
+		t.Fatal("ordering and post-newline detail must not change the fingerprint")
+	}
+	c := ChangeResult{Reason: "the change introduced NEW test failures within scope: TestY"}
+	c.Regression.NewFailures = []string{"TestA"}
+	if failureFingerprint(a) == failureFingerprint(c) {
+		t.Fatal("different failure sets must fingerprint differently")
+	}
+	d := ChangeResult{Reason: "regression held, but the new-behavior proof did not pass"}
+	d.Regression.Before.Output = "FAIL\torion-generated/grpc-svc [build failed]"
+	e := ChangeResult{Reason: "regression held, but the new-behavior proof did not pass"}
+	if failureFingerprint(d) == failureFingerprint(e) {
+		t.Fatal("environmental candidates ([build failed] packages) must contribute to the fingerprint")
+	}
+}

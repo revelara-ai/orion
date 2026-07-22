@@ -112,6 +112,7 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 	attempts := changeAttempts()
 	var digests []string
 	var prevSnap refinementSnapshot // or-mvr.5
+	var prevFP string               // or-kf7o: previous attempt's failure fingerprint
 	var res, lastMeaningful ChangeResult
 	var retryable bool
 	var err error
@@ -141,6 +142,20 @@ func ChangeAndProve(ctx context.Context, repoRoot string, store *contextstore.St
 			d = res.Reason
 		}
 		digests = append(digests, fmt.Sprintf("attempt %d: %s\n%s", attempt, res.Reason, d))
+		// Invariant-failure breaker (or-kf7o, CAST F1): an IDENTICAL failure
+		// signature across consecutive attempts marks a wall code edits cannot
+		// move — likely environmental (sandbox capabilities, dependencies,
+		// toolchain). Escalate now instead of burning the remaining budget
+		// re-proving it (dogfood 2026-07-22: three attempts vs 'grpc-svc
+		// [build failed]').
+		fp := failureFingerprint(res)
+		if attempt > 1 && fp != "" && fp == prevFP {
+			why := "the failure is INVARIANT under code changes — identical failure signature across attempts; likely ENVIRONMENTAL (sandbox capabilities, dependencies, toolchain), not fixable by regenerating. Escalating to the developer.\nsignature: " + fp
+			sink.emit("self-correct", PhaseWarn, why)
+			digests = append(digests, why)
+			break
+		}
+		prevFP = fp
 		// Net-negative-refinement detector (or-mvr.5): a retry that BROKE MORE
 		// than the attempt it was fixing terminates self-correction now.
 		cur := refinementSnapshot{NewTestFailures: len(res.Evidence.NewFailures)}
