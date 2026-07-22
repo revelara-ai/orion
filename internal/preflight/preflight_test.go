@@ -28,7 +28,7 @@ func TestPromptsAndInstallsOnYes(t *testing.T) {
 	var ran [][]string
 	var out bytes.Buffer
 	res := Run(Options{
-		LookPath:  lookWith("apt-get", "go", "gopls"),
+		LookPath:  lookWith("apt-get", "go", "gopls", "protoc"),
 		IsTTY:     true,
 		In:        strings.NewReader("y\n"),
 		Out:       &out,
@@ -50,7 +50,7 @@ func TestPromptsAndInstallsOnYes(t *testing.T) {
 func TestEmptyAnswerDefaultsToYes(t *testing.T) {
 	var ran [][]string
 	Run(Options{
-		LookPath:  lookWith("apt-get", "go", "gopls"),
+		LookPath:  lookWith("apt-get", "go", "gopls", "protoc"),
 		IsTTY:     true,
 		In:        strings.NewReader("\n"),
 		Out:       &bytes.Buffer{},
@@ -66,7 +66,7 @@ func TestEmptyAnswerDefaultsToYes(t *testing.T) {
 // decline is remembered — the next Run does not re-prompt for the same tool.
 func TestDeclinePersistsAndIsNotReasked(t *testing.T) {
 	prefs := filepath.Join(t.TempDir(), "toolprefs.json")
-	look := lookWith("apt-get", "go", "gopls")
+	look := lookWith("apt-get", "go", "gopls", "protoc")
 	var ran [][]string
 	runner := func(argv []string) error { ran = append(ran, argv); return nil }
 
@@ -95,7 +95,7 @@ func TestNonTTYNeverPrompts(t *testing.T) {
 	var ran [][]string
 	var out bytes.Buffer
 	Run(Options{
-		LookPath:  lookWith("apt-get"),
+		LookPath:  lookWith("apt-get", "protoc"),
 		IsTTY:     false,
 		In:        strings.NewReader("y\n"),
 		Out:       &out,
@@ -112,7 +112,7 @@ func TestNonTTYNeverPrompts(t *testing.T) {
 func TestAssumeYesInstallsWithoutReadingStdin(t *testing.T) {
 	var ran [][]string
 	Run(Options{
-		LookPath:  lookWith("apt-get", "go"),
+		LookPath:  lookWith("apt-get", "go", "protoc"),
 		IsTTY:     true,
 		In:        strings.NewReader(""), // nothing to read — must not matter
 		Out:       &bytes.Buffer{},
@@ -131,7 +131,7 @@ func TestAssumeYesInstallsWithoutReadingStdin(t *testing.T) {
 func TestAssumeYesWorksWithoutTTY(t *testing.T) {
 	var ran [][]string
 	Run(Options{
-		LookPath:  lookWith("apt-get", "go", "gopls"),
+		LookPath:  lookWith("apt-get", "go", "gopls", "protoc"),
 		IsTTY:     false,
 		In:        strings.NewReader(""),
 		Out:       &bytes.Buffer{},
@@ -149,7 +149,7 @@ func TestAssumeYesWorksWithoutTTY(t *testing.T) {
 func TestGoInstallRecipe(t *testing.T) {
 	var ran [][]string
 	Run(Options{
-		LookPath:  lookWith("apt-get", "go", "bwrap"),
+		LookPath:  lookWith("apt-get", "go", "bwrap", "protoc"),
 		IsTTY:     true,
 		In:        strings.NewReader("y\n"),
 		Out:       &bytes.Buffer{},
@@ -166,7 +166,7 @@ func TestNothingMissingIsSilent(t *testing.T) {
 	var ran [][]string
 	var out bytes.Buffer
 	res := Run(Options{
-		LookPath:  lookWith("apt-get", "go", "bwrap", "gopls", "bd"),
+		LookPath:  lookWith("apt-get", "go", "bwrap", "gopls", "bd", "protoc"),
 		IsTTY:     true,
 		In:        strings.NewReader(""),
 		Out:       &out,
@@ -184,7 +184,7 @@ func TestSuggestOnlyToolIsNeverExecuted(t *testing.T) {
 	var ran [][]string
 	var out bytes.Buffer
 	Run(Options{
-		LookPath:  lookWith("apt-get", "go", "bwrap", "gopls"),
+		LookPath:  lookWith("apt-get", "go", "bwrap", "gopls", "protoc"),
 		IsTTY:     true,
 		In:        strings.NewReader("y\ny\n"),
 		Out:       &out,
@@ -205,7 +205,7 @@ func TestNoPackageManagerFallsBackToSuggestion(t *testing.T) {
 	var ran [][]string
 	var out bytes.Buffer
 	Run(Options{
-		LookPath:  lookWith("go", "gopls", "bd"), // no apt/dnf/… and no bwrap
+		LookPath:  lookWith("go", "gopls", "bd", "protoc"), // no apt/dnf/… and no bwrap
 		IsTTY:     true,
 		In:        strings.NewReader("y\n"),
 		Out:       &out,
@@ -225,7 +225,7 @@ func TestNoPackageManagerFallsBackToSuggestion(t *testing.T) {
 func TestFailedInstallReportsFailure(t *testing.T) {
 	var out bytes.Buffer
 	res := Run(Options{
-		LookPath:  lookWith("apt-get", "go", "gopls"),
+		LookPath:  lookWith("apt-get", "go", "gopls", "protoc"),
 		IsTTY:     true,
 		In:        strings.NewReader("y\n"),
 		Out:       &out,
@@ -241,4 +241,18 @@ func TestFailedInstallReportsFailure(t *testing.T) {
 	if !failed {
 		t.Fatalf("a failed install must surface as a failed outcome, got %+v", res)
 	}
+}
+
+// or-mkxd: protoc is a generation-time tool (never needed under proof — the
+// .pb.go files are committed as source); PATH-first with a package recipe.
+func TestProtocRecipePresent(t *testing.T) {
+	for _, r := range recipes {
+		if r.Tool == "protoc" {
+			if len(r.Pkg) == 0 {
+				t.Fatal("protoc recipe must carry package-manager installs")
+			}
+			return
+		}
+	}
+	t.Fatal("protoc recipe missing from preflight")
 }

@@ -50,6 +50,17 @@ var recipes = []Recipe{
 		Why:        "beads issue tracking",
 		SuggestURL: "https://github.com/gastownhall/beads",
 	},
+	{
+		// or-mkxd: generation-time only — protoc output (.pb.go) is committed
+		// as ordinary source, so the hermetic proof env never needs it.
+		Tool: "protoc",
+		Why:  "protobuf/gRPC code generation (gRPC change intents fail at generation without it)",
+		Pkg: map[string]string{
+			"apt-get": "protobuf-compiler", "dnf": "protobuf-compiler",
+			"pacman": "protobuf", "zypper": "protobuf-devel",
+			"apk": "protobuf", "brew": "protobuf",
+		},
+	},
 }
 
 // pmOrder is the package-manager probe order; the first one present wins.
