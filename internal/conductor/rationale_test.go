@@ -3,6 +3,8 @@ package conductor
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -39,5 +41,37 @@ func TestApprovalCardCarriesRationale(t *testing.T) {
 	hook(context.Background(), "bash", json.RawMessage(`{"command":"ls"}`), sfy, "   ")
 	if strings.TrimSpace(got.Rationale) == "" || !strings.Contains(strings.ToLower(got.Rationale), "no explanation") {
 		t.Fatalf("a tool call with no rationale must say so, got %q", got.Rationale)
+	}
+}
+
+// TestSystemPromptRequiresApprovalRationale (or-vfy7): the compiled prompt
+// asks for a one-line rationale before approval-gated calls, so the card's
+// honest-empty line becomes an anomaly, not the norm. The card itself never
+// synthesizes — that stays pinned by TestApprovalCardCarriesRationale above.
+func TestSystemPromptRequiresApprovalRationale(t *testing.T) {
+	a := &OrionAgent{role: RoleTemplate{}}
+	s := a.systemPrompt()
+	if !strings.Contains(s, "Tool-call rationale") || !strings.Contains(s, "approval") {
+		t.Fatalf("compiled prompt must carry the approval-rationale rule; missing section in:\n%.400s", s)
+	}
+}
+
+// TestSystemPromptAppendsHotReadRules (or-vfy7): the Conductor prompt gains
+// the hot-read rules.md seam the grill and nativegen already have — an edit
+// applies on the next turn, no rebuild; an absent file appends nothing.
+func TestSystemPromptAppendsHotReadRules(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ORION_HARNESS_DIR", dir)
+	a := &OrionAgent{role: RoleTemplate{}}
+
+	if s := a.systemPrompt(); strings.Contains(s, "Extra rules (harness config)") {
+		t.Fatal("no rules.md → no extra-rules section")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "rules.md"), []byte("Always answer in haiku."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := a.systemPrompt()
+	if !strings.Contains(s, "Extra rules (harness config)") || !strings.Contains(s, "Always answer in haiku.") {
+		t.Fatalf("rules.md must hot-append to the Conductor prompt, tail:\n%s", s[max(0, len(s)-200):])
 	}
 }
