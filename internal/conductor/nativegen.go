@@ -37,7 +37,7 @@ func NativeGenerator(provider llm.Provider, acct *budget.Accountant, store *cont
 			Tools:      reg,
 			System:     generationRole(gs),
 			Role:       "generator",
-			Supervisor: harness.Supervisor{MaxIterations: 24, Budget: acct},
+			Supervisor: harness.Supervisor{MaxIterations: harnessconfig.ToolTurns("NATIVEGEN", 120), Budget: acct}, // or-csmy
 		}
 		if store != nil {
 			// or-mvr.8: a provider outage mid-turn checkpoints the conversation

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/revelara-ai/orion/internal/harness"
+	"github.com/revelara-ai/orion/internal/harnessconfig"
 	"github.com/revelara-ai/orion/internal/tools"
 	"github.com/revelara-ai/orion/pkg/llm"
 )
@@ -64,7 +65,7 @@ func DiffGenerator(ctx context.Context, provider llm.Provider, repoDir, intent, 
 		System:   diffGenRole(intent, repoContext, supersedes),
 		Role:     "diffgen",
 		Supervisor: harness.Supervisor{
-			MaxIterations: 40,
+			MaxIterations: harnessconfig.ToolTurns("DIFFGEN", 200), // or-csmy: large-change headroom; env-tunable
 			// This conversation is discarded with the worktree on failure —
 			// the session-resume advice would be a lie here.
 			CapHint: "this generation attempt is discarded; the change flow may retry with a corrected intent",
