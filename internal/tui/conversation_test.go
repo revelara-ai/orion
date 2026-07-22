@@ -253,3 +253,21 @@ func TestInFlightPlusPaletteHeightExact(t *testing.T) {
 		t.Fatalf("layout not height-exact with in-flight pane + palette: %d, want 24\n%s", got, v)
 	}
 }
+
+// or-un7z: unpriced spend must be LOUD — a $0.00 next to a huge token count
+// read as a broken gauge; and the trailing figure is the cumulative total,
+// not context occupancy, so it is labeled honestly.
+func TestSpendLineSurfacesUnpriced(t *testing.T) {
+	m := newTestConvo(t)
+	m.oc.Budget().RecordSpend("conductor", "mystery-model", 12345, 0, false)
+	line := m.spendLine()
+	if !strings.Contains(line, "unpriced") {
+		t.Fatalf("unpriced spend must be flagged on the spend line, got %q", line)
+	}
+	if strings.Contains(line, "ctx ~") {
+		t.Fatalf("the cumulative figure must not be labeled ctx (it is not context occupancy), got %q", line)
+	}
+	if !strings.Contains(line, "total ~") {
+		t.Fatalf("the cumulative figure is labeled total, got %q", line)
+	}
+}

@@ -16,6 +16,11 @@ var pricingTable = map[string]Pricing{
 	"anthropic/claude-haiku":  {0.8, 4, 0.08, 1},
 	"gemini/gemini-2.5-pro":   {1.25, 10, 0.31, 0},
 	"gemini/gemini-2.5-flash": {0.30, 2.5, 0.075, 0},
+	// or-un7z: verified against the official rate card 2026-07-22 (model
+	// launched 2026-05-19). gemini-3.5-pro is deliberately ABSENT — it has
+	// not shipped; this table carries only verified prices, never guesses
+	// (an unknown model books unpriced, loudly, instead).
+	"gemini/gemini-3.5-flash": {1.50, 9, 0.15, 0},
 	"openai/gpt-4o-mini":      {0.15, 0.6, 0.075, 0},
 	"openai/gpt-4o":           {2.5, 10, 1.25, 0},
 }

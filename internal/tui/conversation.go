@@ -1312,7 +1312,18 @@ func (m Conversation) renderAtPalette() string {
 
 func (m Conversation) spendLine() string {
 	s := m.oc.Budget().Snapshot()
-	line := fmt.Sprintf("spend: %d tok · $%.2f · %s · ctx ~%s", s.Tokens, s.Dollars, s.Wall.Round(time.Second), humanTokens(s.Tokens))
+	// or-un7z: the trailing figure is the CUMULATIVE billed total (every
+	// iteration re-bills the conversation), not context occupancy — labeling
+	// it 'ctx' sent a developer chasing an impossible 27x-window "context".
+	line := fmt.Sprintf("spend: %d tok · $%.2f · %s · total ~%s", s.Tokens, s.Dollars, s.Wall.Round(time.Second), humanTokens(s.Tokens))
+	// An unpriced model books $0 by design — say so, or the dollar gauge
+	// reads as broken next to a large token count.
+	for _, rs := range s.ByRole {
+		if rs.Unpriced {
+			line += " · " + warnGlyph.Render("unpriced model — $ is incomplete")
+			break
+		}
+	}
 	if s.HasCeiling {
 		line += fmt.Sprintf(" · ceiling:%s", s.State)
 	}
