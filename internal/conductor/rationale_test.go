@@ -75,3 +75,19 @@ func TestSystemPromptAppendsHotReadRules(t *testing.T) {
 		t.Fatalf("rules.md must hot-append to the Conductor prompt, tail:\n%s", s[max(0, len(s)-200):])
 	}
 }
+
+// TestSystemPromptWorkflowAffordances (or-cnl2): two rules from live dogfood.
+// Picking an issue is ONE bd ready call + a shortlist + stop (a session spent
+// its budget re-deriving the backlog, then ran baseline tests unasked); and
+// the full test suite is NEVER run in-session — the regression gate owns
+// baselines, memoizes green ones, and re-proves independently (a session ran
+// three identical 25-minute go test calls, two killed by timeouts,
+// re-prompting the developer each time).
+func TestSystemPromptWorkflowAffordances(t *testing.T) {
+	s := (&OrionAgent{role: RoleTemplate{}}).systemPrompt()
+	for _, want := range []string{"bd ready", "Working the backlog", "top 3", "full test suite", "regression gate"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("prompt must carry the workflow affordance %q", want)
+		}
+	}
+}
