@@ -16,7 +16,7 @@ import (
 // ACP gate (ask), mapping the outcome. "allow_always" records the tool so future calls
 // skip the prompt. A nil ask (headless/subagent — no interactive gate) yields a nil hook,
 // so those tools keep their own red-button gating and never prompt.
-func (a *OrionAgent) approver(sessionID string, ask acp.AskFunc) func(context.Context, string, json.RawMessage, tools.Safety, string) harness.Decision {
+func (a *OrionAgent) approver(sessionID string, reg *tools.Registry, ask acp.AskFunc) func(context.Context, string, json.RawMessage, tools.Safety, string) harness.Decision {
 	if ask == nil {
 		return nil
 	}
@@ -24,11 +24,21 @@ func (a *OrionAgent) approver(sessionID string, ask acp.AskFunc) func(context.Co
 		if a.toolAllowed(sessionID, name) {
 			return harness.DecisionAllow
 		}
+		// or-8noc: a tool-provided Preview (which can carry session state —
+		// e.g. the oracle a ratification locks) beats the generic input dump.
+		preview := toolPreview(name, input)
+		if reg != nil {
+			if t, ok := reg.Get(name); ok && t.Preview != nil {
+				if p := t.Preview(input); p != "" {
+					preview = p
+				}
+			}
+		}
 		res, err := ask(acp.PermissionRequest{
 			Kind:      "tool",
 			Tool:      name,
 			Title:     "Run " + name + "?",
-			Preview:   toolPreview(name, input),
+			Preview:   preview,
 			Rationale: approvalRationale(rationale),
 		})
 		if err != nil {

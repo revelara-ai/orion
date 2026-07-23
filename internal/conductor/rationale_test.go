@@ -24,7 +24,7 @@ func TestApprovalCardCarriesRationale(t *testing.T) {
 		got = r
 		return acp.PermissionResult{Outcome: "allow_once"}, nil
 	}
-	hook := a.approver("s1", ask)
+	hook := a.approver("s1", nil, ask)
 	sfy := tools.Safety{RequiresApproval: true}
 
 	// With a rationale: the card shows the why.

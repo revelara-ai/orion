@@ -11,7 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/revelara-ai/orion/internal/acp"
 	"github.com/revelara-ai/orion/internal/orchestrator"
+	"github.com/revelara-ai/orion/internal/tools"
 	"github.com/revelara-ai/orion/pkg/llm"
 )
 
@@ -256,9 +258,9 @@ func TestRatifyCasesRegressionOnly(t *testing.T) {
 		t.Fatalf("empty-oracle refusal must teach the regression_only escape, got: %v", err)
 	}
 
-	// The explicit flag ratifies a case-less oracle: build_change may proceed
-	// (regression gate is the oracle).
-	out, err := ratify.Run(context.Background(), json.RawMessage(`{"regression_only":true}`))
+	// The explicit flag + justification ratifies a case-less oracle (or-fr0d:
+	// never one bare flag away): build_change may proceed.
+	out, err := ratify.Run(context.Background(), json.RawMessage(`{"regression_only":true,"justification":"test-only change; the new tests are the proof"}`))
 	if err != nil {
 		t.Fatalf("regression_only ratification failed: %v", err)
 	}
@@ -276,7 +278,109 @@ func TestRatifyCasesRegressionOnly(t *testing.T) {
 	cs2.cases = []newbehavior.Case{{}}
 	cs2.mu.Unlock()
 	ratify2, _ := r2.Get("ratify_cases")
-	if _, err := ratify2.Run(context.Background(), json.RawMessage(`{"regression_only":true}`)); err == nil {
+	if _, err := ratify2.Run(context.Background(), json.RawMessage(`{"regression_only":true,"justification":"x"}`)); err == nil {
 		t.Fatal("regression_only with drafted cases is ambiguous and must refuse")
+	}
+}
+
+// TestRatifyRegressionOnlyGuards (or-fr0d): the weakest oracle carries a
+// stated why, and a feature-shaped intent needs the developer's explicit
+// agreement — a no-op implementation passes a regression-only oracle, so
+// nothing may reach it silently.
+func TestRatifyRegressionOnlyGuards(t *testing.T) {
+	newRatify := func(intent string) (tools.Tool, *changeSession) {
+		cs := &changeSession{intent: intent}
+		r := specTools(orchestrator.NewWithStore(openStore(t)), nil, cs, nil)
+		ratify, _ := r.Get("ratify_cases")
+		return ratify, cs
+	}
+
+	// No justification: refused, teaching what to state.
+	ratify, _ := newRatify("clean up the retry helpers")
+	if _, err := ratify.Run(context.Background(), json.RawMessage(`{"regression_only":true}`)); err == nil || !strings.Contains(err.Error(), "justification") {
+		t.Fatalf("bare regression_only must demand a justification, got: %v", err)
+	}
+
+	// Feature-shaped intent: refused without developer_confirmed, naming the risk.
+	ratify, _ = newRatify("add gRPC support to the inference API")
+	if _, err := ratify.Run(context.Background(), json.RawMessage(`{"regression_only":true,"justification":"seems fine"}`)); err == nil || !strings.Contains(err.Error(), "developer_confirmed") {
+		t.Fatalf("a feature intent must require the developer's explicit agreement, got: %v", err)
+	}
+
+	// Feature-shaped + developer confirmed: ratifies.
+	ratify, cs := newRatify("add gRPC support to the inference API")
+	if _, err := ratify.Run(context.Background(), json.RawMessage(`{"regression_only":true,"justification":"developer chose incremental landing","developer_confirmed":true}`)); err != nil {
+		t.Fatalf("developer-confirmed feature regression_only must ratify: %v", err)
+	}
+	if _, _, _, ratified := cs.snapshot(); !ratified {
+		t.Fatal("session must be ratified")
+	}
+
+	// Non-feature intent + justification: ratifies without confirmation.
+	ratify, _ = newRatify("refactor the retry helpers, no behavior change")
+	if _, err := ratify.Run(context.Background(), json.RawMessage(`{"regression_only":true,"justification":"pure refactor; existing tests pin behavior"}`)); err != nil {
+		t.Fatalf("non-feature regression_only with justification must ratify: %v", err)
+	}
+}
+
+// TestRatifyCardPreview (or-8noc): the approval card renders the ORACLE being
+// locked — intent + cases, or the regression-only claim + justification —
+// never a raw input dump.
+func TestRatifyCardPreview(t *testing.T) {
+	cs := &changeSession{intent: "normalize detail responses"}
+	r := specTools(orchestrator.NewWithStore(openStore(t)), nil, cs, nil)
+	ratify, _ := r.Get("ratify_cases")
+	if ratify.Preview == nil {
+		t.Fatal("ratify_cases must carry a session-aware Preview")
+	}
+	cs.mu.Lock()
+	cs.cases = []newbehavior.Case{{Modality: "synth_test", Synth: &newbehavior.SynthTest{Pkg: "internal/chat", Call: "Normalize(x)", Want: "id present"}}}
+	cs.mu.Unlock()
+
+	pv := ratify.Preview(json.RawMessage(`{}`))
+	for _, want := range []string{"LOCK THE PROOF ORACLE", "normalize detail responses", "internal/chat", "Normalize(x)"} {
+		if !strings.Contains(pv, want) {
+			t.Errorf("case-oracle preview missing %q:\n%s", want, pv)
+		}
+	}
+
+	cs.mu.Lock()
+	cs.cases = nil
+	cs.mu.Unlock()
+	pv = ratify.Preview(json.RawMessage(`{"regression_only":true,"justification":"test-only change"}`))
+	for _, want := range []string{"REGRESSION-ONLY", "test-only change"} {
+		if !strings.Contains(pv, want) {
+			t.Errorf("regression-only preview missing %q:\n%s", want, pv)
+		}
+	}
+	if pv = ratify.Preview(json.RawMessage(`{"regression_only":true}`)); !strings.Contains(pv, "(none given)") {
+		t.Errorf("a missing justification renders honestly, got:\n%s", pv)
+	}
+}
+
+// TestApproverPrefersToolPreview (or-8noc): the approver uses a tool's own
+// Preview when present; tools without one keep the generic input preview.
+func TestApproverPrefersToolPreview(t *testing.T) {
+	a := NewOrionAgent(nil, orchestrator.New(), RoleTemplate{})
+	reg := tools.NewRegistry()
+	reg.Register(tools.Tool{
+		Name: "fancy", Description: "t", InputSchema: json.RawMessage(`{"type":"object"}`),
+		Safety:  tools.Safety{RequiresApproval: true},
+		Run:     func(context.Context, json.RawMessage) (string, error) { return "", nil },
+		Preview: func(json.RawMessage) string { return "SESSION-AWARE PREVIEW" },
+	})
+	var got acp.PermissionRequest
+	ask := func(r acp.PermissionRequest) (acp.PermissionResult, error) {
+		got = r
+		return acp.PermissionResult{Outcome: "allow_once"}, nil
+	}
+	hook := a.approver("s1", reg, ask)
+	hook(context.Background(), "fancy", json.RawMessage(`{"x":1}`), tools.Safety{RequiresApproval: true}, "because")
+	if !strings.Contains(got.Preview, "SESSION-AWARE PREVIEW") {
+		t.Fatalf("the tool's own Preview must win, got %q", got.Preview)
+	}
+	hook(context.Background(), "bash", json.RawMessage(`{"command":"ls"}`), tools.Safety{RequiresApproval: true}, "because")
+	if !strings.Contains(got.Preview, "$ ls") {
+		t.Fatalf("tools without a Preview keep the generic preview, got %q", got.Preview)
 	}
 }

@@ -209,7 +209,7 @@ func (a *OrionAgent) Prompt(ctx context.Context, sessionID, text string, stream 
 		// cross-package feature); ORION_TOOL_TURNS[_MAIN] tunes without rebuild.
 		Supervisor: harness.Supervisor{MaxIterations: harnessconfig.ToolTurns("MAIN", 200), Budget: a.conductor.Budget()},
 		Role:       "conductor",
-		Approve:    a.approver(sessionID, ask), // per-tool approval prompt for mutating tools
+		Approve:    a.approver(sessionID, reg, ask), // per-tool approval prompt for mutating tools
 	}
 	onEvent := func(e harness.Event) {
 		switch e.Kind {

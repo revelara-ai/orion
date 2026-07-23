@@ -19,7 +19,7 @@ func TestApproverAllowAlwaysShortCircuits(t *testing.T) {
 		asks++
 		return acp.PermissionResult{Outcome: "allow_always"}, nil
 	}
-	approve := a.approver("s1", ask)
+	approve := a.approver("s1", nil, ask)
 	dest := tools.Safety{Destructive: true}
 	in := json.RawMessage(`{"command":"ls"}`)
 
@@ -45,7 +45,7 @@ func TestApproverOutcomesMap(t *testing.T) {
 		ask := func(acp.PermissionRequest) (acp.PermissionResult, error) {
 			return acp.PermissionResult{Outcome: outcome}, nil
 		}
-		return a.approver("s"+outcome, ask)(context.Background(), "write_file", json.RawMessage(`{"path":"x","content":"y"}`), dest, "")
+		return a.approver("s"+outcome, nil, ask)(context.Background(), "write_file", json.RawMessage(`{"path":"x","content":"y"}`), dest, "")
 	}
 	if mk("deny") != harness.DecisionDeny {
 		t.Error("deny → DecisionDeny")
@@ -59,7 +59,7 @@ func TestApproverOutcomesMap(t *testing.T) {
 // aren't user-prompted — they keep their own red-button gating.
 func TestApproverNilAskNoHook(t *testing.T) {
 	a := NewOrionAgent(nil, orchestrator.New(), RoleTemplate{})
-	if a.approver("s1", nil) != nil {
+	if a.approver("s1", nil, nil) != nil {
 		t.Error("nil ask must yield a nil approve hook")
 	}
 }

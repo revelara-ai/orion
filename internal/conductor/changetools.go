@@ -301,12 +301,44 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 
 	r.Register(tools.Tool{
 		Name:        "ratify_cases",
-		Description: "Lock the behavioral cases as the proof ORACLE, BEFORE any code is generated — the trust gate: the oracle predates the diff, so the proof is independent of the generated code. Call once the developer has reviewed and confirmed the cases. For a TEST-ONLY or purely additive change where the regression gate itself is a sufficient oracle (the new tests must compile and pass in green-after), skip case drafting and call ratify_cases with {\"regression_only\": true}. Then call build_change.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"regression_only":{"type":"boolean","description":"ratify WITHOUT behavioral cases: the regression gate (do-no-harm, which runs any newly added tests) is the oracle. For test-only/additive changes; CLI parity with 'orion change' without --cases."}}}`),
+		Description: "Lock the behavioral cases as the proof ORACLE, BEFORE any code is generated — the trust gate: the oracle predates the diff, so the proof is independent of the generated code. Call once the developer has reviewed and confirmed the cases. For a TEST-ONLY or purely additive change where the regression gate itself is a sufficient oracle (the new tests must compile and pass in green-after), skip case drafting and call ratify_cases with regression_only:true PLUS a one-sentence justification (it renders on the developer's approval card). A regression-only oracle is REFUSED for feature-shaped intents unless the developer has explicitly agreed (developer_confirmed:true — ask them first). Then call build_change.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"regression_only":{"type":"boolean","description":"ratify WITHOUT behavioral cases: the regression gate (do-no-harm, which runs any newly added tests) is the oracle. Requires justification."},"justification":{"type":"string","description":"required with regression_only: one sentence on why the regression gate alone is a sufficient oracle for THIS intent — shown to the developer on the approval card"},"developer_confirmed":{"type":"boolean","description":"set ONLY after the developer explicitly agreed a regression-only oracle is right for a feature-shaped intent"}}}`),
 		Safety:      tools.Safety{Destructive: true, RequiresApproval: true}, // consent-recording: the human gate (or-7xw1)
+		// or-8noc: the approval card renders the ORACLE being locked — the
+		// developer approves the proof standard, never a raw input dump.
+		Preview: func(in json.RawMessage) string {
+			var p struct {
+				RegressionOnly     bool   `json:"regression_only"`
+				Justification      string `json:"justification"`
+				DeveloperConfirmed bool   `json:"developer_confirmed"`
+			}
+			_ = json.Unmarshal(in, &p)
+			intent, cases, supersedes, _ := cs.snapshot()
+			var b strings.Builder
+			fmt.Fprintf(&b, "LOCK THE PROOF ORACLE for: %s\n", intent)
+			if p.RegressionOnly {
+				b.WriteString("oracle: REGRESSION-ONLY — no behavioral cases; do-no-harm plus any newly added tests are the entire proof\n")
+				just := strings.TrimSpace(p.Justification)
+				if just == "" {
+					just = "(none given)"
+				}
+				b.WriteString("justification: " + just + "\n")
+				if p.DeveloperConfirmed {
+					b.WriteString("FEATURE-INTENT OVERRIDE: the model claims you approved regression-only for this feature\n")
+				}
+			} else {
+				b.WriteString(renderCases(cases) + "\n")
+			}
+			if len(supersedes) > 0 {
+				b.WriteString("supersedes: " + strings.Join(supersedes, ", ") + "\n")
+			}
+			return strings.TrimRight(b.String(), "\n")
+		},
 		Run: func(_ context.Context, in json.RawMessage) (string, error) {
 			var p struct {
-				RegressionOnly bool `json:"regression_only"`
+				RegressionOnly     bool   `json:"regression_only"`
+				Justification      string `json:"justification"`
+				DeveloperConfirmed bool   `json:"developer_confirmed"`
 			}
 			_ = json.Unmarshal(in, &p)
 			cs.mu.Lock()
@@ -315,7 +347,19 @@ func registerChangeTools(r *tools.Registry, cs *changeSession, c *orchestrator.C
 				return "", fmt.Errorf("ratify_cases: regression_only conflicts with %d drafted case(s) — ratify the cases, or remove them first (the oracle must be unambiguous)", len(cs.cases))
 			}
 			if !p.RegressionOnly && len(cs.cases) == 0 {
-				return "", fmt.Errorf("ratify_cases: no cases to ratify. Draft cases with propose_cases/add_case — or, for a TEST-ONLY or purely additive change where the new tests themselves are the proof, call ratify_cases with {\"regression_only\": true} to proceed with the regression gate as the oracle")
+				return "", fmt.Errorf("ratify_cases: no cases to ratify. Draft cases with propose_cases/add_case — or, for a TEST-ONLY or purely additive change where the new tests themselves are the proof, call ratify_cases with {\"regression_only\": true} plus a justification to proceed with the regression gate as the oracle")
+			}
+			if p.RegressionOnly {
+				// or-fr0d: the weakest oracle is never one bare flag away — it
+				// carries a stated why, and a feature-shaped intent needs the
+				// developer's explicit agreement (a no-op implementation passes
+				// a regression-only oracle; nothing pins NEW behavior).
+				if strings.TrimSpace(p.Justification) == "" {
+					return "", fmt.Errorf("ratify_cases: regression_only requires a justification — one sentence on why the regression gate alone is a sufficient oracle for THIS intent (it renders on the developer's approval card)")
+				}
+				if featureLikeIntent(cs.intent) && !p.DeveloperConfirmed {
+					return "", fmt.Errorf("ratify_cases: the intent reads like a FEATURE (%q) — a regression-only oracle cannot prove new behavior (a no-op implementation would pass). Propose behavioral cases instead; or, ONLY if the developer explicitly agrees regression-only is right here, re-call with developer_confirmed=true", clip(cs.intent, 100))
+				}
 			}
 			cs.ratified = true
 			if p.RegressionOnly {
