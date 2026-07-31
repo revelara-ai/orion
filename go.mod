@@ -9,9 +9,9 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/gomlx/compute v0.0.0-20260716164435-04857206aff7
-	github.com/gomlx/go-huggingface v0.3.6-0.20260712091758-7644143742fa
-	github.com/gomlx/gomlx v0.27.4-0.20260713051046-b5a66f6ba819
-	github.com/gomlx/onnx-gomlx v0.4.3-0.20260712091832-2348e137179c
+	github.com/gomlx/go-huggingface v0.4.0
+	github.com/gomlx/gomlx v0.27.4-0.20260721090456-e838421fcd72
+	github.com/gomlx/onnx-gomlx v0.5.0
 	golang.org/x/mod v0.38.0
 	golang.org/x/term v0.45.0
 	gopkg.in/yaml.v3 v3.0.1
