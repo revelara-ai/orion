@@ -15,7 +15,9 @@ permissions:
 
 jobs:
   goreleaser:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # Deliberately GitHub-hosted (see ci.yml): public repo → hosted runners are free,
+    # and the org self-hosted runner group refuses public repos.
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
