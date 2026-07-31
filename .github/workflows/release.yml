@@ -15,6 +15,8 @@ permissions:
 
 jobs:
   goreleaser:
+    # Deliberately GitHub-hosted (see ci.yml): public repo → hosted runners are free,
+    # and the org self-hosted runner group refuses public repos.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

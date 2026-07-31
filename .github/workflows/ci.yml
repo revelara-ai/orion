@@ -21,6 +21,9 @@ permissions:
 jobs:
   ci:
     name: vet / lint / test-short
+    # Deliberately GitHub-hosted, NOT the org CI_RUNNER self-hosted pool: this repo
+    # is PUBLIC, so standard hosted runners are free, and the org runner group
+    # (correctly) refuses public repos — fork PRs must never execute on our machines.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -56,6 +59,9 @@ jobs:
   full-suite:
     name: full suite (manual only)
     if: github.event_name == 'workflow_dispatch'
+    # Deliberately GitHub-hosted, NOT the org CI_RUNNER self-hosted pool: this repo
+    # is PUBLIC, so standard hosted runners are free, and the org runner group
+    # (correctly) refuses public repos — fork PRs must never execute on our machines.
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
