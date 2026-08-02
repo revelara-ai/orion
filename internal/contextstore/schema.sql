@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS open_questions (
     question   TEXT NOT NULL,
     severity   TEXT NOT NULL CHECK (severity IN ('blocking','advisory')),
     status     TEXT NOT NULL CHECK (status IN ('open','answered','assumed')),
+    -- or-kjcm.4: who resolves it. 'hitl' = only the developer can (preference,
+    -- judgment); 'research' = an agent can, by reading code/docs/web.
+    mode       TEXT NOT NULL DEFAULT 'hitl' CHECK (mode IN ('hitl','research')),
     resolution TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL

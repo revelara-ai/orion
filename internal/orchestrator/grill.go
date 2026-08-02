@@ -33,6 +33,15 @@ type GrillAgent func(ctx context.Context, intent string, resolved map[string]str
 // leave nil — the checklist drives, exactly as before.
 func (c *Conductor) SetGrillAgent(g GrillAgent) { c.grill = g }
 
+// Researcher resolves a research-mode question by lookup (code, docs, web) and
+// returns the finding (or-kjcm.4). An error means the lookup failed — the
+// caller downgrades the question to the developer, it never guesses.
+type Researcher func(ctx context.Context, question contextstore.OpenQuestion) (string, error)
+
+// SetResearcher injects the research-question resolver. Safe to leave nil —
+// research questions then surface to the developer like any other.
+func (c *Conductor) SetResearcher(r Researcher) { c.researcher = r }
+
 // grillDrives decides the elicitation driver: the env override always wins
 // (staged V3 swap), and a LARGE-scale intent gets the grill BY DEFAULT
 // (or-045a.2 — the mech-game dogfood entered checklist mode and was asked
@@ -104,14 +113,59 @@ func (c *Conductor) openDecisions(ctx context.Context, intent string, answers ma
 			c.setLastGrillFP(proj.ID, fp)
 		}
 	}
+	ledger = c.resolveResearchQuestions(ctx, proj.ID, ledger)
 	var lead []completeness.OpenDecision
 	for _, q := range ledger {
 		if q.Status != "open" {
 			continue
 		}
-		lead = append(lead, completeness.OpenDecision{Key: q.Key, Dimension: completeness.DimFunctional, Question: q.Question})
+		lead = append(lead, completeness.OpenDecision{Key: q.Key, Dimension: completeness.DimFunctional, Question: q.Question, Mode: q.Mode})
 	}
 	return leadThenFloor(lead, floor, answers)
+}
+
+// resolveResearchQuestions burns down the open research-mode questions with
+// the injected researcher (or-kjcm.4): a successful lookup resolves the
+// question with its finding (and records the keyed decision, so the grill's
+// "already resolved" view includes it); a failed lookup DOWNGRADES the
+// question to hitl — back to the developer, never a guess. nil researcher =
+// no-op: research questions surface to the developer like any other.
+func (c *Conductor) resolveResearchQuestions(ctx context.Context, projectID string, ledger []contextstore.OpenQuestion) []contextstore.OpenQuestion {
+	if c.researcher == nil {
+		return ledger
+	}
+	_, sp, spErr := c.currentProjectSpec(ctx)
+	for i, q := range ledger {
+		if q.Status != "open" || q.Mode != "research" {
+			continue
+		}
+		finding, err := c.researcher(ctx, q)
+		if err != nil || strings.TrimSpace(finding) == "" {
+			c.log.WarnContext(ctx, "research lookup failed — question returns to the developer", "key", q.Key, "err", err)
+			if uerr := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+				return tx.OpenQuestions().SetMode(ctx, q.ID, "hitl")
+			}); uerr != nil {
+				c.log.WarnContext(ctx, "research downgrade not persisted", "key", q.Key, "err", uerr)
+				continue
+			}
+			ledger[i].Mode = "hitl"
+			continue
+		}
+		if err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+			if q.Key != "" && spErr == nil {
+				if _, e := tx.Decisions().Create(ctx, projectID, sp.ID, q.Key, finding, "precise", false); e != nil {
+					return e
+				}
+			}
+			return tx.OpenQuestions().Resolve(ctx, q.ID, "answered", finding)
+		}); err != nil {
+			c.log.WarnContext(ctx, "research resolution not persisted", "key", q.Key, "err", err)
+			continue
+		}
+		ledger[i].Status, ledger[i].Resolution = "answered", finding
+		c.log.InfoContext(ctx, "research question resolved", "key", q.Key)
+	}
+	return ledger
 }
 
 // leadThenFloor orders the developer-facing set: the open-ended questions
@@ -182,7 +236,10 @@ func (c *Conductor) persistGrillQuestions(ctx context.Context, projectID string,
 		claimed[key] = true
 		row := contextstore.OpenQuestion{
 			ProjectID: projectID, Phase: "spec", Origin: "grill", Key: key,
-			Question: strings.TrimSpace(q.Question), Severity: "advisory",
+			Question: strings.TrimSpace(q.Question), Severity: "advisory", Mode: q.Mode,
+		}
+		if row.Mode == "" {
+			row.Mode = "hitl" // mirror the store default so the in-memory ledger matches
 		}
 		err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
 			id, e := tx.OpenQuestions().Create(ctx, row)

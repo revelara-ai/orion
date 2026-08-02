@@ -49,6 +49,9 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	// leaves the deterministic checklist driving.
 	if provider != nil {
 		c.SetGrillAgent(NativeGrillAgent(RoleProvider("grill", provider), c.GoalsSummary))
+		// or-kjcm.4: research-mode grill questions are burned down by a bounded
+		// read-only lookup loop instead of reaching the developer.
+		c.SetResearcher(NativeResearcher(RoleProvider("research", provider), r, c, emit))
 	}
 	registerChangeTools(r, cs, c, provider, emit)
 	registerBeadsTool(r, c)

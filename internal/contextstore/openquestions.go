@@ -20,6 +20,7 @@ type OpenQuestion struct {
 	Question   string
 	Severity   string // blocking | advisory
 	Status     string // open | answered | assumed
+	Mode       string // hitl (developer resolves) | research (agent lookup resolves), or-kjcm.4
 	Resolution string
 	CreatedAt  string
 	UpdatedAt  string
@@ -31,10 +32,14 @@ type OpenQuestionRepo struct{ tx *sql.Tx }
 // Create raises a question (status open).
 func (r *OpenQuestionRepo) Create(ctx context.Context, q OpenQuestion) (string, error) {
 	id, now := newID(), nowRFC3339()
+	mode := q.Mode
+	if mode == "" {
+		mode = "hitl" // unstated = the developer's to answer
+	}
 	_, err := r.tx.ExecContext(ctx,
-		`INSERT INTO open_questions (id, project_id, phase, origin, key, question, severity, status, resolution, created_at, updated_at)
-		 VALUES (?,?,?,?,?,?,?,'open','',?,?)`,
-		id, q.ProjectID, q.Phase, q.Origin, q.Key, q.Question, q.Severity, now, now)
+		`INSERT INTO open_questions (id, project_id, phase, origin, key, question, severity, status, mode, resolution, created_at, updated_at)
+		 VALUES (?,?,?,?,?,?,?,'open',?,'',?,?)`,
+		id, q.ProjectID, q.Phase, q.Origin, q.Key, q.Question, q.Severity, mode, now, now)
 	if err != nil {
 		return "", fmt.Errorf("raise open question: %w", err)
 	}
@@ -44,7 +49,7 @@ func (r *OpenQuestionRepo) Create(ctx context.Context, q OpenQuestion) (string, 
 // ListOpen returns the project's OPEN questions, oldest first.
 func (r *OpenQuestionRepo) ListOpen(ctx context.Context, projectID string) ([]OpenQuestion, error) {
 	rows, err := r.tx.QueryContext(ctx,
-		`SELECT id, project_id, phase, origin, key, question, severity, status, resolution, created_at, updated_at
+		`SELECT id, project_id, phase, origin, key, question, severity, status, mode, resolution, created_at, updated_at
 		 FROM open_questions WHERE project_id=? AND status='open' ORDER BY created_at ASC, id ASC`, projectID)
 	if err != nil {
 		return nil, err
@@ -53,7 +58,7 @@ func (r *OpenQuestionRepo) ListOpen(ctx context.Context, projectID string) ([]Op
 	var out []OpenQuestion
 	for rows.Next() {
 		var q OpenQuestion
-		if err := rows.Scan(&q.ID, &q.ProjectID, &q.Phase, &q.Origin, &q.Key, &q.Question, &q.Severity, &q.Status, &q.Resolution, &q.CreatedAt, &q.UpdatedAt); err != nil {
+		if err := rows.Scan(&q.ID, &q.ProjectID, &q.Phase, &q.Origin, &q.Key, &q.Question, &q.Severity, &q.Status, &q.Mode, &q.Resolution, &q.CreatedAt, &q.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, q)
@@ -66,7 +71,7 @@ func (r *OpenQuestionRepo) ListOpen(ctx context.Context, projectID string) ([]Op
 // resolved question must keep its key claimed so it is never re-raised.
 func (r *OpenQuestionRepo) ListByProject(ctx context.Context, projectID string) ([]OpenQuestion, error) {
 	rows, err := r.tx.QueryContext(ctx,
-		`SELECT id, project_id, phase, origin, key, question, severity, status, resolution, created_at, updated_at
+		`SELECT id, project_id, phase, origin, key, question, severity, status, mode, resolution, created_at, updated_at
 		 FROM open_questions WHERE project_id=? ORDER BY created_at ASC, id ASC`, projectID)
 	if err != nil {
 		return nil, err
@@ -75,7 +80,7 @@ func (r *OpenQuestionRepo) ListByProject(ctx context.Context, projectID string) 
 	var out []OpenQuestion
 	for rows.Next() {
 		var q OpenQuestion
-		if err := rows.Scan(&q.ID, &q.ProjectID, &q.Phase, &q.Origin, &q.Key, &q.Question, &q.Severity, &q.Status, &q.Resolution, &q.CreatedAt, &q.UpdatedAt); err != nil {
+		if err := rows.Scan(&q.ID, &q.ProjectID, &q.Phase, &q.Origin, &q.Key, &q.Question, &q.Severity, &q.Status, &q.Mode, &q.Resolution, &q.CreatedAt, &q.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, q)
@@ -87,13 +92,32 @@ func (r *OpenQuestionRepo) ListByProject(ctx context.Context, projectID string) 
 func (r *OpenQuestionRepo) Get(ctx context.Context, id string) (OpenQuestion, error) {
 	var q OpenQuestion
 	err := r.tx.QueryRowContext(ctx,
-		`SELECT id, project_id, phase, origin, key, question, severity, status, resolution, created_at, updated_at
+		`SELECT id, project_id, phase, origin, key, question, severity, status, mode, resolution, created_at, updated_at
 		 FROM open_questions WHERE id=?`, id).
-		Scan(&q.ID, &q.ProjectID, &q.Phase, &q.Origin, &q.Key, &q.Question, &q.Severity, &q.Status, &q.Resolution, &q.CreatedAt, &q.UpdatedAt)
+		Scan(&q.ID, &q.ProjectID, &q.Phase, &q.Origin, &q.Key, &q.Question, &q.Severity, &q.Status, &q.Mode, &q.Resolution, &q.CreatedAt, &q.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return OpenQuestion{}, ErrNotFound
 	}
 	return q, err
+}
+
+// SetMode reclassifies who resolves an OPEN question (or-kjcm.4) — the
+// research→hitl downgrade when an agent lookup fails: the question stays open,
+// it just becomes the developer's again. Resolved questions are immutable.
+func (r *OpenQuestionRepo) SetMode(ctx context.Context, id, mode string) error {
+	if mode != "hitl" && mode != "research" {
+		return fmt.Errorf("open question: unknown mode %q (hitl|research)", mode)
+	}
+	res, err := r.tx.ExecContext(ctx,
+		`UPDATE open_questions SET mode=?, updated_at=? WHERE id=? AND status='open'`,
+		mode, nowRFC3339(), id)
+	if err != nil {
+		return fmt.Errorf("set open question mode: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // Resolve marks a question answered|assumed with its resolution text. Only an
