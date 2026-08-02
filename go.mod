@@ -1,6 +1,6 @@
 module github.com/revelara-ai/orion
 
-go 1.26
+go 1.26.5
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0
@@ -8,14 +8,14 @@ require (
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/charmbracelet/x/ansi v0.11.7
-	github.com/gomlx/compute v0.0.0-20260716164435-04857206aff7
-	github.com/gomlx/go-huggingface v0.4.0
-	github.com/gomlx/gomlx v0.27.4-0.20260721090456-e838421fcd72
-	github.com/gomlx/onnx-gomlx v0.5.0
+	github.com/gomlx/compute v0.1.0
+	github.com/gomlx/go-huggingface v0.4.1
+	github.com/gomlx/gomlx v0.28.1
+	github.com/gomlx/onnx-gomlx v0.5.1
 	golang.org/x/mod v0.38.0
 	golang.org/x/term v0.45.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.54.0
+	modernc.org/sqlite v1.55.0
 )
 
 require (
