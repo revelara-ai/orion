@@ -25,18 +25,18 @@ func TestProjectTypeGatesFunctionalDecisions(t *testing.T) {
 			t.Fatalf("http-service checklist missing %q", k)
 		}
 	}
-	if RegisteredProjectType("worker") {
-		t.Fatal("worker is not a registered type")
+	if RegisteredProjectType("game") {
+		t.Fatal("game is not a registered type")
 	}
-	worker := keysOf(NewAnalyzer("worker").Checklist())
+	game := keysOf(NewAnalyzer("game").Checklist())
 	for _, h := range []string{"response_format", "route", "port"} {
-		if worker[h] {
-			t.Fatalf("a non-HTTP (worker) project must NOT be grilled on the HTTP decision %q", h)
+		if game[h] {
+			t.Fatalf("a non-HTTP (game) project must NOT be grilled on the HTTP decision %q", h)
 		}
 	}
 	for _, u := range []string{"scale_profile", "security_model", "slo_targets", "observability_signals"} {
-		if !worker[u] {
-			t.Fatalf("a worker project must still resolve the universal dimension %q", u)
+		if !game[u] {
+			t.Fatalf("a game project must still resolve the universal dimension %q", u)
 		}
 	}
 }

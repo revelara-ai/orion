@@ -26,7 +26,7 @@ func TestDirectionRidesLargeAndUnregistered(t *testing.T) {
 		{"http-service", ScaleStandard, false}, // the ONLY registered type: standard stays byte-identical, NO direction
 		{"game", ScaleStandard, true},          // unregistered standard: elicit direction
 		{"game", ScaleLarge, true},             // unregistered large: direction
-		{"cli", ScaleStandard, true},           // unregistered standard: elicit direction (no functional template to presume the stack)
+		{"cli", ScaleStandard, true},           // registered standard (or-kjcm.2): functional template AND direction — its stack is open, unlike http-service
 	}
 	for _, c := range cases {
 		a := NewAnalyzerScaled(c.ptype, c.scale)

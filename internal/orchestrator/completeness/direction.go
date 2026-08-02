@@ -31,15 +31,17 @@ func directionDecisions() []RequiredDecision {
 // NewAnalyzerScaled returns an analyzer whose checklist reflects the intent's
 // SCALE as well as its type. The direction family (stack/language/engine/wire/
 // repo) is raised whenever the harness cannot presume the stack: for EVERY
-// large-scale intake, and for EVERY unregistered project type — a game has no
-// functional template, so its language/engine must be elicited rather than
-// silently defaulted to Go (or-hn15.4). A standard registered type (the legacy
-// http-service path) stays direction-free and byte-compatible with V2, so its
-// anchors don't shift. NewAnalyzer (the unscaled constructor) is likewise
-// unchanged.
+// large-scale intake, and for every type except the legacy http-service path —
+// an unregistered type (a game) has no functional template at all, and a
+// registered cli/library/worker's language/runtime is genuinely open (the
+// Python library flow rides direction.language, or-kjcm.2), so eliciting
+// direction stays correct even though those types now carry functional
+// decisions. Only http-service presumes its stack (Go, HTTP): it stays
+// direction-free at standard scale and byte-compatible with V2, so its anchors
+// don't shift. NewAnalyzer (the unscaled constructor) is likewise unchanged.
 func NewAnalyzerScaled(projectType, scale string) *Analyzer {
 	checklist := functionalDecisions(projectType)
-	if scale == ScaleLarge || !RegisteredProjectType(projectType) {
+	if scale == ScaleLarge || (projectType != "http-service" && projectType != "") {
 		checklist = append(checklist, directionDecisions()...)
 	}
 	checklist = append(checklist, universalDecisions()...)
