@@ -2,9 +2,13 @@ package orchestrator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
+	"sort"
 	"strings"
 
+	"github.com/revelara-ai/orion/internal/contextstore"
 	"github.com/revelara-ai/orion/internal/orchestrator/completeness"
 )
 
@@ -52,6 +56,13 @@ func (c *Conductor) grillDrives(ctx context.Context) bool {
 // developer sees. Checklist mode (default): the deterministic floor alone.
 // Grill mode: the grill's open-ended questions lead, followed by every floor
 // dimension still unresolved — demoted, never dropped.
+//
+// or-kjcm.3: with a store, grill questions are ARTIFACTS, not utterances —
+// generated once per answer-set, persisted to the open-questions ledger, and
+// served from it on every subsequent gate read. The LLM is consulted only when
+// the answer-set has changed since the last consult; a question resolved
+// through record_answer or resolve_open_question keeps its key claimed in the
+// ledger, so a re-consult can never re-raise it.
 func (c *Conductor) openDecisions(ctx context.Context, intent string, answers map[string]string) (out []completeness.OpenDecision) {
 	floor := c.gate.Analyze(intent, answers)
 	if !c.grillDrives(ctx) || c.grill == nil {
@@ -63,13 +74,53 @@ func (c *Conductor) openDecisions(ctx context.Context, intent string, answers ma
 			out = floor
 		}
 	}()
-	qs, err := c.grill(ctx, intent, answers, floor)
+	if c.store == nil {
+		// Store-less grill mode keeps the direct behavior: consult per read.
+		qs, err := c.grill(ctx, intent, answers, floor)
+		if err != nil {
+			c.log.WarnContext(ctx, "grill elicitation failed — checklist drives", "err", err)
+			return floor
+		}
+		return leadThenFloor(qs, floor, answers)
+	}
+	proj, _, err := c.currentProjectSpec(ctx)
 	if err != nil {
-		c.log.WarnContext(ctx, "grill elicitation failed — checklist drives", "err", err)
+		c.log.WarnContext(ctx, "grill elicitation: no active project — checklist drives", "err", err)
 		return floor
 	}
+	ledger, err := c.grillLedger(ctx, proj.ID)
+	if err != nil {
+		c.log.WarnContext(ctx, "grill ledger unreadable — checklist drives", "err", err)
+		return floor
+	}
+	if fp := answersFingerprint(answers); c.lastGrillFP(proj.ID) != fp {
+		qs, gerr := c.grill(ctx, intent, answers, floor)
+		if gerr != nil {
+			// The ledger is durable knowledge: an outage serves what was
+			// already elicited instead of dropping to the bare floor.
+			c.log.WarnContext(ctx, "grill elicitation failed — persisted questions and the floor drive", "err", gerr)
+		} else {
+			ledger = c.persistGrillQuestions(ctx, proj.ID, ledger, qs)
+			c.setLastGrillFP(proj.ID, fp)
+		}
+	}
+	var lead []completeness.OpenDecision
+	for _, q := range ledger {
+		if q.Status != "open" {
+			continue
+		}
+		lead = append(lead, completeness.OpenDecision{Key: q.Key, Dimension: completeness.DimFunctional, Question: q.Question})
+	}
+	return leadThenFloor(lead, floor, answers)
+}
+
+// leadThenFloor orders the developer-facing set: the open-ended questions
+// lead (unkeyed, duplicate, and already-answered ones dropped), then every
+// unresolved floor dimension — demoted, never dropped.
+func leadThenFloor(lead, floor []completeness.OpenDecision, answers map[string]string) []completeness.OpenDecision {
+	var out []completeness.OpenDecision
 	seen := map[string]bool{}
-	for _, q := range qs {
+	for _, q := range lead {
 		key := strings.TrimSpace(q.Key)
 		if key == "" || seen[key] {
 			continue // an unkeyed or duplicate grill question is unanswerable — drop it
@@ -83,8 +134,6 @@ func (c *Conductor) openDecisions(ctx context.Context, intent string, answers ma
 		seen[key] = true
 		out = append(out, q)
 	}
-	// The demoted floor: every unresolved checklist dimension still surfaces —
-	// after the grill's questions, deduped against them.
 	for _, f := range floor {
 		if !seen[f.Key] {
 			seen[f.Key] = true
@@ -92,4 +141,96 @@ func (c *Conductor) openDecisions(ctx context.Context, intent string, answers ma
 		}
 	}
 	return out
+}
+
+// grillLedger loads ALL of the project's grill-origin questions, any status —
+// the open ones to serve, the resolved ones to dedup against.
+func (c *Conductor) grillLedger(ctx context.Context, projectID string) ([]contextstore.OpenQuestion, error) {
+	var all []contextstore.OpenQuestion
+	err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+		var e error
+		all, e = tx.OpenQuestions().ListByProject(ctx, projectID)
+		return e
+	})
+	if err != nil {
+		return nil, err
+	}
+	var out []contextstore.OpenQuestion
+	for _, q := range all {
+		if q.Origin == "grill" {
+			out = append(out, q)
+		}
+	}
+	return out, nil
+}
+
+// persistGrillQuestions files the grill's fresh proposals as advisory ledger
+// rows, deduped by key against every existing grill question REGARDLESS of
+// status — an answered question's key stays claimed forever. Returns the
+// updated ledger; a write failure logs and serves what exists (the surfaced
+// set must never break on bookkeeping).
+func (c *Conductor) persistGrillQuestions(ctx context.Context, projectID string, ledger []contextstore.OpenQuestion, qs []completeness.OpenDecision) []contextstore.OpenQuestion {
+	claimed := map[string]bool{}
+	for _, q := range ledger {
+		claimed[q.Key] = true
+	}
+	for _, q := range qs {
+		key := strings.TrimSpace(q.Key)
+		if key == "" || claimed[key] {
+			continue
+		}
+		claimed[key] = true
+		row := contextstore.OpenQuestion{
+			ProjectID: projectID, Phase: "spec", Origin: "grill", Key: key,
+			Question: strings.TrimSpace(q.Question), Severity: "advisory",
+		}
+		err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+			id, e := tx.OpenQuestions().Create(ctx, row)
+			row.ID, row.Status = id, "open"
+			return e
+		})
+		if err != nil {
+			c.log.WarnContext(ctx, "grill question not persisted", "key", key, "err", err)
+			continue
+		}
+		ledger = append(ledger, row)
+	}
+	return ledger
+}
+
+// answersFingerprint identifies an answer-set: the grill is consulted at most
+// once per distinct set (or-kjcm.3 — gate reads must not each burn an LLM
+// call, and must return the same questions).
+func answersFingerprint(answers map[string]string) string {
+	keys := make([]string, 0, len(answers))
+	for k := range answers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	h := sha256.New()
+	for _, k := range keys {
+		h.Write([]byte(k))
+		h.Write([]byte{0})
+		h.Write([]byte(answers[k]))
+		h.Write([]byte{1})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// lastGrillFP / setLastGrillFP track, per project, the answer-set the grill
+// last ran against. Process-local by design: after a restart the first read
+// re-consults once, and the ledger's key dedup keeps that idempotent.
+func (c *Conductor) lastGrillFP(projectID string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.grillFP[projectID]
+}
+
+func (c *Conductor) setLastGrillFP(projectID, fp string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.grillFP == nil {
+		c.grillFP = map[string]string{}
+	}
+	c.grillFP[projectID] = fp
 }
