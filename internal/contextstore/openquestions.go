@@ -61,6 +61,28 @@ func (r *OpenQuestionRepo) ListOpen(ctx context.Context, projectID string) ([]Op
 	return out, rows.Err()
 }
 
+// ListByProject returns ALL of a project's questions regardless of status,
+// oldest first — the dedup surface for question generators (or-kjcm.3): a
+// resolved question must keep its key claimed so it is never re-raised.
+func (r *OpenQuestionRepo) ListByProject(ctx context.Context, projectID string) ([]OpenQuestion, error) {
+	rows, err := r.tx.QueryContext(ctx,
+		`SELECT id, project_id, phase, origin, key, question, severity, status, resolution, created_at, updated_at
+		 FROM open_questions WHERE project_id=? ORDER BY created_at ASC, id ASC`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []OpenQuestion
+	for rows.Next() {
+		var q OpenQuestion
+		if err := rows.Scan(&q.ID, &q.ProjectID, &q.Phase, &q.Origin, &q.Key, &q.Question, &q.Severity, &q.Status, &q.Resolution, &q.CreatedAt, &q.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, q)
+	}
+	return out, rows.Err()
+}
+
 // Get returns one question by id.
 func (r *OpenQuestionRepo) Get(ctx context.Context, id string) (OpenQuestion, error) {
 	var q OpenQuestion

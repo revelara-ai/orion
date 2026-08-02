@@ -315,8 +315,23 @@ func (c *Conductor) RecordAnswer(ctx context.Context, key, value string) error {
 		return fmt.Errorf("no current spec to answer: %w", err)
 	}
 	if err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
-		_, e := tx.Decisions().Create(ctx, proj.ID, sp.ID, key, value, "precise", false)
-		return e
+		if _, e := tx.Decisions().Create(ctx, proj.ID, sp.ID, key, value, "precise", false); e != nil {
+			return e
+		}
+		// or-kjcm.3: an answered key retires any open ledger question carrying
+		// it — one answer path, no stale opens for the question tools to show.
+		qs, e := tx.OpenQuestions().ListOpen(ctx, proj.ID)
+		if e != nil {
+			return e
+		}
+		for _, q := range qs {
+			if q.Key == key {
+				if e := tx.OpenQuestions().Resolve(ctx, q.ID, "answered", value); e != nil {
+					return e
+				}
+			}
+		}
+		return nil
 	}); err != nil {
 		return err
 	}
