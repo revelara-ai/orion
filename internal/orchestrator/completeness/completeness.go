@@ -48,6 +48,10 @@ type OpenDecision struct {
 	Question  string    `json:"question"`
 	Fallback  string    `json:"fallback,omitempty"`
 	Options   []string  `json:"options,omitempty"`
+	// Mode says who resolves it (or-kjcm.4): "" or "hitl" = the developer
+	// (preference, judgment); "research" = an agent lookup can (code, docs,
+	// web). Floor decisions are always the developer's, so they leave it empty.
+	Mode string `json:"mode,omitempty"`
 }
 
 // enumerableOptions maps a decision key to its enumerable option set, driving the structured

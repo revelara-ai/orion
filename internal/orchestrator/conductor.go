@@ -90,6 +90,9 @@ type Conductor struct {
 	// ran against (or-kjcm.3): a gate read with an unchanged set serves the
 	// persisted ledger instead of re-consulting the LLM. Guarded by mu.
 	grillFP map[string]string
+	// researcher resolves research-mode open questions by lookup (or-kjcm.4).
+	// nil = research questions surface to the developer like any other.
+	researcher Researcher
 
 	mu        sync.RWMutex
 	intent    string
