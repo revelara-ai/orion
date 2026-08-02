@@ -42,6 +42,14 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	// surface — installed packages intercept/rewrite/block calls here. The
 	// proof domain never dispatches through an intercepted registry.
 	r.SetIntercept(hookbus.Default.BeforeToolCall)
+	// or-kjcm.1: the grill elicitation driver is wired HERE, at registry build
+	// — before any tool can run — so the very first submit_intent of a fresh
+	// process elicits open-endedly. The registry is rebuilt each turn, so a
+	// /model swap re-resolves the grill's provider too. Offline (nil provider)
+	// leaves the deterministic checklist driving.
+	if provider != nil {
+		c.SetGrillAgent(NativeGrillAgent(RoleProvider("grill", provider), c.GoalsSummary))
+	}
 	registerChangeTools(r, cs, c, provider, emit)
 	registerBeadsTool(r, c)
 	registerMCPTools(r, c.Store())             // revelara.ai MCP tools, when authenticated (or-xe7.10)
@@ -727,9 +735,6 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 					c.SetModuleFitEstimator(NewModuleFitEstimator(genProv, es))
 				}
 				SetGenerationWindow(contextwindow.WindowOf(genProv, contextwindow.DefaultWindow))
-				// or-794 (V3 Step 5): the open-ended grill drives elicitation
-				// behind ORION_ELICITATION=grill; the checklist floor never drops.
-				c.SetGrillAgent(NativeGrillAgent(RoleProvider("grill", provider), c.GoalsSummary))
 				// or-zn8: the adversarial issue-set reviewer rides the same brain;
 				// the deterministic gate (advisory→ORION_ISSUE_REVIEW=block) decides.
 				c.SetIssueReviewer(NativeIssueReviewer(RoleProvider("review", provider)))
