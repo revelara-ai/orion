@@ -52,6 +52,10 @@ type OpenDecision struct {
 	// (preference, judgment); "research" = an agent lookup can (code, docs,
 	// web). Floor decisions are always the developer's, so they leave it empty.
 	Mode string `json:"mode,omitempty"`
+	// BlockedBy names the decision keys this question waits on (or-kjcm.7):
+	// a scope-fixing answer changes what a detail question even means, so the
+	// detail question is held off the surface until its blockers resolve.
+	BlockedBy []string `json:"blocked_by,omitempty"`
 }
 
 // enumerableOptions maps a decision key to its enumerable option set, driving the structured
