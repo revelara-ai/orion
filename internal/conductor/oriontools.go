@@ -48,10 +48,16 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	// /model swap re-resolves the grill's provider too. Offline (nil provider)
 	// leaves the deterministic checklist driving.
 	if provider != nil {
-		c.SetGrillAgent(NativeGrillAgent(RoleProvider("grill", provider), c.GoalsSummary))
+		// or-kjcm.6: the grill steers by the ratified goals — or, absent those,
+		// the destination line alone (GrillContext), so a standard-scale intake
+		// has a steering signal without the full goals ceremony.
+		c.SetGrillAgent(NativeGrillAgent(RoleProvider("grill", provider), c.GrillContext))
 		// or-kjcm.4: research-mode grill questions are burned down by a bounded
 		// read-only lookup loop instead of reaching the developer.
 		c.SetResearcher(NativeResearcher(RoleProvider("research", provider), r, c, emit))
+		// or-kjcm.6: ratified non-goals are enforced at requirement capture —
+		// the judge reports, the deterministic gate refuses or records.
+		c.SetScopeChecker(NativeScopeChecker(RoleProvider("scope", provider)))
 	}
 	registerChangeTools(r, cs, c, provider, emit)
 	registerBeadsTool(r, c)
@@ -343,17 +349,34 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	r.Register(tools.Tool{
 		Name:        "propose_goals",
 		Description: "Draft the project's GOALS DOCUMENT from the conversation — goals (what this is for), non-goals (explicitly out of scope), success criteria (how success is judged) — and persist it as a DRAFT for the developer to review (or-045a.2). Use it EARLY on a large/vague intent, BEFORE spec decisions: present the draft, incorporate corrections by re-proposing, then record the developer's confirmation with ratify_goals. If you notice an AMBIGUITY or an internal CONTRADICTION while drafting (e.g. a success criterion a stated direction cannot meet), raise it with raise_open_question instead of resolving it yourself — blocking questions gate ratification. The ratified goals steer the grill and the loss-scenario analysis.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"goals":{"type":"array","items":{"type":"string"}},"non_goals":{"type":"array","items":{"type":"string"}},"success_criteria":{"type":"array","items":{"type":"string"}}},"required":["goals"]}`),
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"goals":{"type":"array","items":{"type":"string"}},"destination":{"type":"string","description":"one line: what reaching the end of this effort looks like"},"non_goals":{"type":"array","items":{"type":"object","properties":{"statement":{"type":"string"},"rationale":{"type":"string","description":"WHY it was ruled out — a later 'should we add X?' reads this, not just the ruling"}},"required":["statement"]},"description":"work consciously ruled OUT, each with its why — this ledger is ENFORCED: add_requirement refuses cases that cross it"},"success_criteria":{"type":"array","items":{"type":"string"}}},"required":["goals"]}`),
 		Safety:      tools.Safety{Destructive: true},
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
-			var doc orchestrator.GoalsDoc
-			if err := json.Unmarshal(in, &doc); err != nil {
+			doc, err := decodeGoalsDoc(in)
+			if err != nil {
 				return "", err
 			}
 			if err := c.ProposeGoals(ctx, doc); err != nil {
 				return "", err
 			}
 			return "GOALS DRAFT (review with the developer; re-propose to revise, ratify_goals once confirmed):\n\n" + doc.Render(), nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "set_destination",
+		Description: "Record the ONE-LINE destination — what reaching the end of this effort looks like, in the developer's own words (or-kjcm.6). Agree it EARLY at ANY scale: it steers every grill question without the full goals ceremony. On a ratified goals document, revise via propose_goals instead.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"destination":{"type":"string"}},"required":["destination"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct{ Destination string }
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			if err := c.SetDestination(ctx, p.Destination); err != nil {
+				return "", err
+			}
+			return "destination recorded — it now steers the grill: " + p.Destination, nil
 		},
 	})
 
@@ -704,12 +727,15 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				Text        string                `json:"text"`
 				DecisionKey string                `json:"decision_key"`
 				Cases       []spec.BehavioralCase `json:"cases"`
+				// or-kjcm.6: the developer's EXPLICIT confirmation that this
+				// requirement crosses a ratified non-goal on purpose.
+				ScopeOverride bool `json:"scope_override"`
 			}
 			if err := json.Unmarshal(in, &p); err != nil {
 				return "", err
 			}
 			req := spec.Requirement{Source: completeness.DimFunctional, DecisionKey: p.DecisionKey, Text: p.Text, Cases: p.Cases}
-			if err := c.AddRequirement(ctx, req); err != nil {
+			if err := c.AddRequirementScoped(ctx, req, p.ScopeOverride); err != nil {
 				// or-4j37: a rejection must TEACH — anchor diagnosis + the
 				// closed union + a valid example + the test-only steer.
 				return "", teachCaseShape(err, p.Cases)
@@ -761,6 +787,11 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				return "", err
 			}
 			doc := SpecDocument(es, false) // readable preview incl. the assumptions to review
+			// or-kjcm.6: the destination line rides the preview so both parties
+			// review the spec against what the effort is FOR.
+			if gc := c.GrillContext(ctx); gc != "" && strings.HasPrefix(gc, "Destination: ") {
+				doc = gc + "\n\n" + doc
+			}
 			// or-kjcm.5: parked known-unknowns ride the preview as a signpost of
 			// where clarification is headed — advisory, never a ratify gate.
 			if fs, ferr := c.FogNotes(ctx); ferr == nil && len(fs) > 0 {
