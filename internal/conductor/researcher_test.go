@@ -25,7 +25,7 @@ func TestGrillAgentParsesQuestionMode(t *testing.T) {
 		ToolUse: &llm.ToolUse{ID: "1", Name: "report_questions", Input: json.RawMessage(
 			`{"questions":[
 				{"key":"existing_api","question":"What does the endpoint return?","mode":"research"},
-				{"key":"audience","question":"Who is this for?","mode":"hitl"},
+				{"key":"audience","question":"Who is this for?","mode":"hitl","blocked_by":["success"]},
 				{"key":"success","question":"What does success look like?"}
 			]}`)},
 	}}}}}
@@ -41,6 +41,11 @@ func TestGrillAgentParsesQuestionMode(t *testing.T) {
 	for _, q := range qs {
 		if want[q.Key] != q.Mode {
 			t.Fatalf("mode for %s = %q, want %q", q.Key, q.Mode, want[q.Key])
+		}
+		// or-kjcm.7: edges normalize like keys, so "success" matches the
+		// stored "grill.success".
+		if q.Key == "grill.audience" && (len(q.BlockedBy) != 1 || q.BlockedBy[0] != "grill.success") {
+			t.Fatalf("blocked_by must normalize to the grill.* keyspace: %+v", q.BlockedBy)
 		}
 	}
 }

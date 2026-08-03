@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS open_questions (
     -- or-kjcm.4: who resolves it. 'hitl' = only the developer can (preference,
     -- judgment); 'research' = an agent can, by reading code/docs/web.
     mode       TEXT NOT NULL DEFAULT 'hitl' CHECK (mode IN ('hitl','research')),
+    -- or-kjcm.7: comma-separated decision KEYS this question waits on. A
+    -- blocked question is held off the developer surface until its blockers
+    -- resolve — scope-fixing answers change what detail questions even mean.
+    blocked_by TEXT NOT NULL DEFAULT '',
     resolution TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL

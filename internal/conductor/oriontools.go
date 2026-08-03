@@ -136,7 +136,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 
 	r.Register(tools.Tool{
 		Name:        "check_completeness",
-		Description: "List the spec decisions still open for the ACTIVE project (named in the result). Those with no fallback are BLOCKING — they must be answered before ratifying.",
+		Description: "List the spec decisions still open for the ACTIVE project (named in the result). Those with no fallback are BLOCKING — they must be answered before ratifying. next_question is THE question to put to the developer now (or-kjcm.7: dependency-blocked questions are already held out of the list — never batch what remains; ask next_question, record the answer, re-check).",
 		Safety:      tools.Safety{ReadOnly: true},
 		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
 			sv, err := c.SpecView(ctx)
@@ -146,7 +146,14 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			// or-hn15.3: name the project the decisions belong to, so the agent
 			// can't mistake a stale active project's checklist for its own
 			// (the mech-game dogfood served an HTTP checklist to a game intake).
-			return asJSON(map[string]any{"project": sv.Intent, "status": sv.Status, "open_decisions": sv.OpenDecisions}), nil
+			out := map[string]any{"project": sv.Intent, "status": sv.Status, "open_decisions": sv.OpenDecisions}
+			// or-kjcm.7: the frontier's head — presentation pacing lives in the
+			// tool result, not in prompt discipline alone.
+			if len(sv.OpenDecisions) > 0 {
+				out["next_question"] = sv.OpenDecisions[0]
+				out["queued_behind_it"] = len(sv.OpenDecisions) - 1
+			}
+			return asJSON(out), nil
 		},
 	})
 

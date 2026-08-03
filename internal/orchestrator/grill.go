@@ -114,14 +114,44 @@ func (c *Conductor) openDecisions(ctx context.Context, intent string, answers ma
 		}
 	}
 	ledger = c.resolveResearchQuestions(ctx, proj.ID, ledger)
-	var lead []completeness.OpenDecision
+	return leadThenFloor(frontierOf(ledger, answers), floor, answers)
+}
+
+// frontierOf returns the ledger's OPEN questions whose dependency edges are
+// satisfied (or-kjcm.7) — the frontier. A question is held back while any
+// blocked_by key is still an open question with no recorded answer: the
+// blocking answer changes what the held question even means, so surfacing
+// them together invites answering the detail before the scope. Edges to keys
+// with no open question and no answer are ignored (fail-open: a dangling edge
+// must never strand a question). Order is ledger (creation) order, so the
+// served sequence is deterministic regardless of how the grill emitted them.
+func frontierOf(ledger []contextstore.OpenQuestion, answers map[string]string) []completeness.OpenDecision {
+	openKeys := map[string]bool{}
 	for _, q := range ledger {
-		if q.Status != "open" {
+		if q.Status == "open" && q.Key != "" {
+			openKeys[q.Key] = true
+		}
+	}
+	blocked := func(q contextstore.OpenQuestion) bool {
+		for _, dep := range strings.Split(q.BlockedBy, ",") {
+			dep = strings.TrimSpace(dep)
+			if dep == "" || dep == q.Key {
+				continue
+			}
+			if openKeys[dep] && strings.TrimSpace(answers[dep]) == "" {
+				return true
+			}
+		}
+		return false
+	}
+	var out []completeness.OpenDecision
+	for _, q := range ledger {
+		if q.Status != "open" || blocked(q) {
 			continue
 		}
-		lead = append(lead, completeness.OpenDecision{Key: q.Key, Dimension: completeness.DimFunctional, Question: q.Question, Mode: q.Mode})
+		out = append(out, completeness.OpenDecision{Key: q.Key, Dimension: completeness.DimFunctional, Question: q.Question, Mode: q.Mode})
 	}
-	return leadThenFloor(lead, floor, answers)
+	return out
 }
 
 // resolveResearchQuestions burns down the open research-mode questions with
@@ -237,6 +267,7 @@ func (c *Conductor) persistGrillQuestions(ctx context.Context, projectID string,
 		row := contextstore.OpenQuestion{
 			ProjectID: projectID, Phase: "spec", Origin: "grill", Key: key,
 			Question: strings.TrimSpace(q.Question), Severity: "advisory", Mode: q.Mode,
+			BlockedBy: strings.Join(q.BlockedBy, ","),
 		}
 		if row.Mode == "" {
 			row.Mode = "hitl" // mirror the store default so the in-memory ledger matches
