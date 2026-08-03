@@ -93,6 +93,9 @@ type Conductor struct {
 	// researcher resolves research-mode open questions by lookup (or-kjcm.4).
 	// nil = research questions surface to the developer like any other.
 	researcher Researcher
+	// scopeCheck judges a proposed requirement against the ratified non-goals
+	// (or-kjcm.6). nil = non-goals are advisory prose, exactly as before.
+	scopeCheck ScopeChecker
 
 	mu        sync.RWMutex
 	intent    string
