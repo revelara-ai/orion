@@ -28,7 +28,7 @@ func NativeGrillAgent(provider llm.Provider, goalsFn func(context.Context) strin
 		tool := llm.Tool{
 			Name:        "report_questions",
 			Description: "Report the next open-ended clarifying questions (empty when the intent is fully understood).",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"questions":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string","description":"stable snake_case answer key"},"question":{"type":"string"}},"required":["key","question"]}}},"required":["questions"]}`),
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"questions":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string","description":"stable snake_case answer key"},"question":{"type":"string"},"mode":{"type":"string","enum":["hitl","research"],"description":"who can resolve it: hitl = only the developer (preference, judgment, priorities); research = an agent lookup can (reading the codebase, docs, or the web surfaces the fact)"},"blocked_by":{"type":"array","items":{"type":"string"},"description":"keys (from THIS batch or already asked) whose answers this question waits on — a scope or success-criteria answer changes what a detail question means, so the detail question lists it here and is held back until it resolves"}},"required":["key","question"]}}},"required":["questions"]}`),
 		}
 		system := grillSystemPrompt
 		// or-kzf.2 surface: an externalized goals-phase guidance file extends
@@ -51,8 +51,10 @@ func NativeGrillAgent(provider llm.Provider, goalsFn func(context.Context) strin
 			}
 			var out struct {
 				Questions []struct {
-					Key      string `json:"key"`
-					Question string `json:"question"`
+					Key       string   `json:"key"`
+					Question  string   `json:"question"`
+					Mode      string   `json:"mode"`
+					BlockedBy []string `json:"blocked_by"`
 				} `json:"questions"`
 			}
 			if err := json.Unmarshal(tu.Input, &out); err != nil {
@@ -70,7 +72,24 @@ func NativeGrillAgent(provider llm.Provider, goalsFn func(context.Context) strin
 				if !strings.HasPrefix(key, "grill.") {
 					key = "grill." + key
 				}
-				qs = append(qs, completeness.OpenDecision{Key: key, Dimension: completeness.DimFunctional, Question: strings.TrimSpace(q.Question)})
+				mode := q.Mode
+				if mode != "research" {
+					mode = "hitl" // unknown/unstated classifies to the developer — never auto-answer a judgment call
+				}
+				// Dependency edges normalize like the keys themselves, so an
+				// edge naming "success" matches the stored "grill.success".
+				var deps []string
+				for _, d := range q.BlockedBy {
+					d = strings.TrimSpace(d)
+					if d == "" {
+						continue
+					}
+					if !strings.HasPrefix(d, "grill.") {
+						d = "grill." + d
+					}
+					deps = append(deps, d)
+				}
+				qs = append(qs, completeness.OpenDecision{Key: key, Dimension: completeness.DimFunctional, Question: strings.TrimSpace(q.Question), Mode: mode, BlockedBy: deps})
 			}
 			return qs, nil
 		}
@@ -78,7 +97,11 @@ func NativeGrillAgent(provider llm.Provider, goalsFn func(context.Context) strin
 	}
 }
 
-const grillSystemPrompt = `You are Orion's intent grill: relentless LISTENING, not a checklist. You receive a developer's intent plus what is already resolved. Ask ONLY the open-ended questions whose answers would change what gets built — scope boundaries, success criteria, users and their failure costs, what is explicitly OUT of scope, behavioral edge cases worth proving. Never re-ask anything resolved, never ask implementation trivia the reliability floor already covers (ports, formats, routes). At most 5 questions; report NONE when the intent is genuinely clear.`
+const grillSystemPrompt = `You are Orion's intent grill: relentless LISTENING, not a checklist. You receive a developer's intent plus what is already resolved. Ask ONLY the open-ended questions whose answers would change what gets built — scope boundaries, success criteria, users and their failure costs, what is explicitly OUT of scope, behavioral edge cases worth proving. Never re-ask anything resolved, never ask implementation trivia the reliability floor already covers (ports, formats, routes). At most 5 questions; report NONE when the intent is genuinely clear.
+
+Classify each question's mode. Never ask the developer what an agent can look up: a question answerable by reading the codebase, documentation, or the web (an existing API's shape, what a dependency returns, what the repo already runs) is mode=research and will be resolved by a lookup agent. Only questions of preference, judgment, or priority — answers that live in the developer's head — are mode=hitl.
+
+Wire dependency edges with blocked_by: when one answer changes what another question even MEANS — scope boundaries and success criteria reshape detail questions — the detail question lists the shaping question's key in blocked_by. Blocked questions are held back until their blockers resolve, so the developer always gets the scope-fixing question first.`
 
 func renderGrillTask(intent string, resolved map[string]string, floor []completeness.OpenDecision, goals string) string {
 	var b strings.Builder

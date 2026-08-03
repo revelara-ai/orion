@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -20,16 +21,83 @@ type GoalsDoc struct {
 	Goals           []string `json:"goals"`
 	NonGoals        []string `json:"non_goals"`
 	SuccessCriteria []string `json:"success_criteria"`
+	// Destination (or-kjcm.6) is the one-line answer to "what does reaching
+	// the end of this effort look like?" — recorded for EVERY scale, not just
+	// the large rail, because it fixes what every elicitation question means.
+	// It steers the grill even as a draft: it is the developer's own words.
+	Destination string `json:"destination,omitempty"`
+	// NonGoalDetails (or-kjcm.6) is the structured out-of-scope ledger: each
+	// exclusion carries its why, so a later "should we add X?" reads the
+	// reason, not just the ruling. NonGoals stays the legacy statement list
+	// (kept in sync by ProposeGoals) so older documents and readers work.
+	NonGoalDetails []NonGoal `json:"non_goal_details,omitempty"`
 }
+
+// NonGoal is one consciously-excluded piece of work and the reason it was
+// ruled out — a scoping act with its rationale attached.
+type NonGoal struct {
+	Statement string `json:"statement"`
+	Rationale string `json:"rationale,omitempty"`
+}
+
+// ScopeConflict names the ratified non-goal a proposed requirement crosses,
+// and why the checker thinks so.
+type ScopeConflict struct {
+	NonGoal string
+	Reason  string
+}
+
+// ScopeChecker judges one requirement against the ratified non-goals
+// (or-kjcm.6). nil result = in scope. An error means the check itself failed
+// — the caller fails OPEN (records the requirement), never blocks capture on
+// a broken judge.
+type ScopeChecker func(ctx context.Context, requirement string, nonGoals []NonGoal) (*ScopeConflict, error)
+
+// SetScopeChecker injects the scope judge. Safe to leave nil — non-goals are
+// then advisory prose, exactly as before.
+func (c *Conductor) SetScopeChecker(s ScopeChecker) { c.scopeCheck = s }
 
 // empty reports a doc with no content at all — nothing to steer by.
 func (g GoalsDoc) empty() bool {
-	return len(g.Goals) == 0 && len(g.NonGoals) == 0 && len(g.SuccessCriteria) == 0
+	return len(g.Goals) == 0 && len(g.NonGoals) == 0 && len(g.NonGoalDetails) == 0 &&
+		len(g.SuccessCriteria) == 0 && strings.TrimSpace(g.Destination) == ""
+}
+
+// normalize syncs the two non-goal representations: structured entries are
+// authoritative when present (statements derived); bare statements gain
+// rationale-less entries so NonGoalLedger always has the full set.
+func (g *GoalsDoc) normalize() {
+	if len(g.NonGoalDetails) > 0 {
+		g.NonGoals = g.NonGoals[:0]
+		for _, n := range g.NonGoalDetails {
+			g.NonGoals = append(g.NonGoals, n.Statement)
+		}
+		return
+	}
+	for _, s := range g.NonGoals {
+		g.NonGoalDetails = append(g.NonGoalDetails, NonGoal{Statement: s})
+	}
+}
+
+// NonGoalLedger returns the structured exclusions (statement + why),
+// synthesizing entries for legacy rationale-less documents.
+func (g GoalsDoc) NonGoalLedger() []NonGoal {
+	if len(g.NonGoalDetails) > 0 {
+		return g.NonGoalDetails
+	}
+	out := make([]NonGoal, 0, len(g.NonGoals))
+	for _, s := range g.NonGoals {
+		out = append(out, NonGoal{Statement: s})
+	}
+	return out
 }
 
 // Render formats the doc for developer review and prompt injection.
 func (g GoalsDoc) Render() string {
 	var b strings.Builder
+	if strings.TrimSpace(g.Destination) != "" {
+		b.WriteString("Destination: " + g.Destination + "\n")
+	}
 	section := func(title string, items []string) {
 		if len(items) == 0 {
 			return
@@ -40,7 +108,16 @@ func (g GoalsDoc) Render() string {
 		}
 	}
 	section("Goals", g.Goals)
-	section("Non-goals", g.NonGoals)
+	if ngs := g.NonGoalLedger(); len(ngs) > 0 {
+		b.WriteString("Non-goals:\n")
+		for _, n := range ngs {
+			b.WriteString("- " + n.Statement)
+			if n.Rationale != "" {
+				b.WriteString(" (why: " + n.Rationale + ")")
+			}
+			b.WriteString("\n")
+		}
+	}
 	section("Success criteria", g.SuccessCriteria)
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -55,6 +132,7 @@ func (c *Conductor) ProposeGoals(ctx context.Context, doc GoalsDoc) error {
 	if doc.empty() {
 		return fmt.Errorf("propose_goals: the document is empty — draft at least one goal, non-goal, or success criterion from the conversation")
 	}
+	doc.normalize()
 	if c.store == nil {
 		return errNoStore
 	}
@@ -144,4 +222,49 @@ func (c *Conductor) GoalsSummary(ctx context.Context) string {
 		return ""
 	}
 	return doc.Render()
+}
+
+// GrillContext feeds the grill's steering block (or-kjcm.6): the full RATIFIED
+// goals when they exist; otherwise the destination line alone, even from a
+// draft — it is the developer's own words, recorded verbatim, and a standard-
+// scale intake deserves a steering signal without the full goals ceremony.
+func (c *Conductor) GrillContext(ctx context.Context) string {
+	doc, status, _, err := c.Goals(ctx)
+	if err != nil {
+		return ""
+	}
+	if status == "ratified" {
+		return doc.Render()
+	}
+	if strings.TrimSpace(doc.Destination) != "" {
+		return "Destination: " + doc.Destination
+	}
+	return ""
+}
+
+// SetDestination records the one-line destination for the active project at
+// ANY scale (or-kjcm.6) — upserted into the goals document draft, preserving
+// whatever else is already drafted. Ratified goals are not reopened by it:
+// changing a ratified document's destination goes through propose_goals →
+// ratify_goals like any other goals edit.
+func (c *Conductor) SetDestination(ctx context.Context, line string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c.store == nil {
+		return errNoStore
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return fmt.Errorf("set_destination: the destination line is empty")
+	}
+	doc, status, _, err := c.Goals(ctx)
+	if err != nil && !errors.Is(err, contextstore.ErrNotFound) {
+		return err
+	}
+	if status == "ratified" {
+		return fmt.Errorf("set_destination: the goals document is ratified — revise it with propose_goals and re-ratify instead")
+	}
+	doc.Destination = line
+	return c.ProposeGoals(ctx, doc)
 }

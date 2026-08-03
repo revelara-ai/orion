@@ -86,6 +86,16 @@ type Conductor struct {
 	// grill is the open-ended elicitation driver (or-794, V3 Step 5). nil =
 	// the completeness checklist drives, exactly as V2.
 	grill GrillAgent
+	// grillFP tracks, per project, the answer-set fingerprint the grill last
+	// ran against (or-kjcm.3): a gate read with an unchanged set serves the
+	// persisted ledger instead of re-consulting the LLM. Guarded by mu.
+	grillFP map[string]string
+	// researcher resolves research-mode open questions by lookup (or-kjcm.4).
+	// nil = research questions surface to the developer like any other.
+	researcher Researcher
+	// scopeCheck judges a proposed requirement against the ratified non-goals
+	// (or-kjcm.6). nil = non-goals are advisory prose, exactly as before.
+	scopeCheck ScopeChecker
 
 	mu        sync.RWMutex
 	intent    string

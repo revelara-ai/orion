@@ -48,6 +48,14 @@ type OpenDecision struct {
 	Question  string    `json:"question"`
 	Fallback  string    `json:"fallback,omitempty"`
 	Options   []string  `json:"options,omitempty"`
+	// Mode says who resolves it (or-kjcm.4): "" or "hitl" = the developer
+	// (preference, judgment); "research" = an agent lookup can (code, docs,
+	// web). Floor decisions are always the developer's, so they leave it empty.
+	Mode string `json:"mode,omitempty"`
+	// BlockedBy names the decision keys this question waits on (or-kjcm.7):
+	// a scope-fixing answer changes what a detail question even means, so the
+	// detail question is held off the surface until its blockers resolve.
+	BlockedBy []string `json:"blocked_by,omitempty"`
 }
 
 // enumerableOptions maps a decision key to its enumerable option set, driving the structured
@@ -218,6 +226,29 @@ func functionalDecisions(projectType string) []RequiredDecision {
 			{"response_format", DimFunctional, "What response format should the service return (e.g. JSON, plain text)?", ""},
 			{"port", DimFunctional, "Which port should the service listen on?", ""},
 			{"route", DimFunctional, "Which route/path serves the response (e.g. /time)?", ""},
+		}
+	// or-kjcm.2: cli/library/worker previously returned nil, so a project of
+	// one of these INFERRED types reached spec assembly with zero blocking
+	// decisions — the zero-behavioral-cases guard was the only thing standing
+	// between it and a vacuous ratification. Each registered type now carries
+	// the invocation-shaped decisions its proof hangs on.
+	case "cli":
+		return []RequiredDecision{
+			{"command", DimFunctional, "What is the command invocation — name and primary arguments/flags (e.g. `tool convert <file>`)?", ""},
+			{"output_format", DimFunctional, "What does the command write to stdout (e.g. JSON, plain text)?", ""},
+			{"exit_codes", DimFunctional, "Which exit codes signal what?", "0 on success, non-zero on failure"},
+		}
+	case "library":
+		return []RequiredDecision{
+			{"public_api", DimFunctional, "What is the public API surface — the first functions/types a consumer calls?", ""},
+			{"io_contract", DimFunctional, "What are the primary inputs and outputs of that API (types/shapes)?", ""},
+			{"error_contract", DimFunctional, "How are failures surfaced to the caller?", "errors returned to the caller; no panics on invalid input"},
+		}
+	case "worker":
+		return []RequiredDecision{
+			{"trigger", DimFunctional, "What triggers a unit of work (queue message, schedule, file arrival — which, exactly)?", ""},
+			{"work_unit", DimFunctional, "What is one unit of work — its input and the observable result when it completes?", ""},
+			{"failure_policy", DimFunctional, "What happens when a unit fails (retries, dead-letter, idempotency)?", "at-least-once retries; the handler is idempotent"},
 		}
 	default:
 		return nil

@@ -89,6 +89,11 @@ func Open(dir string) (*Store, error) {
 		// or-7et.2 slice 2: reconciliation marks tasks whose covered spec surface
 		// changed — proof memo reuse is BYPASSED for them (fresh re-proof).
 		{"tasks", "reproof_required", "INTEGER NOT NULL DEFAULT 0"},
+		// or-kjcm.4: who resolves a question — 'hitl' (developer) or 'research'
+		// (agent lookup). Pre-migration rows are all developer questions.
+		{"open_questions", "mode", "TEXT NOT NULL DEFAULT 'hitl' CHECK (mode IN ('hitl','research'))"},
+		// or-kjcm.7: dependency edges between questions (comma-separated keys).
+		{"open_questions", "blocked_by", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if _, err := ensureColumn(db, m.table, m.col, m.decl); err != nil {
 			_ = db.Close()

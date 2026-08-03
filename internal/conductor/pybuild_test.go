@@ -34,6 +34,8 @@ func ratifiedPythonLibraryLang(t *testing.T, langAnswer string) (*orchestrator.C
 		t.Fatalf("submit: %v", err)
 	}
 	for _, a := range [][2]string{
+		{"public_api", "calclib.add, calclib.div"},
+		{"io_contract", "integers in, integer/float out; div raises on zero"},
 		{"direction.stack", "single python package"},
 		{"direction.language", langAnswer},
 		{"direction.engine", "none"},

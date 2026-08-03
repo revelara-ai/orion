@@ -202,13 +202,49 @@ func loadRequirements(jsonStr string) []spec.Requirement {
 // at intake, the or-y9d invariant at the elicitation seam). Re-adding the same
 // requirement (by content-addressed id) is idempotent.
 func (c *Conductor) AddRequirement(ctx context.Context, req spec.Requirement) error {
+	return c.AddRequirementScoped(ctx, req, false)
+}
+
+// AddRequirementScoped is AddRequirement with the scope-change escape hatch
+// (or-kjcm.6): scopeOverride=true records the developer's EXPLICIT decision to
+// cross a ratified non-goal (gold-labeled like every other human override)
+// instead of consulting the scope check.
+func (c *Conductor) AddRequirementScoped(ctx context.Context, req spec.Requirement, scopeOverride bool) error {
 	if c.store == nil {
 		return errNoStore
 	}
 	req.SetIDs()
-	_, sp, err := c.currentProjectSpec(ctx)
+	proj, sp, err := c.currentProjectSpec(ctx)
 	if err != nil {
 		return fmt.Errorf("no current spec to add a requirement: %w", err)
+	}
+	// or-kjcm.6: ratified non-goals are a READ ledger, not display prose — a
+	// requirement is checked against them before it enters the contract. The
+	// checker is an LLM judge (assumed adversarial): its error FAILS OPEN (the
+	// requirement records; scope defense degrades, capture never breaks), but
+	// a reported conflict REFUSES until the developer either revises the
+	// requirement or explicitly confirms the scope change.
+	if !scopeOverride && c.scopeCheck != nil {
+		if doc, status, _, gerr := c.Goals(ctx); gerr == nil && status == "ratified" {
+			if ngs := doc.NonGoalLedger(); len(ngs) > 0 {
+				conflict, cerr := c.scopeCheck(ctx, req.Text, ngs)
+				if cerr != nil {
+					c.log.WarnContext(ctx, "scope check failed — requirement records unchecked", "err", cerr)
+				} else if conflict != nil {
+					return fmt.Errorf("scope check: the requirement %q conflicts with the ratified non-goal %q (%s) — revise it, or if the developer EXPLICITLY confirms the scope change, re-add with scope_override=true (recorded as an audited scope change; also update the goals document so the ledger stays true)",
+						req.Text, conflict.NonGoal, conflict.Reason)
+				}
+			}
+		}
+	}
+	if scopeOverride {
+		m, v := c.producerProvenance()
+		if err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
+			_, e := tx.GoldLabels().Create(ctx, proj.ID, "scope_change", "accept", sp.ID, req.Text, m, v)
+			return e
+		}); err != nil {
+			return err
+		}
 	}
 	// or-4y7.9: expression validation dispatches on the draft's ratified-or-
 	// pending language decision ("" = go), so a python case is judged as python.
@@ -315,8 +351,23 @@ func (c *Conductor) RecordAnswer(ctx context.Context, key, value string) error {
 		return fmt.Errorf("no current spec to answer: %w", err)
 	}
 	if err := c.store.WithTx(ctx, func(tx *contextstore.Tx) error {
-		_, e := tx.Decisions().Create(ctx, proj.ID, sp.ID, key, value, "precise", false)
-		return e
+		if _, e := tx.Decisions().Create(ctx, proj.ID, sp.ID, key, value, "precise", false); e != nil {
+			return e
+		}
+		// or-kjcm.3: an answered key retires any open ledger question carrying
+		// it — one answer path, no stale opens for the question tools to show.
+		qs, e := tx.OpenQuestions().ListOpen(ctx, proj.ID)
+		if e != nil {
+			return e
+		}
+		for _, q := range qs {
+			if q.Key == key {
+				if e := tx.OpenQuestions().Resolve(ctx, q.ID, "answered", value); e != nil {
+					return e
+				}
+			}
+		}
+		return nil
 	}); err != nil {
 		return err
 	}

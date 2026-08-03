@@ -27,6 +27,13 @@ func TestApproveSpecRejectsZeroCases(t *testing.T) {
 	if _, err := c.Submit(ctx, "a CLI tool that prints the date"); err != nil {
 		t.Fatal(err)
 	}
+	// Answer the cli type's blocking functional decisions (or-kjcm.2) so the
+	// rejection under test is the zero-case gate, not the decision gate.
+	for _, a := range [][2]string{{"command", "date-tool"}, {"output_format", "text"}} {
+		if err := c.RecordAnswer(ctx, a[0], a[1]); err != nil {
+			t.Fatalf("answer %s: %v", a[0], err)
+		}
+	}
 	_, err = c.ApproveSpec(ctx)
 	if err == nil {
 		t.Fatal("a spec with zero behavioral cases must not ratify (vacuous proof)")

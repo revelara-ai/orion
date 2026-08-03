@@ -42,6 +42,23 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	// surface — installed packages intercept/rewrite/block calls here. The
 	// proof domain never dispatches through an intercepted registry.
 	r.SetIntercept(hookbus.Default.BeforeToolCall)
+	// or-kjcm.1: the grill elicitation driver is wired HERE, at registry build
+	// — before any tool can run — so the very first submit_intent of a fresh
+	// process elicits open-endedly. The registry is rebuilt each turn, so a
+	// /model swap re-resolves the grill's provider too. Offline (nil provider)
+	// leaves the deterministic checklist driving.
+	if provider != nil {
+		// or-kjcm.6: the grill steers by the ratified goals — or, absent those,
+		// the destination line alone (GrillContext), so a standard-scale intake
+		// has a steering signal without the full goals ceremony.
+		c.SetGrillAgent(NativeGrillAgent(RoleProvider("grill", provider), c.GrillContext))
+		// or-kjcm.4: research-mode grill questions are burned down by a bounded
+		// read-only lookup loop instead of reaching the developer.
+		c.SetResearcher(NativeResearcher(RoleProvider("research", provider), r, c, emit))
+		// or-kjcm.6: ratified non-goals are enforced at requirement capture —
+		// the judge reports, the deterministic gate refuses or records.
+		c.SetScopeChecker(NativeScopeChecker(RoleProvider("scope", provider)))
+	}
 	registerChangeTools(r, cs, c, provider, emit)
 	registerBeadsTool(r, c)
 	registerMCPTools(r, c.Store())             // revelara.ai MCP tools, when authenticated (or-xe7.10)
@@ -119,7 +136,7 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 
 	r.Register(tools.Tool{
 		Name:        "check_completeness",
-		Description: "List the spec decisions still open for the ACTIVE project (named in the result). Those with no fallback are BLOCKING — they must be answered before ratifying.",
+		Description: "List the spec decisions still open for the ACTIVE project (named in the result). Those with no fallback are BLOCKING — they must be answered before ratifying. next_question is THE question to put to the developer now (or-kjcm.7: dependency-blocked questions are already held out of the list — never batch what remains; ask next_question, record the answer, re-check).",
 		Safety:      tools.Safety{ReadOnly: true},
 		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
 			sv, err := c.SpecView(ctx)
@@ -129,7 +146,14 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			// or-hn15.3: name the project the decisions belong to, so the agent
 			// can't mistake a stale active project's checklist for its own
 			// (the mech-game dogfood served an HTTP checklist to a game intake).
-			return asJSON(map[string]any{"project": sv.Intent, "status": sv.Status, "open_decisions": sv.OpenDecisions}), nil
+			out := map[string]any{"project": sv.Intent, "status": sv.Status, "open_decisions": sv.OpenDecisions}
+			// or-kjcm.7: the frontier's head — presentation pacing lives in the
+			// tool result, not in prompt discipline alone.
+			if len(sv.OpenDecisions) > 0 {
+				out["next_question"] = sv.OpenDecisions[0]
+				out["queued_behind_it"] = len(sv.OpenDecisions) - 1
+			}
+			return asJSON(out), nil
 		},
 	})
 
@@ -332,17 +356,34 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	r.Register(tools.Tool{
 		Name:        "propose_goals",
 		Description: "Draft the project's GOALS DOCUMENT from the conversation — goals (what this is for), non-goals (explicitly out of scope), success criteria (how success is judged) — and persist it as a DRAFT for the developer to review (or-045a.2). Use it EARLY on a large/vague intent, BEFORE spec decisions: present the draft, incorporate corrections by re-proposing, then record the developer's confirmation with ratify_goals. If you notice an AMBIGUITY or an internal CONTRADICTION while drafting (e.g. a success criterion a stated direction cannot meet), raise it with raise_open_question instead of resolving it yourself — blocking questions gate ratification. The ratified goals steer the grill and the loss-scenario analysis.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"goals":{"type":"array","items":{"type":"string"}},"non_goals":{"type":"array","items":{"type":"string"}},"success_criteria":{"type":"array","items":{"type":"string"}}},"required":["goals"]}`),
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"goals":{"type":"array","items":{"type":"string"}},"destination":{"type":"string","description":"one line: what reaching the end of this effort looks like"},"non_goals":{"type":"array","items":{"type":"object","properties":{"statement":{"type":"string"},"rationale":{"type":"string","description":"WHY it was ruled out — a later 'should we add X?' reads this, not just the ruling"}},"required":["statement"]},"description":"work consciously ruled OUT, each with its why — this ledger is ENFORCED: add_requirement refuses cases that cross it"},"success_criteria":{"type":"array","items":{"type":"string"}}},"required":["goals"]}`),
 		Safety:      tools.Safety{Destructive: true},
 		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
-			var doc orchestrator.GoalsDoc
-			if err := json.Unmarshal(in, &doc); err != nil {
+			doc, err := decodeGoalsDoc(in)
+			if err != nil {
 				return "", err
 			}
 			if err := c.ProposeGoals(ctx, doc); err != nil {
 				return "", err
 			}
 			return "GOALS DRAFT (review with the developer; re-propose to revise, ratify_goals once confirmed):\n\n" + doc.Render(), nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "set_destination",
+		Description: "Record the ONE-LINE destination — what reaching the end of this effort looks like, in the developer's own words (or-kjcm.6). Agree it EARLY at ANY scale: it steers every grill question without the full goals ceremony. On a ratified goals document, revise via propose_goals instead.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"destination":{"type":"string"}},"required":["destination"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct{ Destination string }
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			if err := c.SetDestination(ctx, p.Destination); err != nil {
+				return "", err
+			}
+			return "destination recorded — it now steers the grill: " + p.Destination, nil
 		},
 	})
 
@@ -430,6 +471,84 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				return "", err
 			}
 			return "question resolved (" + p.Resolution + ": " + p.Value + ")", nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "park_fog",
+		Description: "Park a KNOWN-UNKNOWN you cannot phrase as a precise question yet (or-kjcm.5) — 'a decision about X is coming, but it hangs on answers we don't have'. The test: if you can state the question precisely NOW, use raise_open_question instead — even if it can't be answered yet. Parked notes are advisory (they never gate ratification), render in the spec preview as where clarification is headed, and GRADUATE into real questions via graduate_fog once an answer sharpens them.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"note":{"type":"string","description":"the area to revisit, as loosely or fully as the current view allows"}},"required":["note"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct{ Note string }
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			id, err := c.ParkFog(ctx, p.Note)
+			if err != nil {
+				return "", err
+			}
+			return "parked (" + id[:8] + ") — revisit with graduate_fog when an answer makes it phrasable, or dismiss_fog if it becomes moot", nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "list_fog",
+		Description: "List the parked known-unknowns (or-kjcm.5) — the areas noted as coming but not yet phrasable. Review after each resolved answer: anything now phrasable should graduate_fog into precise questions.",
+		Safety:      tools.Safety{ReadOnly: true},
+		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
+			fs, err := c.FogNotes(ctx)
+			if err != nil {
+				return "", err
+			}
+			if len(fs) == 0 {
+				return "nothing parked.", nil
+			}
+			var b strings.Builder
+			fmt.Fprintf(&b, "%d parked area(s):\n", len(fs))
+			for _, f := range fs {
+				fmt.Fprintf(&b, "- %s %s\n", f.ID[:8], f.Note)
+			}
+			return strings.TrimRight(b.String(), "\n"), nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "graduate_fog",
+		Description: "Convert a parked area into one or more PRECISE open questions, atomically (or-kjcm.5): the questions land on the ledger (blocking ones gate ratification like any other) and the parked note leaves it. Call when a resolved answer has sharpened a parked area enough to phrase.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","description":"the parked note id (or its 8-char prefix from list_fog)"},"questions":{"type":"array","items":{"type":"object","properties":{"phase":{"type":"string","enum":["goals","stpa","direction","spec"]},"key":{"type":"string","description":"optional decision key the answer records under"},"question":{"type":"string"},"severity":{"type":"string","enum":["blocking","advisory"]},"mode":{"type":"string","enum":["hitl","research"]}},"required":["phase","question","severity"]}}},"required":["id","questions"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct {
+				ID        string                     `json:"id"`
+				Questions []orchestrator.FogQuestion `json:"questions"`
+			}
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			id := resolveFogPrefix(ctx, c, p.ID)
+			ids, err := c.GraduateFog(ctx, id, p.Questions)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("graduated into %d question(s): %s", len(ids), strings.Join(shortIDs(ids), ", ")), nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "dismiss_fog",
+		Description: "Rule a parked area MOOT with an explicit reason (or-kjcm.5) — overtaken by an answer, or outside what this project is for. A parked note never just evaporates.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","description":"the parked note id (or its 8-char prefix from list_fog)"},"reason":{"type":"string"}},"required":["id","reason"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct{ ID, Reason string }
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			if err := c.DismissFog(ctx, resolveFogPrefix(ctx, c, p.ID), p.Reason); err != nil {
+				return "", err
+			}
+			return "dismissed: " + p.Reason, nil
 		},
 	})
 
@@ -615,12 +734,15 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 				Text        string                `json:"text"`
 				DecisionKey string                `json:"decision_key"`
 				Cases       []spec.BehavioralCase `json:"cases"`
+				// or-kjcm.6: the developer's EXPLICIT confirmation that this
+				// requirement crosses a ratified non-goal on purpose.
+				ScopeOverride bool `json:"scope_override"`
 			}
 			if err := json.Unmarshal(in, &p); err != nil {
 				return "", err
 			}
 			req := spec.Requirement{Source: completeness.DimFunctional, DecisionKey: p.DecisionKey, Text: p.Text, Cases: p.Cases}
-			if err := c.AddRequirement(ctx, req); err != nil {
+			if err := c.AddRequirementScoped(ctx, req, p.ScopeOverride); err != nil {
 				// or-4j37: a rejection must TEACH — anchor diagnosis + the
 				// closed union + a valid example + the test-only steer.
 				return "", teachCaseShape(err, p.Cases)
@@ -671,7 +793,24 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			if err != nil {
 				return "", err
 			}
-			return SpecDocument(es, false), nil // readable preview incl. the assumptions to review
+			doc := SpecDocument(es, false) // readable preview incl. the assumptions to review
+			// or-kjcm.6: the destination line rides the preview so both parties
+			// review the spec against what the effort is FOR.
+			if gc := c.GrillContext(ctx); gc != "" && strings.HasPrefix(gc, "Destination: ") {
+				doc = gc + "\n\n" + doc
+			}
+			// or-kjcm.5: parked known-unknowns ride the preview as a signpost of
+			// where clarification is headed — advisory, never a ratify gate.
+			if fs, ferr := c.FogNotes(ctx); ferr == nil && len(fs) > 0 {
+				var b strings.Builder
+				b.WriteString(doc)
+				b.WriteString("\n\n## Not yet specified — parked areas (advisory, does not block ratification)\n")
+				for _, f := range fs {
+					fmt.Fprintf(&b, "- %s\n", f.Note)
+				}
+				doc = strings.TrimRight(b.String(), "\n")
+			}
+			return doc, nil
 		},
 	})
 
@@ -727,9 +866,6 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 					c.SetModuleFitEstimator(NewModuleFitEstimator(genProv, es))
 				}
 				SetGenerationWindow(contextwindow.WindowOf(genProv, contextwindow.DefaultWindow))
-				// or-794 (V3 Step 5): the open-ended grill drives elicitation
-				// behind ORION_ELICITATION=grill; the checklist floor never drops.
-				c.SetGrillAgent(NativeGrillAgent(RoleProvider("grill", provider), c.GoalsSummary))
 				// or-zn8: the adversarial issue-set reviewer rides the same brain;
 				// the deterministic gate (advisory→ORION_ISSUE_REVIEW=block) decides.
 				c.SetIssueReviewer(NativeIssueReviewer(RoleProvider("review", provider)))
