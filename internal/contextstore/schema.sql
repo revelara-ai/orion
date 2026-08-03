@@ -50,6 +50,20 @@ CREATE TABLE IF NOT EXISTS open_questions (
 );
 CREATE INDEX IF NOT EXISTS idx_open_questions_project ON open_questions(project_id, status);
 
+-- or-kjcm.5: fog — a known-unknown too dim to phrase as a question yet. NOT a
+-- question row: no key, no severity, never gates ratification. It graduates
+-- into open_questions rows once an answer sharpens it, or is dismissed.
+CREATE TABLE IF NOT EXISTS fog (
+    id         TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    note       TEXT NOT NULL,
+    status     TEXT NOT NULL CHECK (status IN ('open','graduated','dismissed')),
+    resolution TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fog_project ON fog(project_id, status);
+
 CREATE TABLE IF NOT EXISTS specs (
     id             TEXT PRIMARY KEY,
     project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
