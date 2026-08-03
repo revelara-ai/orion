@@ -445,6 +445,84 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 	})
 
 	r.Register(tools.Tool{
+		Name:        "park_fog",
+		Description: "Park a KNOWN-UNKNOWN you cannot phrase as a precise question yet (or-kjcm.5) — 'a decision about X is coming, but it hangs on answers we don't have'. The test: if you can state the question precisely NOW, use raise_open_question instead — even if it can't be answered yet. Parked notes are advisory (they never gate ratification), render in the spec preview as where clarification is headed, and GRADUATE into real questions via graduate_fog once an answer sharpens them.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"note":{"type":"string","description":"the area to revisit, as loosely or fully as the current view allows"}},"required":["note"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct{ Note string }
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			id, err := c.ParkFog(ctx, p.Note)
+			if err != nil {
+				return "", err
+			}
+			return "parked (" + id[:8] + ") — revisit with graduate_fog when an answer makes it phrasable, or dismiss_fog if it becomes moot", nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "list_fog",
+		Description: "List the parked known-unknowns (or-kjcm.5) — the areas noted as coming but not yet phrasable. Review after each resolved answer: anything now phrasable should graduate_fog into precise questions.",
+		Safety:      tools.Safety{ReadOnly: true},
+		Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
+			fs, err := c.FogNotes(ctx)
+			if err != nil {
+				return "", err
+			}
+			if len(fs) == 0 {
+				return "nothing parked.", nil
+			}
+			var b strings.Builder
+			fmt.Fprintf(&b, "%d parked area(s):\n", len(fs))
+			for _, f := range fs {
+				fmt.Fprintf(&b, "- %s %s\n", f.ID[:8], f.Note)
+			}
+			return strings.TrimRight(b.String(), "\n"), nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "graduate_fog",
+		Description: "Convert a parked area into one or more PRECISE open questions, atomically (or-kjcm.5): the questions land on the ledger (blocking ones gate ratification like any other) and the parked note leaves it. Call when a resolved answer has sharpened a parked area enough to phrase.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","description":"the parked note id (or its 8-char prefix from list_fog)"},"questions":{"type":"array","items":{"type":"object","properties":{"phase":{"type":"string","enum":["goals","stpa","direction","spec"]},"key":{"type":"string","description":"optional decision key the answer records under"},"question":{"type":"string"},"severity":{"type":"string","enum":["blocking","advisory"]},"mode":{"type":"string","enum":["hitl","research"]}},"required":["phase","question","severity"]}}},"required":["id","questions"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct {
+				ID        string                     `json:"id"`
+				Questions []orchestrator.FogQuestion `json:"questions"`
+			}
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			id := resolveFogPrefix(ctx, c, p.ID)
+			ids, err := c.GraduateFog(ctx, id, p.Questions)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("graduated into %d question(s): %s", len(ids), strings.Join(shortIDs(ids), ", ")), nil
+		},
+	})
+
+	r.Register(tools.Tool{
+		Name:        "dismiss_fog",
+		Description: "Rule a parked area MOOT with an explicit reason (or-kjcm.5) — overtaken by an answer, or outside what this project is for. A parked note never just evaporates.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","description":"the parked note id (or its 8-char prefix from list_fog)"},"reason":{"type":"string"}},"required":["id","reason"]}`),
+		Safety:      tools.Safety{Destructive: true},
+		Run: func(ctx context.Context, in json.RawMessage) (string, error) {
+			var p struct{ ID, Reason string }
+			if err := json.Unmarshal(in, &p); err != nil {
+				return "", err
+			}
+			if err := c.DismissFog(ctx, resolveFogPrefix(ctx, c, p.ID), p.Reason); err != nil {
+				return "", err
+			}
+			return "dismissed: " + p.Reason, nil
+		},
+	})
+
+	r.Register(tools.Tool{
 		Name:        "propose_losses",
 		Description: "Draft the GOAL-ALTITUDE loss analysis from the ratified goals document (or-045a.3): the losses the project must not cause and the loss scenarios that would cause them. Requires ratified goals (propose_goals → ratify_goals first). PROPOSED only — review the draft with the developer, then record their confirmation with ratify_losses. Required before a LARGE project's spec can ratify.",
 		Safety:      tools.Safety{ReadOnly: true},
@@ -682,7 +760,19 @@ func specTools(c *orchestrator.Conductor, provider llm.Provider, cs *changeSessi
 			if err != nil {
 				return "", err
 			}
-			return SpecDocument(es, false), nil // readable preview incl. the assumptions to review
+			doc := SpecDocument(es, false) // readable preview incl. the assumptions to review
+			// or-kjcm.5: parked known-unknowns ride the preview as a signpost of
+			// where clarification is headed — advisory, never a ratify gate.
+			if fs, ferr := c.FogNotes(ctx); ferr == nil && len(fs) > 0 {
+				var b strings.Builder
+				b.WriteString(doc)
+				b.WriteString("\n\n## Not yet specified — parked areas (advisory, does not block ratification)\n")
+				for _, f := range fs {
+					fmt.Fprintf(&b, "- %s\n", f.Note)
+				}
+				doc = strings.TrimRight(b.String(), "\n")
+			}
+			return doc, nil
 		},
 	})
 
