@@ -11,18 +11,18 @@ build:
 
 # Full suite, including the heavy generate→prove e2e. The timeout is bumped past Go's 600s default
 # because the conductor package alone is ~740s of real compile+prove work (or-tcs.9); a bare
-# `go test ./...` would fail the default per-package timeout. 2400s, not 1200s: on a loaded host the
-# conductor package ran 1115.9s green and then hit the 1200s alarm twice at integration (po-q4co3).
+# `go test ./...` would fail the default per-package timeout.
+#
+# -p 1: the heavy proof packages all serialize through the machine-wide proof flock (prooflock),
+# so running packages in PARALLEL starves per-test deadlines while one package holds the lock.
+# Sequential packages are slower wall-clock, but honest and deterministic. A parallel run with a
+# 2400s cap still failed on a loaded 24-core host: conductor hit the alarm and proof/empirical
+# waited 5 min on the lock (po-q4co3), so a larger timeout is not the fix.
 test:
-	go test -timeout 2400s ./...
-
-# CI lane: the heavy proof packages all serialize through the machine-wide
-# proof flock (prooflock), so running packages in PARALLEL on a small shared
-# runner starves per-test deadlines while one package holds the lock. -p 1
-# runs packages sequentially — slower wall-clock, but honest and deterministic
-# on 2-core runners; the per-package cap is generous for the same reason.
-test-ci:
 	go test -timeout 2400s -p 1 ./...
+
+# CI lane: the same sequential run, kept as a name the workflow calls.
+test-ci: test
 
 # Fast lane: skips the heavy build+prove e2e tests (each guarded by `if testing.Short()`) for quick
 # feedback while iterating. Run `make test` before relying on a green result.

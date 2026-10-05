@@ -9,7 +9,7 @@ project is built against, and contributions are reviewed against it.
 ```bash
 make build        # go build -o bin/orion ./cmd/orion
 make test-short   # the fast lane (what the PR CI runs)
-make test         # the full suite (~20 min; heavy generate→prove e2e)
+make test         # the full suite (sequential packages, ~40 min; heavy generate→prove e2e)
 make vet          # go vet
 make lint         # golangci-lint v2 (see .golangci.yml)
 make license-check# dependency license audit (go-licenses)
