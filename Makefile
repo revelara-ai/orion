@@ -11,9 +11,10 @@ build:
 
 # Full suite, including the heavy generate→prove e2e. The timeout is bumped past Go's 600s default
 # because the conductor package alone is ~740s of real compile+prove work (or-tcs.9); a bare
-# `go test ./...` would fail the default per-package timeout.
+# `go test ./...` would fail the default per-package timeout. 2400s, not 1200s: on a loaded host the
+# conductor package ran 1115.9s green and then hit the 1200s alarm twice at integration (po-q4co3).
 test:
-	go test -timeout 1200s ./...
+	go test -timeout 2400s ./...
 
 # CI lane: the heavy proof packages all serialize through the machine-wide
 # proof flock (prooflock), so running packages in PARALLEL on a small shared

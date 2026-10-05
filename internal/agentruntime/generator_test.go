@@ -120,13 +120,11 @@ func TestGeneratorArtifactBuildsAndProves(t *testing.T) {
 	req := GenRequest{Module: "gen/proven", Route: "/time", Port: 8080, Format: "json", TimeZone: "UTC"}
 	art := genInto(t, req)
 
-	// CI runners are slow and the proof flock serializes execs machine-wide —
-	// give the shared-runner case real headroom (a local run stays snappy).
-	budget := 60 * time.Second
-	if os.Getenv("CI") != "" {
-		budget = 5 * time.Minute
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	// The proof flock serializes execs machine-wide, so under `go test ./...`
+	// this test waits behind the other proof packages. The budget is a
+	// deadline, not a sleep: an unloaded run still returns in seconds. A 60s
+	// non-CI budget failed integration twice on a loaded host (po-q4co3).
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	outcome, err := proof.ProveBehavioral(ctx, art.Dir, testsynth.Contract{Route: req.Route, Format: req.Format, TimeZone: req.TimeZone})
 	if err != nil {
