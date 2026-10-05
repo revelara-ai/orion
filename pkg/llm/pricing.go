@@ -14,8 +14,9 @@ var pricingTable = map[string]Pricing{
 	"anthropic/claude-opus":   {15, 75, 1.5, 18.75},
 	"anthropic/claude-sonnet": {3, 15, 0.3, 3.75},
 	"anthropic/claude-haiku":  {0.8, 4, 0.08, 1},
-	"gemini/gemini-2.5-pro":   {1.25, 10, 0.31, 0},
-	"gemini/gemini-2.5-flash": {0.30, 2.5, 0.075, 0},
+	// po-s1x5k.10: the gemini-2.5 rows were removed 2026-10-04. Google shuts the
+	// family down by 2027-03-31, and this table prices live calls only, so a
+	// 2.5 call now books unpriced.
 	// or-un7z: verified against the official rate card 2026-07-22 (model
 	// launched 2026-05-19). gemini-3.5-pro is deliberately ABSENT — it has
 	// not shipped; this table carries only verified prices, never guesses

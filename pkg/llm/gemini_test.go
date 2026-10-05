@@ -14,7 +14,7 @@ func geminiTestServer(t *testing.T, respJSON string, captured *gemRequest) *http
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/models" {
-			w.Write([]byte(`{"models":[{"name":"models/gemini-2.5-pro"},{"name":"models/gemini-2.5-flash"}]}`))
+			w.Write([]byte(`{"models":[{"name":"models/gemini-3-pro"},{"name":"models/gemini-3.5-flash"}]}`))
 			return
 		}
 		if captured != nil {
@@ -29,7 +29,7 @@ func geminiTestServer(t *testing.T, respJSON string, captured *gemRequest) *http
 func TestGeminiChatTranslation(t *testing.T) {
 	var got gemRequest
 	srv := geminiTestServer(t, `{
-		"modelVersion":"gemini-2.5-pro",
+		"modelVersion":"gemini-3-pro",
 		"candidates":[{"content":{"role":"model","parts":[
 			{"text":"checking"},
 			{"functionCall":{"name":"read_file","args":{"path":"a.go"}}}
@@ -38,7 +38,7 @@ func TestGeminiChatTranslation(t *testing.T) {
 	}`, &got)
 	defer srv.Close()
 
-	g := NewGemini(GeminiConfig{APIKey: "k", Model: "gemini-2.5-pro", BaseURL: srv.URL})
+	g := NewGemini(GeminiConfig{APIKey: "k", Model: "gemini-3-pro", BaseURL: srv.URL})
 	req := ChatRequest{
 		System: "be brief",
 		Messages: []Message{
@@ -147,12 +147,12 @@ func TestGeminiStopMapping(t *testing.T) {
 func TestGeminiModelsPingCapabilities(t *testing.T) {
 	srv := geminiTestServer(t, `{}`, nil)
 	defer srv.Close()
-	g := NewGemini(GeminiConfig{APIKey: "k", Model: "gemini-2.5-pro", BaseURL: srv.URL})
+	g := NewGemini(GeminiConfig{APIKey: "k", Model: "gemini-3-pro", BaseURL: srv.URL})
 	ms, err := g.Models(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ms) != 2 || ms[0].ID != "gemini-2.5-pro" || !ms[0].Tools {
+	if len(ms) != 2 || ms[0].ID != "gemini-3-pro" || !ms[0].Tools {
 		t.Errorf("models wrong (name prefix must be stripped, Tools true): %+v", ms)
 	}
 	if err := g.Ping(context.Background()); err != nil {
@@ -163,9 +163,9 @@ func TestGeminiModelsPingCapabilities(t *testing.T) {
 		t.Error("ping without key must fail")
 	}
 	if g.ContextWindow() != 1_000_000 {
-		t.Errorf("gemini-2.5 window = %d, want 1M", g.ContextWindow())
+		t.Errorf("gemini-3 window = %d, want 1M", g.ContextWindow())
 	}
-	override := NewGemini(GeminiConfig{APIKey: "k", Model: "gemini-2.5-pro", BaseURL: srv.URL, ContextWindow: 32768, MaxOutput: 2048})
+	override := NewGemini(GeminiConfig{APIKey: "k", Model: "gemini-3-pro", BaseURL: srv.URL, ContextWindow: 32768, MaxOutput: 2048})
 	if override.ContextWindow() != 32768 || override.MaxOutputTokens() != 2048 {
 		t.Errorf("config overrides not honored: %d %d", override.ContextWindow(), override.MaxOutputTokens())
 	}
@@ -352,7 +352,7 @@ func TestGeminiMaxOutputDefaults(t *testing.T) {
 	}{
 		{"gemini-3.5-flash", 0, 32768},
 		{"gemini-3-pro", 0, 32768},
-		{"gemini-2.5-flash", 0, 32768},
+		{"gemini-2.5-flash", 0, 32768},   // historical: 2.5 still answers until 2027-03-31
 		{"gemini-1.5-flash", 0, 8192},    // unknown/legacy: conservative floor
 		{"gemini-3.5-flash", 2048, 2048}, // config override always wins
 	}
@@ -369,7 +369,7 @@ func TestGeminiMaxOutputDefaults(t *testing.T) {
 func TestGeminiBlockedPromptIsRefusal(t *testing.T) {
 	srv := geminiTestServer(t, `{"promptFeedback":{"blockReason":"SAFETY"},"candidates":[]}`, nil)
 	defer srv.Close()
-	g := NewGemini(GeminiConfig{APIKey: "k", BaseURL: srv.URL, Model: "gemini-2.5-pro"})
+	g := NewGemini(GeminiConfig{APIKey: "k", BaseURL: srv.URL, Model: "gemini-3-pro"})
 	_, err := g.Chat(context.Background(), ChatRequest{Messages: []Message{TextMessage(RoleUser, "hi")}})
 	if !errors.Is(err, ErrRefused) {
 		t.Fatalf("a blocked prompt must classify as ErrRefused, got %v", err)
@@ -380,7 +380,7 @@ func TestGeminiBlockedPromptIsRefusal(t *testing.T) {
 	// And a genuinely empty response stays the generic error, NOT a refusal.
 	srv2 := geminiTestServer(t, `{"candidates":[]}`, nil)
 	defer srv2.Close()
-	g2 := NewGemini(GeminiConfig{APIKey: "k", BaseURL: srv2.URL, Model: "gemini-2.5-pro"})
+	g2 := NewGemini(GeminiConfig{APIKey: "k", BaseURL: srv2.URL, Model: "gemini-3-pro"})
 	_, err2 := g2.Chat(context.Background(), ChatRequest{Messages: []Message{TextMessage(RoleUser, "hi")}})
 	if err2 == nil || errors.Is(err2, ErrRefused) {
 		t.Fatalf("no-candidates without a block reason is not a refusal: %v", err2)
