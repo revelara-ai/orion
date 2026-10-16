@@ -49,7 +49,9 @@ func TestEmpiricalAdapterForArbitraryService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// A deadline with headroom for the machine-wide proof flock: under
+	// `go test ./...` a 60s budget timed out waiting on the lock (po-q4co3).
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	mode, pr, err := Prove(ctx, dir, testsynth.Contract{Route: "/greet", Format: "json", RequiredJSONKey: "message"})
 	if err != nil {

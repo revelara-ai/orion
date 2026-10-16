@@ -143,7 +143,7 @@ func TestBuild(t *testing.T) {
 
 	t.Run("gemini requires key", func(t *testing.T) {
 		t.Setenv("GEMINI_API_KEY", "")
-		_, _, _, err := Build(cfg, "gemini/gemini-2.5-pro")
+		_, _, _, err := Build(cfg, "gemini/gemini-3.5-flash")
 		if err == nil || !strings.Contains(err.Error(), "GEMINI_API_KEY") {
 			t.Errorf("must demand GEMINI_API_KEY: %v", err)
 		}

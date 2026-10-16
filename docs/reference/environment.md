@@ -8,7 +8,7 @@ Everything is optional; unset means the documented default. Variables marked
 | Variable | Default | Effect |
 |---|---|---|
 | `ORION_DATA_DIR` | `~/.orion` | Data dir: Context Store, credentials, config, transcripts. |
-| `ORION_MODEL` | anthropic default | Model ref `provider/model` (e.g. `gemini/gemini-2.5-flash`, `lmstudio/<id>`). Bare ids resolve against the anthropic provider. |
+| `ORION_MODEL` | anthropic default | Model ref `provider/model` (e.g. `gemini/gemini-3.5-flash`, `lmstudio/<id>`). Bare ids resolve against the anthropic provider. |
 | `ORION_AGENT` | unset | Opt-in vendor coding agent for generation (`claude`/`gemini`/`codex` preset, driven over ACP). Unset = native harness / deterministic fixture. `orion run` never silently spawns an agent. |
 | `ORION_OUTPUT_DIR` | unset | Export the proven artifact tree on deliver (code always also lives in the build dir + store). |
 

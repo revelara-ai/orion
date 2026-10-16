@@ -101,13 +101,11 @@ func TestV20LoopOverACP(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds + proves a real service; skipped in -short")
 	}
-	// CI headroom: shared runners + the machine-wide proof flock make the
-	// build+prove loop several times slower than a dev box.
-	budget := 90 * time.Second
-	if os.Getenv("CI") != "" {
-		budget = 6 * time.Minute
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	// Headroom for the machine-wide proof flock: under `go test ./...` the
+	// build+prove loop waits behind the other proof packages. The budget is a
+	// deadline, so an unloaded run is no slower. A 90s non-CI budget timed out
+	// on the toolchain lock at the integration gate (po-q4co3).
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 
 	// spec-ratify is honored; a destructive op is gated (denied).

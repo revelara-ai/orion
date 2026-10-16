@@ -71,7 +71,11 @@ func (g *Gemini) ContextWindow() int {
 		return g.cfg.ContextWindow
 	}
 	m := strings.ToLower(g.cfg.Model)
-	for _, oneM := range []string{"gemini-3", "gemini-2.5", "gemini-2.0"} {
+	for _, oneM := range []string{
+		"gemini-3",
+		"gemini-2.5", // historical: shut down by 2027-03-31; remove after that date
+		"gemini-2.0",
+	} {
 		if strings.Contains(m, oneM) {
 			return 1_000_000
 		}
@@ -90,7 +94,10 @@ func (g *Gemini) MaxOutputTokens() int {
 		return g.cfg.MaxOutput
 	}
 	m := strings.ToLower(g.cfg.Model)
-	for _, big := range []string{"gemini-3", "gemini-2.5"} {
+	for _, big := range []string{
+		"gemini-3",
+		"gemini-2.5", // historical: shut down by 2027-03-31; remove after that date
+	} {
 		if strings.Contains(m, big) {
 			return 32768
 		}
